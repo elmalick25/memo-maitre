@@ -566,28 +566,84 @@ Priorise les concepts les plus importants et difficiles à retenir.`,
   };
 
   // ══════════════════════════════════════════════════════════════════════════
-  // SAISIE VOCALE
+  // SAISIE VOCALE (VERSION ROBUSTE)
   // ══════════════════════════════════════════════════════════════════════════
   const startVoice = (field) => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      showToast("Saisie vocale non supportée (Chrome requis).", "error");
+      showToast("Saisie vocale non supportée (Chrome/Edge requis).", "error");
       return;
     }
+
+    // 1. SÉCURITÉ MAXIMALE : Tuer toute instance fantôme avant d'en lancer une nouvelle
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort(); 
+      } catch (e) {
+        console.warn("Nettoyage de l'instance précédente :", e);
+      }
+    }
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
+    
+    // 2. CONFIGURATION
     rec.lang = field === "front" && addForm.category.toLowerCase().includes("anglais") ? "en-US" : "fr-FR";
     rec.continuous = false;
     rec.interimResults = false;
+
+    // 3. SUCCÈS : Récupération du texte
     rec.onresult = (e) => {
       const t = e.results[0][0].transcript;
       setAddForm((f) => ({ ...f, [field]: (f[field] ? f[field] + " " : "") + t }));
       setListening(null);
     };
-    rec.onerror = () => { setListening(null); showToast("Erreur micro.", "error"); };
-    rec.onend = () => setListening(null);
+
+    // 4. GESTION DES ERREURS DÉTAILLÉE
+    rec.onerror = (event) => {
+      setListening(null);
+      console.error("Détail API Web Speech :", event.error);
+      
+      // Traduction des erreurs pour une meilleure UX
+      if (event.error === 'network') {
+        showToast("Erreur réseau : latence avec les serveurs vocaux.", "error");
+      } else if (event.error === 'not-allowed') {
+        showToast("Microphone bloqué. Vérifie les permissions du navigateur.", "error");
+      } else if (event.error === 'no-speech') {
+        showToast("Aucun son détecté.", "info");
+      } else if (event.error === 'aborted') {
+        // Ignorer l'erreur si c'est nous qui avons forcé l'arrêt
+        console.log("Microphone arrêté manuellement.");
+      } else {
+        showToast(`Erreur micro : ${event.error}`, "error");
+      }
+    };
+
+    // 5. NETTOYAGE SYSTÉMATIQUE
+    rec.onend = () => {
+      setListening(null);
+    };
+
+    // 6. DÉMARRAGE SÉCURISÉ (Try/Catch)
     recognitionRef.current = rec;
-    rec.start();
-    setListening(field);
+    try {
+      rec.start();
+      setListening(field);
+    } catch (error) {
+      console.error("Conflit de démarrage :", error);
+      setListening(null);
+      showToast("Le micro est déjà en cours d'utilisation, réessaie.", "error");
+    }
+  };
+
+  const stopVoice = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (e) {
+        console.warn("Erreur lors de l'arrêt manuel :", e);
+      }
+    }
+    setListening(null);
   };
   const stopVoice = () => { recognitionRef.current?.stop(); setListening(null); };
 
