@@ -568,82 +568,81 @@ Priorise les concepts les plus importants et difficiles à retenir.`,
   // ══════════════════════════════════════════════════════════════════════════
   // SAISIE VOCALE (VERSION ROBUSTE)
   // ══════════════════════════════════════════════════════════════════════════
-  const startVoice = (field) => {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      showToast("Saisie vocale non supportée (Chrome/Edge requis).", "error");
-      return;
-    }
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
-    // 1. SÉCURITÉ MAXIMALE : Tuer toute instance fantôme avant d'en lancer une nouvelle
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort(); 
-      } catch (e) {
-        console.warn("Nettoyage de l'instance précédente :", e);
-      }
-    }
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new SR();
-    
-    // 2. CONFIGURATION
-    rec.lang = field === "front" && addForm.category.toLowerCase().includes("anglais") ? "en-US" : "fr-FR";
-    rec.continuous = false;
-    rec.interimResults = false;
-
-    // 3. SUCCÈS : Récupération du texte
-    rec.onresult = (e) => {
-      const t = e.results[0][0].transcript;
-      setAddForm((f) => ({ ...f, [field]: (f[field] ? f[field] + " " : "") + t }));
-      setListening(null);
-    };
-
-    // 4. GESTION DES ERREURS DÉTAILLÉE
-    rec.onerror = (event) => {
-      setListening(null);
-      console.error("Détail API Web Speech :", event.error);
-      
-      // Traduction des erreurs pour une meilleure UX
-      if (event.error === 'network') {
-        showToast("Erreur réseau : latence avec les serveurs vocaux.", "error");
-      } else if (event.error === 'not-allowed') {
-        showToast("Microphone bloqué. Vérifie les permissions du navigateur.", "error");
-      } else if (event.error === 'no-speech') {
-        showToast("Aucun son détecté.", "info");
-      } else if (event.error === 'aborted') {
-        // Ignorer l'erreur si c'est nous qui avons forcé l'arrêt
-        console.log("Microphone arrêté manuellement.");
-      } else {
-        showToast(`Erreur micro : ${event.error}`, "error");
-      }
-    };
-
-    // 5. NETTOYAGE SYSTÉMATIQUE
-    rec.onend = () => {
-      setListening(null);
-    };
-
-    // 6. DÉMARRAGE SÉCURISÉ (Try/Catch)
-    recognitionRef.current = rec;
+  const startVoice = async (field) => {
     try {
-      rec.start();
+      // 1. Demander l'accès au micro de façon standard
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      // 2. Stocker les morceaux d'audio pendant que tu parles
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      // 3. Quand tu arrêtes l'enregistrement, on envoie à Groq
+      mediaRecorder.onstop = async () => {
+        setListening("processing"); // Indique à l'UI que l'IA réfléchit
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        
+        // Préparation du fichier pour l'API Groq
+        const formData = new FormData();
+        formData.append("file", audioBlob, "audio.webm");
+        formData.append("model", "whisper-large-v3");
+        
+        // Optimisation : préciser la langue aide Whisper à être encore plus précis
+        const isEnglish = field === "front" && addForm.category.toLowerCase().includes("anglais");
+        formData.append("language", isEnglish ? "en" : "fr");
+
+        try {
+          // Appel à l'API Groq (nécessite VITE_GROQ_API_KEY dans le .env ou Netlify)
+          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}`
+            },
+            body: formData
+          });
+          
+          if (!res.ok) throw new Error(`Erreur API: ${res.status}`);
+          const data = await res.json();
+          
+          // Ajout du texte transcrit dans le bon champ
+          if (data.text) {
+             setAddForm((f) => ({ ...f, [field]: (f[field] ? f[field] + " " : "") + data.text.trim() }));
+             showToast("🎙️ Transcription réussie !");
+          }
+        } catch (err) {
+          console.error("Erreur Whisper :", err);
+          showToast("Échec de la transcription. Vérifie ta clé Groq.", "error");
+        } finally {
+          // Extinction propre du micro et de l'UI
+          stream.getTracks().forEach(track => track.stop());
+          setListening(null);
+        }
+      };
+
+      // 4. Démarrer l'enregistrement
+      mediaRecorder.start();
       setListening(field);
-    } catch (error) {
-      console.error("Conflit de démarrage :", error);
+    } catch (err) {
+      console.error("Accès micro refusé :", err);
+      showToast("Accès au micro refusé. Vérifie les permissions.", "error");
       setListening(null);
-      showToast("Le micro est déjà en cours d'utilisation, réessaie.", "error");
     }
   };
 
   const stopVoice = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch (e) {
-        console.warn("Erreur lors de l'arrêt manuel :", e);
-      }
+    // Si on enregistre, on stop. Cela va déclencher le 'onstop' au-dessus.
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
     }
-    setListening(null);
   };
   const stopVoice = () => { recognitionRef.current?.stop(); setListening(null); };
 
