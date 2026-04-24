@@ -644,7 +644,6 @@ Priorise les concepts les plus importants et difficiles à retenir.`,
       mediaRecorderRef.current.stop();
     }
   };
-  const stopVoice = () => { recognitionRef.current?.stop(); setListening(null); };
 
   // ══════════════════════════════════════════════════════════════════════════
   // AJOUTER / ÉDITER UNE FICHE
