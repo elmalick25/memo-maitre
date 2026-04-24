@@ -305,6 +305,10 @@ export default function MemoMaster() {
   const practiceEndRef = useRef(null);
   const practiceMsgRef = useRef(practiceMessages);
 
+  // ── REFS POUR LE MICRO DU CHAT ──
+  const practiceMediaRecorderRef = useRef(null);
+  const practiceAudioChunksRef = useRef([]);
+
   // ── AI Practice hooks (DOIVENT être avant tout return conditionnel) ─────────
   useEffect(() => { practiceMsgRef.current = practiceMessages; }, [practiceMessages]);
   useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages]);
@@ -644,6 +648,7 @@ Priorise les concepts les plus importants et difficiles à retenir.`,
       mediaRecorderRef.current.stop();
     }
   };
+  const stopVoice = () => { recognitionRef.current?.stop(); setListening(null); };
 
   // ══════════════════════════════════════════════════════════════════════════
   // AJOUTER / ÉDITER UNE FICHE
@@ -1084,10 +1089,6 @@ Retourne UNIQUEMENT ce JSON: {"wrong":["mauvaise1","mauvaise2","mauvaise3"]}`
     utt.onerror = () => setPracticeSpeaking(false);
     window.speechSynthesis.speak(utt);
   };
-
-  // ── REFS POUR LE MICRO DU CHAT ──
-  const practiceMediaRecorderRef = useRef(null);
-  const practiceAudioChunksRef = useRef([]);
 
   // ── FONCTION TOGGLE (DÉMARRER / ARRÊTER) ──
   const togglePracticeMic = async () => {
