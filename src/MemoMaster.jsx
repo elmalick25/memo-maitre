@@ -1086,60 +1086,76 @@ Retourne UNIQUEMENT ce JSON: {"wrong":["mauvaise1","mauvaise2","mauvaise3"]}`
     window.speechSynthesis.speak(utt);
   };
 
-  const startPracticeMic = () => {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      showToast("Microphone non supporté. Utilise Chrome ou Edge ! 🎙️", "error");
-      return;
-    }
-    // Si déjà en écoute → arrêter
+  // ── REFS POUR LE MICRO DU CHAT ──
+  const practiceMediaRecorderRef = useRef(null);
+  const practiceAudioChunksRef = useRef([]);
+
+  // ── FONCTION TOGGLE (DÉMARRER / ARRÊTER) ──
+  const togglePracticeMic = async () => {
+    // 1. SI ON ENREGISTRE DÉJÀ -> ON ARRÊTE
     if (practiceListening) {
-      practiceRecRef.current?.abort();
-      setPracticeListening(false);
-      return;
-    }
-    // Couper la synthèse vocale si l'IA parle
-    window.speechSynthesis?.cancel();
-    setPracticeSpeaking(false);
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new SR();
-    rec.lang = "en-US";
-    rec.continuous = false;
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-
-    rec.onstart = () => { setPracticeListening(true); };
-
-    rec.onresult = (e) => {
-      const transcript = Array.from(e.results)
-        .map(r => r[0].transcript).join(" ").trim();
-      setPracticeListening(false);
-      if (transcript) sendPracticeMessage(transcript);
-    };
-
-    rec.onerror = (e) => {
-      setPracticeListening(false);
-      if (e.error === "not-allowed" || e.error === "permission-denied") {
-        showToast("❌ Accès micro refusé. Clique sur le cadenas dans la barre d'adresse et autorise le micro.", "error");
-      } else if (e.error === "no-speech") {
-        showToast("🔇 Aucune parole détectée. Réessaie !", "info");
-      } else if (e.error === "network") {
-        showToast("🌐 Erreur réseau micro. Vérifie ta connexion.", "error");
-      } else if (e.error === "aborted") {
-        // ignoré (arrêt volontaire)
-      } else {
-        showToast(`Erreur micro: ${e.error}`, "error");
+      if (practiceMediaRecorderRef.current && practiceMediaRecorderRef.current.state === "recording") {
+        practiceMediaRecorderRef.current.stop();
       }
-    };
+      return; // On sort de la fonction, le 'onstop' va faire le reste
+    }
 
-    rec.onend = () => { setPracticeListening(false); };
-
-    practiceRecRef.current = rec;
+    // 2. SINON -> ON DÉMARRE L'ENREGISTREMENT
     try {
-      rec.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      practiceMediaRecorderRef.current = mediaRecorder;
+      practiceAudioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          practiceAudioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        setPracticeListening(false);
+        setPracticeInput("⏳ Transcription Whisper en cours..."); // Indication visuelle
+
+        const audioBlob = new Blob(practiceAudioChunksRef.current, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append("file", audioBlob, "audio.webm");
+        formData.append("model", "whisper-large-v3");
+        formData.append("language", "en"); // On force l'anglais pour le chatbot
+
+        try {
+          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}` },
+            body: formData
+          });
+
+          if (!res.ok) throw new Error(`Erreur API: ${res.status}`);
+          const data = await res.json();
+
+          if (data.text) {
+            const transcribedText = data.text.trim();
+            setPracticeInput("");
+            // ENVOI AUTOMATIQUE DU MESSAGE TRANSCRIT
+            sendPracticeMessage(transcribedText);
+          } else {
+            setPracticeInput("");
+          }
+        } catch (err) {
+          console.error("Erreur Whisper Chat :", err);
+          setPracticeInput("");
+          showToast("Erreur de transcription Whisper.", "error");
+        } finally {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      };
+
+      mediaRecorder.start();
+      setPracticeListening(true);
     } catch (err) {
+      console.error("Accès micro refusé :", err);
+      showToast("Micro refusé. Vérifie les permissions.", "error");
       setPracticeListening(false);
-      showToast("Impossible de démarrer le micro. Réessaie !", "error");
     }
   };
 
@@ -2599,9 +2615,9 @@ Retourne UNIQUEMENT ce JSON: {"wrong":["mauvaise1","mauvaise2","mauvaise3"]}`
               <div style={{ padding: "16px 20px", borderTop: "1px solid #D1FAE5", background: "#F0FDF4", display: "flex", gap: 10, alignItems: "center" }}>
                 {/* MIC BUTTON — gros et visible */}
                 <button
-                  onClick={startPracticeMic}
+                  onClick={togglePracticeMic}
                   className={practiceListening ? "" : "hov"}
-                  title={practiceListening ? "Click to stop listening" : "Click to speak (English)"}
+                  title={practiceListening ? "Click to stop and send" : "Click to speak (English)"}
                   style={{
                     width: 52, height: 52, borderRadius: 16, flexShrink: 0,
                     background: practiceListening
@@ -2621,9 +2637,9 @@ Retourne UNIQUEMENT ce JSON: {"wrong":["mauvaise1","mauvaise2","mauvaise3"]}`
                   value={practiceInput}
                   onChange={e => setPracticeInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPracticeMessage(practiceInput); } }}
-                  placeholder={practiceListening ? "🎙️ Listening… speak in English!" : "Type in English or press the mic button to speak..."}
+                  placeholder={practiceListening ? "🎙️ Listening... click ⏹️ when finished!" : "Type in English or press the mic button to speak..."}
                   style={{ flex: 1, padding: "14px 18px", background: "white", border: "2px solid #D1FAE5", borderRadius: 14, fontSize: 15, color: "#1F2937", outline: "none", fontFamily: "'Sora', sans-serif", transition: "border-color 0.2s" }}
-                  disabled={practiceListening}
+                  disabled={practiceListening || practiceInput.includes("⏳")}
                 />
 
                 <button
@@ -2637,13 +2653,12 @@ Retourne UNIQUEMENT ce JSON: {"wrong":["mauvaise1","mauvaise2","mauvaise3"]}`
               </div>
             </div>
 
-            {/* Mic tip */}
+            {/* Mic tip MIS À JOUR */}
             <div style={{ marginTop: 16, background: "#ECFDF5", border: "1px solid #A7F3D0", borderRadius: 16, padding: "14px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
               <span style={{ fontSize: 20 }}>💡</span>
               <div style={{ fontSize: 13, color: "#065F46", lineHeight: 1.6 }}>
-                <strong>How to use the mic:</strong> Click the green 🎙️ button → speak your sentence in English → it stops automatically when you finish. 
-                Make sure to <strong>allow microphone access</strong> in your browser when asked. Works best on Chrome/Edge.
-                The AI will respond and <strong>read its answer aloud</strong> automatically so you can practice your listening too!
+                <strong>How to use the mic:</strong> Click the green 🎙️ button to start. Take your time, breathe, and think. 
+                <strong> Click the red ⏹️ button when you are done.</strong> The AI will transcribe and reply instantly!
               </div>
             </div>
           </div>
