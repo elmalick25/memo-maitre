@@ -1,3 +1,4 @@
+// MemoMaster.jsx – GOD LEVEL v6 (Full Merge)
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { initializeApp, getApps } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
@@ -200,11 +201,77 @@ function parseImport(text) {
   } catch {}
   return null;
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GOD LEVEL HOOKS – Audio, Confetti, Highlight, Mermaid
+// ══════════════════════════════════════════════════════════════════════════════
+const useAudioFeedback = () => {
+  const audioCtxRef = useRef(null);
+  const getCtx = () => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    return audioCtxRef.current;
+  };
+  const playTone = (freq, type, duration) => {
+    const ctx = getCtx();
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(freq, ctx.currentTime);
+    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + duration);
+  };
+  const playCorrect = () => playTone(800, "sine", 0.15);
+  const playHard = () => playTone(400, "triangle", 0.2);
+  const playAgain = () => playTone(200, "sawtooth", 0.3);
+  return { playCorrect, playHard, playAgain };
+};
+
+const useConfetti = () => {
+  const fire = () => {
+    if (window.confetti) {
+      window.confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+    }
+  };
+  return fire;
+};
+
+const useHighlight = () => {
+  const highlightCode = useCallback((text) => {
+    if (!text || typeof text !== "string") return text;
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+    return text.replace(codeBlockRegex, (_, lang, code) => {
+      try {
+        if (window.hljs) {
+          const highlighted = lang && window.hljs.getLanguage(lang)
+            ? window.hljs.highlight(code, { language: lang }).value
+            : window.hljs.highlightAuto(code).value;
+          return `<pre><code class="hljs ${lang}">${highlighted}</code></pre>`;
+        }
+      } catch {}
+      return `<pre><code>${code}</code></pre>`;
+    });
+  }, []);
+  return highlightCode;
+};
+
+const useMermaid = () => {
+  const renderMermaid = useCallback(async (text) => {
+    return text;
+  }, []);
+  return renderMermaid;
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
 export default function MemoMaster() {
-  // Tous les états existants
+  // ── Tous les états existants ───────────────────────────────────────────
   const [view, setView] = useState("dashboard");
   const [expressions, setExpressions] = useState([]);
   const [categories, setCategories] = useState(CATEGORIES_DEFAULT);
@@ -244,6 +311,7 @@ export default function MemoMaster() {
   const [mnemonicText, setMnemonicText] = useState("");
   const [mnemonicLoading, setMnemonicLoading] = useState(false);
 
+  // Examens
   const [examConfig, setExamConfig] = useState({ category: "Toutes", count: 10, timePerCard: 30, mode: "standard", difficulty: "adaptative" });
   const [examActive, setExamActive] = useState(false);
   const [examQueue, setExamQueue] = useState([]);
@@ -263,6 +331,7 @@ export default function MemoMaster() {
   const [examStreak, setExamStreak] = useState(0);
   const [examStartTime, setExamStartTime] = useState(null);
 
+  // Fiches Add/Edit
   const [addForm, setAddForm] = useState({ front: "", back: "", example: "", category: "", imageUrl: null });
   const [editingId, setEditingId] = useState(null);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -282,38 +351,28 @@ export default function MemoMaster() {
   const [newCat, setNewCat] = useState({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4F8EF7" });
   const [importText, setImportText] = useState("");
   const [showImport, setShowImport] = useState(false);
-  const [newLog, setNewLog] = useState("");
-
-  const [docFile, setDocFile] = useState(null);
-  const [docText, setDocText] = useState("");
-  const [docLoading, setDocLoading] = useState(false);
-  const [docFullCard, setDocFullCard] = useState(false);
-  const [docCategory, setDocCategory] = useState(CATEGORIES_DEFAULT[0].name);
-  const [docErrorDetails, setDocErrorDetails] = useState(null);
-  // ── LAB AMÉLIORÉ ─────────────────────────────────────────────────────────
-  const [labSubView, setLabSubView] = useState("home"); // home | pdf | resume | coach | tools
+  
+  // Lab (PDF, Résumés, Coach)
+  const [labSubView, setLabSubView] = useState("home"); 
   const [pdfParsing, setPdfParsing] = useState(false);
   const [pdfExtractedText, setPdfExtractedText] = useState("");
   const [pdfFileName, setPdfFileName] = useState("");
   const [pdfPageCount, setPdfPageCount] = useState(0);
-  const [pdfGenMode, setPdfGenMode] = useState("fiches"); // fiches | resume | both
   const [pdfCardsCount, setPdfCardsCount] = useState(8);
   const [pdfGenLoading, setPdfGenLoading] = useState(false);
   const [pdfBatchPreview, setPdfBatchPreview] = useState([]);
   const [pdfSummary, setPdfSummary] = useState("");
   const [pdfSummaryLoading, setPdfSummaryLoading] = useState(false);
-  // Résumé de cours standalone
+  const [docCategory, setDocCategory] = useState(CATEGORIES_DEFAULT[0].name);
+
   const [resumeText, setResumeText] = useState("");
   const [resumeFile, setResumeFile] = useState(null);
   const [resumeLoading, setResumeLoading] = useState(false);
-  const [resumeResult, setResumeResult] = useState(null); // { summary, keyPoints, mindmap }
-  const [resumeStyle, setResumeStyle] = useState("complet"); // complet | flash | cornell
+  const [resumeResult, setResumeResult] = useState(null); 
+  const [resumeStyle, setResumeStyle] = useState("complet"); 
   const [resumeParsing, setResumeParsing] = useState(false);
 
-  const statsRef = useRef(stats);
-  useEffect(() => { statsRef.current = stats; }, [stats]);
-
-  // AI English Practice
+  // English Practice
   const [practicePersona, setPracticePersona] = useState("Standard");
   const [practiceMessages, setPracticeMessages] = useState([
     { role: "assistant", text: "Hello! I'm your English conversation partner. I'm here to help you practice speaking and writing English naturally. What topic would you like to discuss today? 😊" }
@@ -329,27 +388,57 @@ export default function MemoMaster() {
   const practiceMediaRecorderRef = useRef(null);
   const practiceAudioChunksRef = useRef([]);
 
-  useEffect(() => { practiceMsgRef.current = practiceMessages; }, [practiceMessages]);
-  useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages]);
+  // ── GOD LEVEL – Nouveaux états (v6) ────────────────────────────────────────
+  const { playCorrect, playHard, playAgain } = useAudioFeedback();
+  const fireConfetti = useConfetti();
+  const highlightCode = useHighlight();
+  const renderMermaid = useMermaid();
 
-  // ── NOUVEAUX ÉTATS GOD LEVEL ─────────────────────────────────────────────
+  const [sessionMode, setSessionMode] = useState("standard");
+  const [showSessionSummary, setShowSessionSummary] = useState(false);
+  const [sessionSummary, setSessionSummary] = useState(null);
+  const [sessionTimer, setSessionTimer] = useState(0);
+  const sessionTimerRef = useRef(null);
+
+  const [retentionCurvePoints, setRetentionCurvePoints] = useState([]);
+  const [cardsToForget, setCardsToForget] = useState([]);
+  const [weeklyLoad, setWeeklyLoad] = useState([]);
+
+  const [voiceReviewActive, setVoiceReviewActive] = useState(false);
+  const voiceRecognitionRef = useRef(null);
+
+  // Academy (v6)
+  const [academyView, setAcademyView] = useState("home");
+  const [academyTopic, setAcademyTopic] = useState("");
+  const [academySyllabus, setAcademySyllabus] = useState(null);
+  const [academyLoading, setAcademyLoading] = useState(false);
+  const [academyProgress, setAcademyProgress] = useState({});
+  const [currentLesson, setCurrentLesson] = useState(null);
+  const [lessonQuiz, setLessonQuiz] = useState(null);
+  const [lessonState, setLessonState] = useState("explain");
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const [quizFeedback, setQuizFeedback] = useState("");
+  const [projectCode, setProjectCode] = useState("");
+  const [projectActive, setProjectActive] = useState(false);
+
+  // God Level (Tools Lab)
   const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
   const [coachPlan, setCoachPlan] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [playerLevel, setPlayerLevel] = useState(1);
   const [worldBossHp, setWorldBossHp] = useState(100);
   const [palaceMode, setPalaceMode] = useState(false);
-  // (doc2 states merged into unified lab state above)
-  // Collab
   const [studyRoomUsers, setStudyRoomUsers] = useState([]);
-  // Stress (simulé)
   const [stressLevel, setStressLevel] = useState(0);
-  // Prédiction note
   const [predictedScore, setPredictedScore] = useState(null);
-  // Confusion destroyer (post-exam)
   const [wrongAnswersForConfusion, setWrongAnswersForConfusion] = useState([]);
 
-  // Chargement initial
+  // Refs & Effects Initiaux
+  const statsRef = useRef(stats);
+  useEffect(() => { statsRef.current = stats; }, [stats]);
+  useEffect(() => { practiceMsgRef.current = practiceMessages; }, [practiceMessages]);
+  useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -430,6 +519,104 @@ export default function MemoMaster() {
       return [...prev, { date: todayStr, count }];
     });
   }, []);
+
+  // ── GOD LEVEL – Effets dashboard prédictif ─────────────────────────────
+  useEffect(() => {
+    if (expressions.length === 0) return;
+    const hardest = [...expressions].sort((a,b) => (b.difficulty || 9) - (a.difficulty || 9))[0];
+    if (hardest && hardest.stability) {
+      const points = [];
+      for (let t = 1; t <= 30; t++) {
+        points.push({ day: t, retention: Math.round(fsrsR(t, hardest.stability) * 100) });
+      }
+      setRetentionCurvePoints(points);
+    } else {
+      setRetentionCurvePoints([]);
+    }
+
+    const threeDaysLater = addDays(today(), 3);
+    const critical = expressions.filter(e => {
+      if (e.level >= 7) return false;
+      const retention = e.stability ? fsrsR( (new Date(e.nextReview) - new Date(today())) / 86400000, e.stability) : 1;
+      return retention < 0.7 && e.nextReview <= threeDaysLater;
+    });
+    setCardsToForget(critical.slice(0, 5));
+
+    const load = {};
+    for (let i = 0; i < 7; i++) {
+      const day = addDays(today(), i);
+      load[day] = 0;
+    }
+    expressions.forEach(e => {
+      if (e.level >= 7) return;
+      const reviewDay = e.nextReview;
+      if (reviewDay in load) load[reviewDay]++;
+    });
+    setWeeklyLoad(Object.entries(load).map(([day, count]) => ({ day, count })));
+  }, [expressions]);
+
+  // ── GOD LEVEL – Timer de session ──────────────────────────────────────
+  useEffect(() => {
+    if (view === "review" && !showSessionSummary) {
+      sessionTimerRef.current = setInterval(() => {
+        setSessionTimer(t => t + 1);
+      }, 1000);
+    } else {
+      clearInterval(sessionTimerRef.current);
+      if (view !== "review") setSessionTimer(0);
+    }
+    return () => clearInterval(sessionTimerRef.current);
+  }, [view, showSessionSummary]);
+
+  // ── GOD LEVEL – Feedback audio & confetti intégré ──────────────────────
+  const handleAnswerWithFeedback = useCallback((q, exp) => {
+    if (q === 0) playAgain();
+    else if (q === 3) playHard();
+    else playCorrect();
+
+    const updated = fsrs(exp, q);
+    const newLevel = q === 0 ? 0 : q === 3 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
+    const histEntry = { date: today(), q, newLevel, interval: updated.interval };
+    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry] } : e));
+
+    if (newLevel >= 7 && exp.level < 7) {
+      fireConfetti();
+      showToast("🎉 Fiche maîtrisée ! Confetti !", "success");
+    }
+
+    const done = reviewSessionDone + 1;
+    setReviewSessionDone(done);
+
+    if (reviewIndex + 1 >= reviewQueue.length) {
+      updateStreakAfterSession(done);
+      setStats(prev => { const ns = { ...prev }; checkBadges(expressions, ns, sessions, unlockedBadges); return ns; });
+      const sessionCards = reviewQueue;
+      const avgTime = sessionTimer / Math.max(1, sessionCards.length);
+      const avgBefore = (sessionCards.reduce((s, c) => s + (c.level || 0), 0) / sessionCards.length).toFixed(1);
+      
+      setSessionSummary({
+        totalCards: sessionCards.length,
+        avgTime: Math.round(avgTime),
+        avgLevelBefore: avgBefore,
+        avgLevelAfter: avgBefore, // approximatif ici
+      });
+      setShowSessionSummary(true);
+      setView("review");
+    } else {
+      setReviewIndex(i => i + 1);
+      setRevealed(false);
+      setUserAnswer("");
+      setSocraticHint("");
+      setMnemonicText("");
+      setCardStartTime(Date.now());
+    }
+  }, [playCorrect, playHard, playAgain, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast]);
+
+  const handleAnswer = (q) => {
+    const exp = reviewQueue[reviewIndex];
+    reviewQueue[reviewIndex]._answer = q;
+    handleAnswerWithFeedback(q, exp);
+  };
 
   // Upload Storage & Vision IA
   const handleFileUpload = async (e) => {
@@ -657,13 +844,38 @@ export default function MemoMaster() {
     });
   }, [categories]);
 
-  const startReview = (catFilter = null) => {
+  const startReview = (catFilter = null, mode = "standard") => {
     let queue = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
-    queue = getSmartQueue(queue);
+    if (mode === "interleaving") {
+      const byCat = {};
+      queue.forEach(e => {
+        if (!byCat[e.category]) byCat[e.category] = [];
+        byCat[e.category].push(e);
+      });
+      queue = [];
+      const maxLen = Math.max(...Object.values(byCat).map(a => a.length));
+      for (let i = 0; i < maxLen; i++) {
+        for (const cat in byCat) {
+          if (byCat[cat][i]) queue.push(byCat[cat][i]);
+        }
+      }
+    } else {
+      queue = getSmartQueue(queue);
+    }
+    
     if (queue.length === 0) { showToast("Aucune fiche à réviser !", "info"); return; }
     setReviewQueue(queue); setReviewIndex(0); setRevealed(false); setUserAnswer(""); setSocraticHint(""); setMnemonicText(""); setReviewSessionDone(0);
     setCardStartTime(Date.now());
+    setShowSessionSummary(false);
+    setSessionTimer(0);
     setView("review");
+
+    if (mode === "vocal") {
+      setVoiceReviewActive(true);
+      startVoiceReview();
+    } else {
+      setVoiceReviewActive(false);
+    }
   };
 
   const handleReveal = () => {
@@ -675,22 +887,29 @@ export default function MemoMaster() {
     setRevealed(true);
   };
 
-  const handleAnswer = (q) => {
-    const exp = reviewQueue[reviewIndex];
-    const updated = fsrs(exp, q);
-    const newLevel = q === 0 ? 0 : q === 3 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
-    const histEntry = { date: today(), q, newLevel, interval: updated.interval };
-    setExpressions((prev) => prev.map((e) => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry] } : e));
-    const done = reviewSessionDone + 1; setReviewSessionDone(done);
-    if (reviewIndex + 1 >= reviewQueue.length) {
-      updateStreakAfterSession(done);
-      setStats((prev) => { const ns = { ...prev }; checkBadges(expressions, ns, sessions, unlockedBadges); return ns; });
-      showToast(`🎉 ${done} carte(s) révisée(s) !`);
-      setView("dashboard");
-    } else {
-      setReviewIndex((i) => i + 1); setRevealed(false); setUserAnswer(""); setSocraticHint(""); setMnemonicText("");
-      setCardStartTime(Date.now());
+  const startVoiceReview = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast("Reconnaissance vocale non supportée.", "error");
+      return;
     }
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'fr-FR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    voiceRecognitionRef.current = recognition;
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.trim();
+      setUserAnswer(transcript);
+      handleSemanticEval();
+    };
+    recognition.start();
+    showToast("Parle maintenant...");
+  };
+
+  const handleRevealAndStopVoice = () => {
+    if (voiceRecognitionRef.current) voiceRecognitionRef.current.stop();
+    handleReveal();
   };
 
   useEffect(() => {
@@ -822,11 +1041,15 @@ export default function MemoMaster() {
     return list;
   }, [expressions, filterCat, filterLevel, searchQuery]);
 
-  const levelLabel = ["Nouveau", "J+1", "J+6", "Adaptatif", "Adaptatif", "Avancé", "Expert", "✅ Maîtrisé"];
+  const cognitiveTag = (card) => {
+    const diff = card.difficulty ?? (card.easeFactor ? 5 - (card.easeFactor - 1.5) * 2.5 : 2.5);
+    if (diff >= 7) return { icon: "💀", label: "Difficile", color: "#EF4444" };
+    if (diff >= 4) return { icon: "🤔", label: "Moyen", color: "#F59E0B" };
+    return { icon: "🐣", label: "Facile", color: "#10B981" };
+  };
 
   const hour = new Date().getHours();
   const greeting = hour >= 18 ? "Bonsoir" : "Bonjour";
-  const estimatedTime = Math.ceil(todayReviews.length * 0.5);
   const newCards = expressions.filter(e => e.level === 0);
   const criticalCards = todayReviews.filter(e => (e.difficulty !== undefined && e.difficulty >= 8) || (e.difficulty === undefined && e.easeFactor <= 1.8));
   const weakestCat = categories.length > 0 ? categories.map(cat => {
@@ -894,9 +1117,99 @@ export default function MemoMaster() {
   const resetPracticeChat = () => { window.speechSynthesis?.cancel(); setPracticeSpeaking(false); setPracticeMessages([{ role: "assistant", text: `Great! Let's talk about "${practiceTopic}". I'm ready whenever you are! 🎤` }]); };
 
   // ══════════════════════════════════════════════════════════════════════════
-  // FONCTIONS GOD LEVEL
+  // ACADEMY 
   // ══════════════════════════════════════════════════════════════════════════
+  const generateSyllabus = async () => {
+    if (!academyTopic.trim()) return;
+    setAcademyLoading(true);
+    try {
+      const raw = await callClaude(
+        `Tu es un expert en création de plans d'apprentissage pour développeurs. Génère un syllabus en JSON avec : { "concepts": [{"title": "...", "dependencies": ["concept précédent"], "description": "..."}] } pour le sujet "${academyTopic}". Chaque concept doit être ordonné logiquement. Limite à 10-15 concepts.`,
+        academyTopic
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const syllabus = JSON.parse(clean);
+      setAcademySyllabus(syllabus);
+      setAcademyProgress({});
+      setAcademyView("syllabus");
+      showToast("📚 Syllabus généré !");
+    } catch (err) {
+      showToast("Erreur génération syllabus: " + err.message, "error");
+    } finally {
+      setAcademyLoading(false);
+    }
+  };
 
+  const canStartConcept = (concept) => {
+    if (!academySyllabus) return true;
+    const deps = concept.dependencies || [];
+    return deps.every(dep => (academyProgress[dep] || 0) >= 4);
+  };
+
+  const startLesson = async (concept) => {
+    setCurrentLesson(concept);
+    setLessonState("explain");
+    setLessonQuiz(null);
+    try {
+      const raw = await callClaude(
+        `Tu es un tuteur interactif pour "${academyTopic}". Explique le concept "${concept.title}" de manière concise (max 3-5 min de lecture). Utilise une analogie concrète et un exemple de code si pertinent. Termine par une série de 3 questions de quiz socratique pour vérifier la compréhension. Format JSON : { "explanation": "texte explicatif...", "quiz": [{"question": "...", "answer": "..."}] }`,
+        concept.title
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const lessonData = JSON.parse(clean);
+      setCurrentLesson({ ...concept, explanation: lessonData.explanation });
+      setLessonQuiz(lessonData.quiz);
+    } catch (err) {
+      showToast("Erreur chargement leçon: " + err.message, "error");
+    }
+  };
+
+  const checkQuizAnswer = (idx, answer) => {
+    setQuizAnswers(prev => ({ ...prev, [idx]: answer }));
+  };
+
+  const submitQuiz = () => {
+    if (!lessonQuiz) return;
+    let correct = 0;
+    lessonQuiz.forEach((q, idx) => {
+      if (quizAnswers[idx]?.toLowerCase().trim() === q.answer.toLowerCase().trim()) correct++;
+    });
+    const passed = correct >= lessonQuiz.length * 0.6;
+    setQuizFeedback(passed ? "Bonne compréhension ! Le concept est validé." : "Besoin de plus d'explication. L'IA va reformuler différemment.");
+    if (passed) {
+      generateCardsFromConcept(currentLesson);
+      setAcademyProgress(prev => ({ ...prev, [currentLesson.title]: 5 }));
+      setLessonState("auto-generate");
+    } else {
+      setLessonState("explain-reformulate");
+    }
+  };
+
+  const generateCardsFromConcept = async (concept) => {
+    try {
+      const raw = await callClaude(
+        `Génère 2-3 fiches de révision FSRS pour le concept "${concept.title}" expliqué par "${concept.explanation}". Format JSON : {"cards": [{"front":"...","back":"...","example":"..."}]}`,
+        concept.title
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const data = JSON.parse(clean);
+      const newCards = (data.cards || []).map(c => ({
+        id: Date.now().toString() + Math.random(),
+        front: c.front, back: c.back, example: c.example || "",
+        category: academyTopic,
+        level: 0, nextReview: today(), createdAt: today(),
+        easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
+      }));
+      setExpressions(prev => [...newCards, ...prev]);
+      showToast("✨ Fiches générées automatiquement !");
+    } catch (err) {
+      showToast("Erreur génération fiches", "error");
+    }
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // FONCTIONS GOD LEVEL (Lab Outils)
+  // ══════════════════════════════════════════════════════════════════════════
   const generateGraph = () => {
     showToast("🧠 Génération du graphe de connaissances...", "info");
     const nodes = categories.map((cat, i) => ({ id: cat.name, label: cat.name, color: cat.color, x: Math.random()*400, y: Math.random()*300 }));
@@ -970,7 +1283,6 @@ export default function MemoMaster() {
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          // Chargement dynamique de pdf.js depuis CDN
           if (!window.pdfjsLib) {
             await new Promise((res, rej) => {
               const script = document.createElement("script");
@@ -1030,7 +1342,6 @@ export default function MemoMaster() {
       }
       setPdfParsing(false);
     } else {
-      // target = "resume"
       setResumeFile(file);
       setResumeResult(null);
       setResumeParsing(true);
@@ -1053,7 +1364,6 @@ export default function MemoMaster() {
     }
   };
 
-  // Génère les fiches depuis le texte PDF extrait
   const generateCardsFromPdf = async () => {
     if (!pdfExtractedText.trim()) { showToast("Aucun texte extrait. Charge d'abord un PDF.", "error"); return; }
     setPdfGenLoading(true);
@@ -1072,7 +1382,6 @@ export default function MemoMaster() {
     setPdfGenLoading(false);
   };
 
-  // Génère un résumé du PDF
   const generatePdfSummary = async () => {
     if (!pdfExtractedText.trim()) { showToast("Aucun texte extrait. Charge d'abord un PDF.", "error"); return; }
     setPdfSummaryLoading(true);
@@ -1133,10 +1442,6 @@ export default function MemoMaster() {
     setResumeLoading(false);
   };
 
-  // Ancien handler kept for compatibility
-  const handleDocumentUpload = (e) => { handlePdfUpload(e, "lab"); };
-  const analyzeDocument = generateCardsFromPdf;
-
   const joinStudyRoom = () => {
     setStudyRoomUsers(["El Hadji Malick", "Ami(e) 1", "Ami(e) 2"]);
     showToast("👥 Tu as rejoint la salle d'étude (simulation).");
@@ -1180,6 +1485,7 @@ export default function MemoMaster() {
         input, select, textarea { font-family: 'Sora', sans-serif !important; color: ${theme.text} !important; outline: none; transition: border 0.2s; }
         input:focus, textarea:focus, select:focus { border-color: #3B82F6 !important; }
         .tab-active { background: ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.2)"} !important; font-weight: 700 !important; color: ${isDarkMode ? "white" : "white"} !important; }
+        .code-block { background: ${isDarkMode ? "#1E293B" : "#F8FAFF"}; border: 1px solid ${theme.border}; border-radius: 12px; padding: 14px; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; }
       `}</style>
 
       {lofiPlaying && <iframe width="0" height="0" src="https://www.youtube.com/embed/jfKfPfyJRdk?autoplay=1" frameBorder="0" allow="autoplay" title="Lofi"></iframe>}
@@ -1196,7 +1502,7 @@ export default function MemoMaster() {
       <nav style={{ background: theme.nav, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 70, borderBottom: isDarkMode ? `1px solid ${theme.border}` : "none" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 42, height: 42, background: "rgba(255,255,255,0.2)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "white", fontFamily: "'JetBrains Mono', monospace" }}>M²</div>
-          <div><div style={{ fontSize: 20, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "#DBEAFE", fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>GOD LEVEL v5</div></div>
+          <div><div style={{ fontSize: 20, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "#DBEAFE", fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>GOD LEVEL v6</div></div>
         </div>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
           {[
@@ -1206,11 +1512,12 @@ export default function MemoMaster() {
             { id: "categories", icon: "◉", label: "Modules" },
             { id: "exam", icon: "🎯", label: "Examen" },
             { id: "practice", icon: "🗣️", label: "English" },
+            { id: "academy", icon: "🏫", label: "Academy" },
             { id: "stats", icon: "▣", label: "Stats" },
             { id: "badges", icon: "🏆", label: "Badges" },
             { id: "lab", icon: "🧪", label: "Lab" },
           ].map((n) => (
-            <button key={n.id} onClick={() => { setView(n.id); if (n.id === "exam") setExamSubView("home"); }} className={view === n.id ? "tab-active" : "hov"} style={{ padding: "8px 16px", borderRadius: 10, color: view === n.id ? "white" : "rgba(255,255,255,0.8)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: "transparent", transition: "all 0.2s" }}>
+            <button key={n.id} onClick={() => { setView(n.id); if (n.id === "exam") setExamSubView("home"); if (n.id === "academy") setAcademyView("home"); }} className={view === n.id ? "tab-active" : "hov"} style={{ padding: "8px 16px", borderRadius: 10, color: view === n.id ? "white" : "rgba(255,255,255,0.8)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: "transparent", transition: "all 0.2s" }}>
               {n.icon} {n.label} {n.id === "dashboard" && todayReviews.length > 0 && <span style={{ background: "#F59E0B", color: "white", borderRadius: "50%", padding: "2px 6px", fontSize: 10, fontWeight: 900, marginLeft: 4 }}>{todayReviews.length}</span>}
             </button>
           ))}
@@ -1220,6 +1527,825 @@ export default function MemoMaster() {
       </nav>
 
       <main style={{ flex: 1, maxWidth: 1000, width: "100%", margin: "0 auto", padding: "32px 20px 80px" }}>
+
+        {/* DASHBOARD GOD LEVEL */}
+        {view === "dashboard" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.cardBg, padding: "24px 32px", borderRadius: 24, marginBottom: 24, boxShadow: "0 4px 15px rgba(0,0,0,0.03)", border: `1px solid ${theme.border}`, flexWrap: "wrap", gap: 16 }}>
+              <div>
+                <h1 style={{ fontSize: 26, fontWeight: 900, color: theme.text, letterSpacing: "-0.5px", marginBottom: 4 }}>{greeting} El Hadji Malick {hour >= 18 ? "🌙" : "☀️"}</h1>
+                <p style={{ fontSize: 15, color: theme.textMuted, fontWeight: 500 }}>
+                  {stats.streak > 0 ? `Tu es sur une série de ${stats.streak} jours. Protège ton streak ! 🔥` : "C'est le moment de lancer ton premier streak de la semaine. 🌱"}
+                </p>
+                {retentionCurvePoints.length > 0 && (
+                  <div style={{ marginTop: 15, padding: 12, background: isDarkMode ? "#1E3A8A" : "rgba(59,130,246,0.1)", borderRadius: 8, fontSize: 13, color: isDarkMode ? "#DBEAFE" : "#1D4ED8", border: `1px solid ${theme.highlight}44` }}>
+                    <strong>📉 Courbe de rétention :</strong> la carte la plus difficile passera sous 70% à J+{retentionCurvePoints.find(p => p.retention < 70)?.day || "∞"}.
+                  </div>
+                )}
+                <div style={{ marginTop: 10, padding: 12, background: isDarkMode ? "#1E3A8A" : "rgba(59,130,246,0.1)", borderRadius: 8, fontSize: 13, color: isDarkMode ? "#DBEAFE" : "#1D4ED8", border: `1px solid ${theme.highlight}44` }}>
+                  <strong>🔮 Graphe Prédictif :</strong> {predictedDaysToMastery > 0 ? `À ce rythme (${avgReviewsPerDay} rév/jour), ton graphe sera maîtrisé dans ~${predictedDaysToMastery} jours.` : "Connaissances actuelles 100% maîtrisées !"}
+                </div>
+              </div>
+              <div style={{ background: theme.inputBg, padding: "12px 16px", borderRadius: 16, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center" }}>
+                <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700, marginRight: 8 }}>CETTE SEMAINE</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {weeks[11]?.map(date => {
+                    const cnt = heatmap[date] || 0;
+                    const isToday = date === today();
+                    return <div key={date} title={`${date} : ${cnt} rév.`} style={{ width: 16, height: 16, borderRadius: 4, background: cnt > 0 ? "#4F8EF7" : (isDarkMode?"#334155":"#EFF6FF"), border: isToday ? "2px solid #1D4ED8" : "none", opacity: date > today() ? 0.3 : 1 }} />;
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {todayReviews.length > 0 && (() => {
+              const hardestOfDay = [...todayReviews].sort((a,b) => (b.difficulty||9) - (a.difficulty||9))[0];
+              if (hardestOfDay) {
+                const tag = cognitiveTag(hardestOfDay);
+                return (
+                  <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 16, padding: 14, marginBottom: 24 }}>
+                    <strong>💀 Carte la plus difficile du jour :</strong> {hardestOfDay.front} <span style={{ color: tag.color }}>{tag.icon} {tag.label}</span>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {cardsToForget.length > 0 && (
+              <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 16, padding: 14, marginBottom: 24 }}>
+                <strong>⚠️ Risque d'oubli imminent :</strong>
+                <ul style={{ margin: 0, paddingLeft: 20 }}>
+                  {cardsToForget.map(c => (
+                    <li key={c.id}>{c.front} (révision {c.nextReview})</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, marginBottom: 24, border: `1px solid ${theme.border}` }}>
+              <h3 style={{ fontWeight: 800, marginBottom: 12 }}>📅 Charge de révision sur 7 jours</h3>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 80 }}>
+                {weeklyLoad.map(({ day, count }) => (
+                  <div key={day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: theme.textMuted, marginBottom: 4 }}>{count}</div>
+                    <div style={{ width: "100%", borderRadius: "4px 4px 0 0", background: count > 10 ? "#EF4444" : count > 5 ? "#F59E0B" : "#10B981", height: `${Math.min(60, count * 6)}px` }} />
+                    <div style={{ fontSize: 9, color: theme.textMuted, marginTop: 4 }}>{day.slice(5)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ background: isDarkMode ? "linear-gradient(135deg, #1E293B, #0F172A)" : "linear-gradient(135deg, #ffffff, #F8FAFF)", padding: "32px", borderRadius: 24, border: `2px solid ${theme.border}`, marginBottom: 32, position: "relative", overflow: "hidden" }} className="card-hov">
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#EF4444", animation: "pulse 1.5s infinite" }}></div>
+                <h2 style={{ fontSize: 20, fontWeight: 900, color: theme.highlight, margin: 0 }}>Mission du jour</h2>
+              </div>
+              <div style={{ display: "flex", gap: 20, marginTop: 24, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <div style={{ fontSize: 42, fontWeight: 900, color: todayReviews.length > 0 ? theme.text : "#40C080", lineHeight: 1 }}>{todayReviews.length}</div>
+                  <div style={{ color: theme.textMuted, fontWeight: 600, marginTop: 4 }}>Fiches à réviser (~{Math.ceil(todayReviews.length * 0.5)} min)</div>
+                  {criticalCards.length > 0 && <div style={{ marginTop: 12, padding: "10px 14px", background: "#FEF2F2", color: "#B91C1C", borderRadius: 10, fontSize: 13, borderLeft: "3px solid #EF4444" }}>⚠️ <strong>Attention :</strong> {criticalCards.length} fiches critiques risquent de repasser au niveau zéro d'ici demain.</div>}
+                </div>
+                <div style={{ background: isDarkMode ? "#312E81" : "#F5F3FF", border: `1px solid ${isDarkMode?"#4338CA":"#E0E7FF"}`, borderRadius: 16, padding: "16px 20px", minWidth: 160, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7B5FF5" }}>{newCards.length}</div>
+                  <div style={{ color: theme.text, fontSize: 13, fontWeight: 700 }}>Dans l'Inbox</div>
+                  <div style={{ color: theme.textMuted, fontSize: 11, marginTop: 2 }}>Nouvelles fiches non apprises</div>
+                </div>
+              </div>
+              
+              <div style={{ marginTop: 24, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <button className="btn-glow hov" onClick={() => startReview(null, "standard")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 18, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
+                  🚀 Standard
+                </button>
+                <button className="hov" onClick={() => startReview(null, "interleaving")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: theme.cardBg, border: `2px solid ${theme.highlight}`, color: theme.highlight, borderRadius: 16, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
+                  🔀 Interleaving
+                </button>
+                <button className="hov" onClick={() => startReview(null, "vocal")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: theme.cardBg, border: `2px solid #10B981`, color: "#10B981", borderRadius: 16, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
+                  🎤 Vocal
+                </button>
+              </div>
+            </div>
+            
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.highlight, marginBottom: 16, marginTop: 32 }}>⚡ État des modules</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+              {categories.map((cat) => {
+                const catExps = expressions.filter((e) => e.category === cat.name);
+                const dueCount = catExps.filter((e) => e.nextReview <= today() && e.level < 7).length;
+                const mastered = catExps.filter((e) => e.level >= 7).length;
+                const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
+                const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
+                const isUrgent = daysToExam !== null && daysToExam <= 7;
+                const catColor = isUrgent ? "#EF4444" : (cat.color || "#1D4ED8");
+                return (
+                  <div key={cat.name} style={{
+                    background: theme.cardBg,
+                    borderRadius: 20,
+                    padding: "20px",
+                    boxShadow: "0 4px 15px rgba(0,0,0,0.03)",
+                    borderWidth: '1px',
+                    borderStyle: 'solid',
+                    borderColor: theme.border,
+                    borderLeftWidth: '6px',
+                    borderLeftStyle: 'solid',
+                    borderLeftColor: catColor,
+                    transition: "all 0.25s"
+                  }} className="card-hov">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                      <div style={{ fontWeight: 800, color: theme.text, fontSize: 16, marginBottom: 12 }}>{cat.name}</div>
+                      {dueCount > 0 && <span style={{ background: "#FEE2E2", color: "#EF4444", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>{dueCount} dues</span>}
+                    </div>
+                    {daysToExam !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isUrgent ? "#EF4444" : "#D97706", marginBottom: 8 }}>{daysToExam > 0 ? `⏳ Examen J-${daysToExam}` : daysToExam === 0 ? "🚨 Examen aujourd'hui !" : "Passé"}</div>}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                      <div style={{ flex: 1, height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ height: "100%", borderRadius: 4, transition: "width 0.5s ease", width: `${pct}%`, background: pct >= (cat.targetScore || 80) ? "#10B981" : catColor }} />
+                      </div>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: catColor, minWidth: 38 }}>{pct}%</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.highlight, marginBottom: 16, marginTop: 32 }}>🤖 Renforcer tes points faibles</h2>
+            <div style={{ background: isDarkMode ? "#1E293B" : "linear-gradient(135deg, #F5F3FF, #EFF6FF)", border: `1px solid ${isDarkMode?"#334155":"#E0E7FF"}`, borderRadius: 22, padding: "24px", marginBottom: 32 }}>
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                <span style={{ fontSize: 32, lineHeight: 1 }}>✨</span>
+                <div>
+                  <div style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Suggestion IA : Concentre-toi sur <span style={{ color: "#7B5FF5" }}>{weakestCat}</span></div>
+                  <div style={{ color: theme.textMuted, fontSize: 13 }}>C'est ton module le moins maîtrisé. Génère une nouvelle fiche pour consolider tes bases.</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+                <select value={addForm.category || weakestCat} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ flex: "0 0 auto", width: "auto", minWidth: 160, padding: "14px 16px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 14, color: theme.text, cursor: "pointer" }}>
+                  {catNames.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "14px 18px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 14, color: theme.text }} placeholder="Tape un concept que tu as du mal à retenir..." />
+                <button className="hov btn-glow" onClick={async () => { if(!addForm.category) setAddForm(f => ({...f, category: weakestCat})); await handleAIGenerate(); setView("add"); }} disabled={aiLoading || !aiPrompt.trim()} style={{ padding: "14px 24px", background: "#7B5FF5", color: "white", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  {aiLoading ? <span style={{ animation: "pulse 1s infinite" }}>⏳</span> : "Générer la fiche"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VUE RÉVISION */}
+        {view === "review" && (showSessionSummary ? (
+          <div style={{ animation: "fadeUp 0.4s ease", background: theme.cardBg, borderRadius: 26, padding: 32, maxWidth: 700, margin: "0 auto", textAlign: "center", border: `1px solid ${theme.border}` }}>
+            <h1 style={{ fontWeight: 900, color: theme.highlight }}>Session terminée ! 🎉</h1>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 24 }}>
+              <div style={{ background: theme.inputBg, padding: 14, borderRadius: 12 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: theme.highlight }}>{sessionSummary?.totalCards}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted }}>Cartes révisées</div>
+              </div>
+              <div style={{ background: theme.inputBg, padding: 14, borderRadius: 12 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: theme.highlight }}>{sessionSummary?.avgTime}s</div>
+                <div style={{ fontSize: 12, color: theme.textMuted }}>Temps moyen / carte</div>
+              </div>
+              <div style={{ background: theme.inputBg, padding: 14, borderRadius: 12 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: theme.highlight }}>N{sessionSummary?.avgLevelBefore}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted }}>Niveau moy. avant</div>
+              </div>
+              <div style={{ background: theme.inputBg, padding: 14, borderRadius: 12 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: "#10B981" }}>N{sessionSummary?.avgLevelAfter}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted }}>Niveau moy. estimé après</div>
+              </div>
+            </div>
+            <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
+          </div>
+        ) : currentCard && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <button onClick={() => { clearInterval(sessionTimerRef.current); setView("dashboard"); if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone); }} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>← Quitter</button>
+              <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{reviewIndex + 1}</span> / {reviewQueue.length}</div>
+              <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: "#EFF6FF", color: "#1D4ED8", padding: "4px 12px", borderRadius: 8 }}>⏱ {Math.floor(sessionTimer/60)}:{(sessionTimer%60).toString().padStart(2,'0')}</div>
+            </div>
+            <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, marginBottom: 32, overflow: "hidden" }}>
+              <div style={{ height: "100%", background: "linear-gradient(90deg, #1D4ED8, #3B82F6)", borderRadius: 4, transition: "width 0.4s ease", width: `${(reviewIndex / reviewQueue.length) * 100}%` }} />
+            </div>
+            {currentCard && (() => {
+              const tag = cognitiveTag(currentCard);
+              return (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+                  <span style={{ background: tag.color + "22", color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
+                </div>
+              );
+            })()}
+            <div className="card-hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.08)", maxWidth: 700, margin: "0 auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{currentCard.category}</span>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>{currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}</span>
+                  <span style={{ background: "#40C08022", color: "#40C080", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>N{currentCard.level}</span>
+                </div>
+              </div>
+              <div style={{ background: isDarkMode?"#0F172A":"#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>QUESTION</div>
+                <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{currentCard.front}</div>
+                {currentCard.imageUrl && (
+                  <img src={currentCard.imageUrl} alt="support visuel" className={!revealed ? "occlusion-img" : ""} style={{ width: "100%", borderRadius: 16, border: `2px solid ${theme.border}` }} title={!revealed ? "Survole l'image pour l'apercevoir" : ""} />
+                )}
+              </div>
+              {!revealed ? (
+                <div style={{ marginTop: 24 }}>
+                  {voiceReviewActive ? (
+                    <div style={{ textAlign: "center", padding: 20 }}>
+                      <div style={{ fontSize: 40, animation: "pulse 1s infinite", marginBottom: 16 }}>🎤</div>
+                      <p style={{ fontWeight: 700, color: theme.highlight }}>Parle ta réponse... (reconnaissance active)</p>
+                      <button className="hov btn-glow" onClick={handleRevealAndStopVoice} style={{ padding: "12px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 800, marginTop: 12 }}>Arrêter et voir la réponse</button>
+                    </div>
+                  ) : (
+                    <>
+                      <textarea style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 80, marginBottom: 12 }} placeholder="Tape ta réponse..." value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} />
+                      {socraticHint && <div style={{ background: "#FFFBEB", borderLeft: "4px solid #F59E0B", padding: 12, borderRadius: 4, marginBottom: 16, color: "#92400E", fontSize: 14 }}><strong style={{ display: "block", marginBottom: 4 }}>🧙‍♂️ Tuteur IA :</strong> {socraticHint}</div>}
+                      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                        <button onClick={handleSemanticEval} disabled={evalLoading || !userAnswer.trim()} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{evalLoading ? "🧠 Analyse..." : "🧠 IA Socratique"}</button>
+                        <button onClick={handleReveal} style={{ flex: "0 0 auto", padding: "18px", background: "transparent", color: theme.textMuted, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>Passer / Voir</button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div style={{ animation: "slideIn 0.3s ease" }}>
+                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
+                    <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.back) }} style={{ fontSize: 18, fontWeight: 600, color: theme.text, lineHeight: 1.6 }} />
+                    {currentCard.example && (
+                      <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}>
+                        <span style={{ color: "#4F8EF7", fontSize: 11, fontFamily: "JetBrains Mono" }}>// exemple</span><br />
+                        <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.example) }} />
+                      </div>
+                    )}
+                  </div>
+                  <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ display: "block", width: "100%", padding: "12px", background: "linear-gradient(135deg, #F5F3FF, #EDE9FE)", color: "#7B5FF5", border: "1px solid #DDD6FE", borderRadius: 12, fontWeight: 800, marginBottom: 20, cursor: "pointer" }}>
+                    {mnemonicLoading ? "⏳ Création..." : "✨ Générer un Mnémonique"}
+                  </button>
+                  {mnemonicText && (
+                    <div style={{ background: "#F5F3FF", borderLeft: "4px solid #7B5FF5", padding: "16px", borderRadius: 12, color: "#4C1D95", marginBottom: 20, fontSize: 14, fontStyle: "italic" }}>{mnemonicText}</div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                    <button className="hov" onClick={() => handleAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>😓 Oublié <span style={{ fontSize: 11, opacity: 0.8 }}>1</span></button>
+                    <button className="hov" onClick={() => handleAnswer(3)} style={{ padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🤔 Hésité <span style={{ fontSize: 11, opacity: 0.8 }}>2</span></button>
+                    <button className="hov" onClick={() => handleAnswer(5)} style={{ padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⚡ Facile <span style={{ fontSize: 11, opacity: 0.8 }}>3</span></button>
+                  </div>
+                </div>
+              )}
+            </div>
+            {(currentCard.reviewHistory?.length || 0) > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 20, justifyContent: "center" }}>
+                <span style={{ color: theme.textMuted, fontSize: 12, fontFamily: "JetBrains Mono" }}>Historique: </span>
+                {currentCard.reviewHistory.slice(-7).map((h, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: h.q === 0 ? "#F04040" : h.q === 3 ? "#F0A040" : "#40C080" }} title={`${h.date} — ${h.q === 0 ? "Oublié" : h.q === 3 ? "Hésité" : "Facile"}`} />)}
+              </div>
+            )}
+          </div>
+        ))}
+
+        {/* VUE AJOUT / ÉDITION */}
+        {view === "add" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, letterSpacing: "-1px" }}>{editingId ? "✏️ Mode Édition" : "⚡ Création de Fiches"}</h1>
+                <p style={{ color: theme.textMuted, fontSize: 14, marginTop: 6 }}>{editingId ? "Ajuste ta fiche." : "Crée, génère en rafale, importe ou analyse une image."}</p>
+              </div>
+              {editingId && <button onClick={cancelEdit} className="hov" style={{ padding: "10px 20px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>✕ Annuler</button>}
+            </div>
+            {!editingId && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 24, background: theme.cardBg, padding: 6, borderRadius: 18, border: `1px solid ${theme.border}`, boxShadow: "0 4px 15px rgba(0,0,0,0.04)" }}>
+                {[
+                  { id: "single", icon: "✦", label: "Fiche unique" },
+                  { id: "batch", icon: "🚀", label: "Batch IA" },
+                  { id: "text", icon: "📄", label: "Depuis un texte" },
+                  { id: "file", icon: "📎", label: "Image & Vision IA" },
+                ].map(t => (
+                  <button key={t.id} onClick={() => { setAddSubView(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, padding: "12px 8px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.2s", background: addSubView === t.id ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : "transparent", color: addSubView === t.id ? "white" : theme.textMuted }}>
+                    {t.icon} {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            
+            {/* Blocs single, batch, text, file */}
+            {(addSubView === "single" || editingId) && (
+              <div style={{ background: "linear-gradient(135deg, #1D4ED8 0%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>Décris un concept, l'IA crée la fiche complète.</div></div></div>
+                <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+                  <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
+                  <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
+                </div>
+              </div>
+            )}
+            {addSubView === "batch" && !editingId && (
+              <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 50%, #059669 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
+                <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+                  <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Annotations Spring Boot"...' />
+                  <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "#1e3a8a", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
+                  <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
+                </div>
+                {showBatchPreview && batchPreview.length > 0 && (
+                  <div style={{ marginTop: 20, background: "rgba(255,255,255,0.08)", borderRadius: 18, padding: "20px", border: "1px solid rgba(255,255,255,0.15)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                      <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>📋 {batchPreview.length} fiches prêtes</div>
+                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => { setBatchPreview([]); setShowBatchPreview(false); }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", borderRadius: 10, padding: "8px 14px", cursor: "pointer" }}>Annuler</button><button className="hov btn-glow" onClick={confirmBatch} style={{ background: "#10B981", border: "none", color: "white", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>✅ Sauvegarder</button></div>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 380, overflowY: "auto" }}>
+                      {batchPreview.map((card, idx) => (
+                        <div key={idx} style={{ background: "white", borderRadius: 14, padding: "16px", display: "flex", gap: 12 }}>
+                          <div style={{ flex: 1 }}><div style={{ fontWeight: 800, color: "#1D4ED8", marginBottom: 6 }}>{card.front}</div><div style={{ color: "#4B5563", fontSize: 13 }}>{card.back}</div></div>
+                          <button onClick={() => removeBatchCard(idx)} style={{ background: "#FEF2F2", border: "none", borderRadius: 8, padding: "6px 10px", color: "#EF4444", cursor: "pointer" }}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {addSubView === "text" && !editingId && (
+              <div style={{ background: "linear-gradient(135deg, #312E81 0%, #4338CA 50%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>📄</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération depuis un Texte</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>Colle un cours, l'IA extrait les concepts.</div></div></div>
+                <div style={{ marginTop: 16 }}>
+                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#312E81", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 8 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 140 }} placeholder="Colle ton texte ici..." />
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}><span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{aiFromText.length}/3000</span><button className="hov btn-glow" onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ padding: "14px 24px", background: "white", color: "#312E81", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "🔍 Analyser"}</button></div>
+                </div>
+              </div>
+            )}
+            {addSubView === "file" && !editingId && (
+              <div style={{ background: "linear-gradient(135deg, #064E3B 0%, #059669 50%, #10B981 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>👁️</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>L'Œil de l'IA (Vision)</div><div style={{ color: "#D1FAE5", fontSize: 13 }}>Upload un schéma ou une capture d'écran. L'IA l'analysera pour en faire une fiche.</div></div></div>
+                <div style={{ marginTop: 16 }}>
+                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 12 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  <div style={{ border: "2px dashed rgba(255,255,255,0.4)", borderRadius: 16, padding: "40px 20px", textAlign: "center", background: "rgba(0,0,0,0.1)" }}>
+                    {uploadLoading ? <div style={{ color: "white", fontWeight: 700 }}>⏳ Upload vers Storage en cours...</div> : (
+                      <>
+                        <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} id="file-upload-vision" />
+                        <label htmlFor="file-upload-vision" className="hov" style={{ cursor: "pointer", color: "white", fontWeight: 800, fontSize: 16 }}><div style={{ fontSize: 40, marginBottom: 8 }}>📤</div>Clique pour sélectionner une image</label>
+                      </>
+                    )}
+                  </div>
+                  {addForm.imageUrl && (
+                    <div style={{ marginTop: 20, textAlign: "center" }}>
+                      <img src={addForm.imageUrl} alt="upload preview" style={{ maxHeight: 200, borderRadius: 12, marginBottom: 16, border: "2px solid white" }} />
+                      <button onClick={handleVisionAI} disabled={aiLoading} className="btn-glow hov" style={{ display: "block", width: "100%", padding: "16px", background: "white", color: "#065F46", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", fontSize: 16 }}>{aiLoading ? "🧠 Analyse complexe en cours..." : "✨ Extraire le concept avec Vision IA"}</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 32, alignItems: "start" }}>
+              <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.04)" }}>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8, display: "block" }}>Module de destination</label>
+                  <select value={addForm.category} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, fontWeight: 600, color: theme.text }}>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Recto <span style={{ color: "#3B82F6" }}>*</span></label>
+                  <div style={{ position: "relative" }}>
+                    <input autoFocus value={addForm.front} onChange={(e) => setAddForm((f) => ({ ...f, front: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Le concept à mémoriser..." />
+                    <button onClick={() => listening === "front" ? stopVoice() : startVoice("front")} className={listening === "front" ? "mic-pulse" : "hov"} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: theme.cardBg, border: `1px solid ${theme.border}`, cursor: "pointer", fontSize: 20, padding: 8, borderRadius: 12, color: listening === "front" ? "#EF4444" : theme.textMuted }}>🎙️</button>
+                  </div>
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Verso <span style={{ color: "#3B82F6" }}>*</span></label><button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>✨ Expliquer</button></div>
+                  <textarea value={addForm.back} onChange={(e) => setAddForm((f) => ({ ...f, back: e.target.value }))} onKeyDown={(e) => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); handleAdd(); } }} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 110 }} placeholder="L'explication claire..." />
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Exemple</label><button onClick={() => handleMicroAI("example")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>💡 Exemple</button></div>
+                  <input value={addForm.example} onChange={(e) => setAddForm((f) => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Mise en contexte..." />
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button className="hov btn-glow" onClick={handleAdd} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>{editingId ? "💾 Mettre à jour" : "⚡ Ajouter la fiche"}</button>
+                  {!editingId && <button className="hov" onClick={() => setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null }))} style={{ padding: "18px 24px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Effacer</button>}
+                </div>
+              </div>
+              <div style={{ position: "sticky", top: 90, display: "flex", flexDirection: "column", gap: 20 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: theme.textMuted, letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", paddingLeft: 12 }}>LIVE PREVIEW</div>
+                <div style={{ background: theme.cardBg, border: `2px dashed ${theme.highlight}55`, borderRadius: 24, padding: "28px", boxShadow: "0 20px 50px rgba(0,0,0,0.05)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{addForm.category || "Catégorie"}</span><span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Niveau 0</span></div>
+                  <div style={{ background: theme.inputBg, borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}><div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>QUESTION</div><div style={{ fontSize: 26, fontWeight: 800, color: addForm.front ? theme.highlight : theme.textMuted }}>{addForm.front || "Tape un concept..."}</div></div>
+                  {addForm.imageUrl && <img src={addForm.imageUrl} className="occlusion-img" alt="media" style={{ width: "100%", borderRadius: 16, marginBottom: 20, border: `1px solid ${theme.border}` }} title="L'image sera floutée pendant la révision" />}
+                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px" }}><div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div><div dangerouslySetInnerHTML={{ __html: highlightCode(addForm.back) }} style={{ fontSize: 18, fontWeight: 600, color: addForm.back ? theme.text : theme.textMuted }} />{(addForm.example || editingId) && <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}><span style={{ color: "#4F8EF7", fontSize: 11 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(addForm.example) }} /></div>}</div>
+                </div>
+                <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 16, padding: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>📤 Import en masse (CSV)</span><button className="hov" onClick={() => setShowImport(!showImport)} style={{ background: theme.inputBg, color: theme.highlight, border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{showImport ? "Fermer" : "Ouvrir"}</button></div>
+                  {showImport && <div style={{ marginTop: 12, animation: "fadeUp 0.3s ease" }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 12, color: theme.text, minHeight: 80, fontFamily: "JetBrains Mono" }} placeholder="front,back,category,example..." /><button className="hov" onClick={handleImport} style={{ width: "100%", padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LISTE & RECHERCHE SÉMANTIQUE */}
+        {view === "list" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 24, marginBottom: 32 }}>
+              <div style={{ flex: 1 }}><h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>◈ Le Second Cerveau</h1><p style={{ color: theme.textMuted }}>Explore et visualise tes connaissances.</p></div>
+              <div style={{ display: "flex", gap: 16 }}>
+                <div style={{ background: theme.cardBg, padding: "16px 24px", borderRadius: 20, border: `1px solid ${theme.border}`, textAlign: "center" }}><div style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>{filteredExps.length}</div><div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>Fiches</div></div>
+                <div style={{ background: theme.cardBg, padding: "16px 24px", borderRadius: 20, border: `1px solid ${theme.border}`, textAlign: "center" }}><div style={{ fontSize: 28, fontWeight: 900, color: "#10B981" }}>{masteredCount}</div><div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>Maîtrisées</div></div>
+              </div>
+            </div>
+            <div style={{ background: theme.cardBg, padding: "16px", borderRadius: 24, border: `1px solid ${theme.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.05)", marginBottom: 32, position: "sticky", top: 85, zIndex: 50 }}>
+              <div style={{ display: "flex", alignItems: "center", background: theme.inputBg, padding: "0 12px", borderRadius: 16, border: `2px solid ${theme.border}`, marginBottom: 16 }}>
+                <span style={{ fontSize: 18, color: theme.textMuted }}>🔍</span>
+                <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ flex: 1, padding: "16px 12px", background: "transparent", border: "none", fontSize: 15, color: theme.text }} placeholder="Chercher un concept..." />
+                {searchQuery && <button onClick={() => setSearchQuery("")} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 14, padding: 8 }}>✕</button>}
+                <button onClick={handleSemanticSearch} disabled={semanticLoading} className="btn-glow hov" style={{ background: "linear-gradient(135deg, #7B5FF5, #6D28D9)", color: "white", border: "none", padding: "10px 16px", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginLeft: 8 }}>
+                  {semanticLoading ? "🧠 Recherche..." : "🧠 IA Sémantique"}
+                </button>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, flex: 1 }}>
+                  {["Toutes", ...catNames].map((c) => <button key={c} onClick={() => setFilterCat(c)} className="hov" style={{ padding: "8px 16px", borderRadius: 100, fontSize: 13, fontWeight: 700, cursor: "pointer", background: filterCat === c ? theme.highlight : theme.cardBg, color: filterCat === c ? "white" : theme.textMuted, border: filterCat === c ? `1px solid ${theme.highlight}` : `1px solid ${theme.border}` }}>{c}</button>)}
+                </div>
+                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+                  {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => <button key={l} onClick={() => setFilterLevel(l)} className="hov" style={{ padding: "8px 16px", borderRadius: 100, fontSize: 12, cursor: "pointer", border: "none", background: filterLevel === l ? "#F5F3FF" : "transparent", color: filterLevel === l ? "#7B5FF5" : theme.textMuted, fontWeight: filterLevel === l ? 800 : 600 }}>{l}</button>)}
+                </div>
+              </div>
+            </div>
+            {filteredExps.length === 0 ? (
+              <div style={{ background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: 32, padding: "80px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 64, marginBottom: 16 }}>📭</div>
+                <h3 style={{ color: theme.text, fontSize: 20, fontWeight: 800 }}>Aucune fiche trouvée</h3>
+                <p style={{ color: theme.textMuted, marginTop: 8, marginBottom: 24 }}>Élargis ta recherche ou crée un nouveau concept.</p>
+                <button onClick={() => setView("add")} className="btn-glow hov" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚡ Créer une fiche</button>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 24 }}>
+                {filteredExps.map((exp) => {
+                  const lvl = exp.level || 0;
+                  const lvlColor = lvl >= 7 ? "#10B981" : lvl >= 5 ? "#3B82F6" : lvl >= 3 ? "#8B5CF6" : lvl >= 1 ? "#F59E0B" : "#9CA3AF";
+                  const catColor = categories.find((c) => c.name === exp.category)?.color || "#3B82F6";
+                  const tag = cognitiveTag(exp);
+                  return (
+                    <div key={exp.id} style={{ background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column", boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden" }} className="card-hov">
+                      <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ background: tag.color + "22", color: tag.color, padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
+                          <span style={{ width: 8, height: 8, borderRadius: "50%", background: lvlColor }} /><span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>N{lvl}</span>
+                        </div>
+                      </div>
+                      <div style={{ padding: "0 24px", flex: 1 }}>
+                        <div style={{ fontSize: 20, fontWeight: 800, color: theme.highlight, marginBottom: 12, lineHeight: 1.3 }}>{exp.front}</div>
+                        {exp.imageUrl && <div style={{ fontSize: 11, background: "#10B98122", color: "#10B981", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
+                        <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.6, marginBottom: 16 }} dangerouslySetInnerHTML={{ __html: highlightCode(exp.back) }} />
+                        {exp.example && <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #3B82F6", marginBottom: 16 }}><span style={{ color: "#3B82F6", fontSize: 10 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(exp.example) }} /></div>}
+                      </div>
+                      <div style={{ padding: "16px 24px", background: theme.inputBg, borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>
+                          <div>{lvl >= 7 ? "✅ Maîtrisée" : `📅 Rév: ${formatDate(exp.nextReview)}`}</div>
+                          <div style={{ fontSize: 10, marginTop: 2 }}>{exp.difficulty !== undefined ? `Diff: ${exp.difficulty} ` : (exp.easeFactor ? `EF: ${exp.easeFactor} ` : "")}{(exp.reviewHistory?.length || 0) > 0 && `• ${exp.reviewHistory.length} Rév.`}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#F5F3FF", color: "#8B5CF6" }} title="Améliorer">✨</button>
+                          <button onClick={() => startEdit(exp)} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#EFF6FF", color: "#3B82F6" }} title="Éditer">✏️</button>
+                          <button onClick={() => deleteExp(exp.id)} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#FEF2F2", color: "#EF4444" }} title="Supprimer">🗑️</button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* MODE EXAMEN */}
+        {view === "exam" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            {examSubView === "home" && (
+              <div>
+                <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 60%, #7B5FF5 100%)", borderRadius: 28, padding: "40px 36px", marginBottom: 32, position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: -30, right: -30, fontSize: 180, opacity: 0.05 }}>🎯</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#93C5FD", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>CENTRE D'EXAMENS</div>
+                  <h1 style={{ fontSize: 34, fontWeight: 900, color: "white", marginBottom: 10 }}>Prouve ta maîtrise 🏆</h1>
+                  <p style={{ color: "#93C5FD", fontSize: 15, marginBottom: 28, maxWidth: 520, lineHeight: 1.6 }}>Affronte tes propres connaissances. La difficulté forge les champions.</p>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>🎯 {stats.examsDone} examens passés</div>
+                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>📚 {expressions.length} fiches disponibles</div>
+                  </div>
+                </div>
+                <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.highlight, marginBottom: 16, fontFamily: "JetBrains Mono", letterSpacing: 1 }}>CHOISIR UN MODE</h2>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 36 }}>
+                  {[
+                    { mode: "flashcard", icon: "🃏", title: "Classique", sub: "Auto-évaluation", desc: "Questions recto/verso avec un timer généreux.", color: "#1D4ED8", bg: "linear-gradient(135deg,#EFF6FF,#DBEAFE)", border: "#BFDBFE" },
+                    { mode: "qcm", icon: "📝", title: "QCM IA", sub: "L'IA te piège", desc: "L'IA génère 3 fausses réponses ultra-crédibles.", color: "#7B5FF5", bg: "linear-gradient(135deg,#F5F3FF,#EDE9FE)", border: "#DDD6FE" },
+                    { mode: "speedrun", icon: "⚡", title: "Speedrun", sub: "5s par question", desc: "Test de réflexes absolu. Pas le temps de réfléchir.", color: "#F59E0B", bg: "linear-gradient(135deg,#FEF3C7,#FDE68A)", border: "#FCD34D" },
+                    { mode: "boss", icon: "💀", title: "Boss Fight", sub: "Sanction extrême", desc: "Simule tes profs. Si tu échoues, tes fiches sont rétrogradées.", color: "#EF4444", bg: "linear-gradient(135deg,#FEE2E2,#FECACA)", border: "#FCA5A5" },
+                    { mode: "custom", icon: "🛠️", title: "Examens Perso", sub: "Tes propres règles", desc: "Crée et passe tes propres devoirs surveillés.", color: "#059669", bg: "linear-gradient(135deg,#ECFDF5,#D1FAE5)", border: "#A7F3D0" },
+                  ].map(m => (
+                    <div key={m.mode} onClick={() => { if (m.mode === "custom") setExamSubView("custom"); else { setExamConfig(c => ({...c, mode: m.mode})); setExamSubView("config"); } }} className="card-hov" style={{ background: m.bg, border: `2px solid ${m.border}`, borderRadius: 24, padding: "28px", cursor: "pointer", position: "relative", overflow: "hidden" }}>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>{m.icon}</div>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: m.color, letterSpacing: 2, marginBottom: 4, fontFamily: "JetBrains Mono" }}>{m.sub}</div>
+                      <div style={{ fontSize: 20, fontWeight: 900, color: "#1F2937", marginBottom: 8 }}>{m.title}</div>
+                      <div style={{ fontSize: 13, color: "#4B5563", lineHeight: 1.6 }}>{m.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {examSubView === "config" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
+                  <button onClick={() => setExamSubView("home")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>← Retour</button>
+                  <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>{examConfig.mode === "qcm" ? "📝 Configuration QCM" : examConfig.mode === "speedrun" ? "⚡ Configuration Speedrun" : examConfig.mode === "boss" ? "💀 Configuration Boss Fight" : "🃏 Configuration Classique"}</h1>
+                </div>
+                <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", boxShadow: "0 4px 15px rgba(0,0,0,0.03)" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20, marginBottom: 24 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>📚 Module</label>
+                      <select value={examConfig.category} onChange={(e) => setExamConfig((c) => ({ ...c, category: e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, cursor: "pointer" }}><option value="Toutes">Toutes les matières</option>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>🔢 Nombre de questions</label>
+                      <input type="number" min={3} max={50} value={examConfig.count} onChange={(e) => setExamConfig((c) => ({ ...c, count: +e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>⏱️ Temps (sec)</label>
+                      <input type="number" min={examConfig.mode === "speedrun" ? 3 : 10} max={examConfig.mode === "speedrun" ? 10 : 300} value={examConfig.mode === "speedrun" && examConfig.timePerCard > 10 ? 5 : examConfig.timePerCard} onChange={(e) => setExamConfig((c) => ({ ...c, timePerCard: +e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} disabled={examConfig.mode === "speedrun"} />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>🔥 Difficulté</label>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
+                      {[
+                        { val: "facile", icon: "😌", label: "Facile", color: "#10B981" },
+                        { val: "adaptative", icon: "🎯", label: "Adaptative", color: "#3B82F6" },
+                        { val: "difficile", icon: "💪", label: "Difficile", color: "#F59E0B" },
+                        { val: "extreme", icon: "💀", label: "EXTRÊME", color: "#EF4444" },
+                      ].map(d => (
+                        <div key={d.val} onClick={() => setExamConfig(c => ({...c, difficulty: d.val}))} style={{ border: `2px solid ${examConfig.difficulty === d.val ? d.color : theme.border}`, borderRadius: 16, padding: "14px", cursor: "pointer", background: examConfig.difficulty === d.val ? d.color + "15" : theme.inputBg, textAlign: "center" }}>
+                          <div style={{ fontSize: 22, marginBottom: 4 }}>{d.icon}</div><div style={{ fontWeight: 800, fontSize: 13, color: examConfig.difficulty === d.val ? d.color : theme.text }}>{d.label}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <button className="hov btn-glow" onClick={() => startExam()} style={{ width: "100%", padding: "18px 36px", background: examConfig.mode === "boss" ? "linear-gradient(135deg, #EF4444, #B91C1C)" : "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer l'examen</button>
+                </div>
+              </div>
+            )}
+
+            {examSubView === "active" && examActive && examQueue[examIndex] && (() => {
+              const card = examQueue[examIndex];
+              const isQcmMode = examConfig.mode === "qcm" || (card.isCustom && card.isQcm);
+              const timerDanger = examTimer <= (examConfig.mode === "speedrun" ? 3 : 10);
+              return (
+                <div style={{ animation: "fadeUp 0.4s ease" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
+                    <button onClick={() => { clearInterval(examTimerRef.current); setExamActive(false); setExamSubView("home"); }} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>✕ Abandonner</button>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      {examStreak >= 3 && <div style={{ background: "#FEF3C7", color: "#92400E", padding: "6px 12px", borderRadius: 10, fontSize: 12, fontWeight: 800, animation: "pulse 1s infinite" }}>🔥 Streak ×{examStreak}</div>}
+                      <div style={{ fontFamily: "JetBrains Mono", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{examIndex + 1}</span> / {examQueue.length}</div>
+                      <div style={{ padding: "6px 14px", borderRadius: 10, fontFamily: "JetBrains Mono", fontWeight: 900, fontSize: 14, background: timerDanger ? "#FEE2E2" : "#EFF6FF", color: timerDanger ? "#EF4444" : "#1D4ED8", animation: examTimer <= 5 ? "pulse 0.5s infinite" : "none" }}>⏱ {examTimer}s</div>
+                    </div>
+                  </div>
+                  <div style={{ height: 4, background: theme.inputBg, borderRadius: 4, marginBottom: 28 }}><div style={{ height: "100%", background: "linear-gradient(90deg,#10B981,#3B82F6)", borderRadius: 4, transition: "width 0.4s", width: `${((examIndex) / examQueue.length) * 100}%` }} /></div>
+                  <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", maxWidth: 720, margin: "0 auto", boxShadow: "0 10px 40px rgba(0,0,0,0.05)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                      <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{card.category || "Perso"}</span>
+                      {isQcmMode && <span style={{ background: "#F5F3FF", color: "#7B5FF5", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>📝 QCM</span>}
+                      {examConfig.mode === "boss" && <span style={{ background: "#FEF2F2", color: "#EF4444", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>💀 BOSS</span>}
+                    </div>
+                    <div style={{ background: theme.inputBg, borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}><div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>QUESTION</div><div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight }}>{card.front || card.question}</div></div>
+                    {isQcmMode ? (
+                      qcmLoading ? <div style={{ textAlign: "center", padding: "28px", color: "#7B5FF5" }}><div style={{ fontSize: 28, animation: "pulse 1s infinite" }}>🤖</div><div style={{ fontWeight: 700 }}>L'IA prépare les pièges...</div></div>
+                      : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {qcmChoices.map((choice, ci) => {
+                            const isCorrect = choice === (card.back || card.answer);
+                            const isSelected = qcmSelected === ci;
+                            let bg = theme.inputBg, border = `2px solid ${theme.border}`, color = theme.text;
+                            if (isSelected && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
+                            else if (isSelected && !isCorrect) { bg = "#FEE2E2"; border = "2px solid #EF4444"; color = "#991B1B"; }
+                            else if (qcmSelected !== null && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
+                            return (
+                              <button key={ci} onClick={() => { if (qcmSelected !== null) return; setQcmSelected(ci); setTimeout(() => handleExamAnswer(isCorrect ? 5 : 0), 900); }} disabled={qcmSelected !== null} style={{ background: bg, border, borderRadius: 14, padding: "16px 20px", textAlign: "left", cursor: qcmSelected !== null ? "default" : "pointer", color, fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 12 }}>
+                                <span style={{ width: 28, height: 28, borderRadius: "50%", background: isSelected ? (isCorrect ? "#10B981" : "#EF4444") : (qcmSelected !== null && isCorrect ? "#10B981" : (isDarkMode?"#334155":"#EFF6FF")), color: (isSelected || (qcmSelected !== null && isCorrect)) ? "white" : theme.textMuted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800 }}>{String.fromCharCode(65 + ci)}</span>
+                                {choice} {qcmSelected !== null && isCorrect && <span style={{ marginLeft: "auto" }}>✅</span>} {isSelected && !isCorrect && <span style={{ marginLeft: "auto" }}>❌</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                    ) : (
+                      !examRevealed ? <button className="hov btn-glow" onClick={() => setExamRevealed(true)} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>👁️ Voir la réponse (Espace)</button>
+                      : <div style={{ animation: "slideIn 0.3s ease" }}>
+                          <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}><div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div><div style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>{card.back || card.answer}</div></div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                            <button className="hov" onClick={() => handleExamAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>😓 Pas su (1)</button>
+                            <button className="hov" onClick={() => handleExamAnswer(3)} style={{ padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🤔 Hésité (2)</button>
+                            <button className="hov" onClick={() => handleExamAnswer(5)} style={{ padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>⚡ Su ! (3)</button>
+                          </div>
+                        </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {examSubView === "results" && examAnswers.length > 0 && (() => {
+              const correct = examAnswers.filter(a => a.q >= 3).length;
+              const score = Math.round((correct / examAnswers.length) * 100);
+              const duration = examStartTime ? Math.round((Date.now() - examStartTime) / 1000) : 0;
+              const grade = score >= 90 ? { label: "LÉGENDAIRE", icon: "🏆", color: "#7B5FF5" } : score >= 70 ? { label: "BIEN", icon: "👍", color: "#3B82F6" } : { label: "À RETRAVAILLER", icon: "💪", color: "#EF4444" };
+              const bossPenalty = examConfig.mode === "boss" && score < 100;
+              return (
+                <div style={{ animation: "fadeUp 0.4s ease" }}>
+                  <div style={{ background: bossPenalty ? "linear-gradient(135deg, #FEF2F2, #FECACA)" : `linear-gradient(135deg, ${grade.color}22, ${grade.color}08)`, border: `2px solid ${bossPenalty ? "#EF4444" : grade.color}44`, borderRadius: 28, padding: "40px 32px", marginBottom: 28, textAlign: "center" }}>
+                    <div style={{ fontSize: 80, marginBottom: 8 }}>{bossPenalty ? "💀" : grade.icon}</div>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: bossPenalty ? "#EF4444" : grade.color, letterSpacing: 3, marginBottom: 8 }}>{bossPenalty ? "ÉCHEC FACE AU BOSS" : grade.label}</div>
+                    <div style={{ fontSize: 80, fontWeight: 900, color: bossPenalty ? "#EF4444" : grade.color, lineHeight: 1 }}>{score}%</div>
+                    {bossPenalty && <div style={{ color: "#991B1B", fontWeight: 700, marginTop: 10 }}>Pénalité: Tes fiches de ce module perdent de la maîtrise.</div>}
+                    <div style={{ fontSize: 14, color: theme.textMuted, marginTop: 10 }}>{correct} / {examAnswers.length} correctes · Temps: {Math.floor(duration/60)}m{duration%60}s</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <button className="hov btn-glow" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamSubView("config"); }} style={{ flex: 1, padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>🔄 Recommencer</button>
+                    <button className="hov" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamSubView("home"); }} style={{ flex: 1, padding: "16px", background: theme.cardBg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🏠 Accueil Examens</button>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {examSubView === "custom" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}><button onClick={() => setExamSubView("home")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>← Retour</button><button onClick={() => { setNewCustomExam({ title: "", description: "", questions: [] }); setExamSubView("createCustom"); }} style={{ padding: "10px 20px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>+ Créer</button></div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+                  {customExams.map(exam => (
+                    <div key={exam.id} style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, borderTop: "4px solid #7B5FF5" }}>
+                      <div style={{ fontWeight: 900, color: theme.text, fontSize: 18, marginBottom: 6 }}>{exam.title}</div><div style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>{exam.description}</div><div style={{ fontSize: 12, color: "#7B5FF5", fontWeight: 700, marginBottom: 16 }}>{exam.questions.length} questions</div>
+                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => startExam(exam)} style={{ flex: 1, padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>🚀 Passer</button><button onClick={() => setCustomExams(p => p.filter(e => e.id !== exam.id))} style={{ padding: "10px 14px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 10, cursor: "pointer" }}>🗑️</button></div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {examSubView === "createCustom" && (
+              <div>
+                <button onClick={() => setExamSubView("custom")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600, marginBottom: 20 }}>← Retour</button>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+                  <div>
+                    <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, marginBottom: 20 }}>
+                      <input value={newCustomExam.title} onChange={e => setNewCustomExam(ex => ({...ex, title: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 12 }} placeholder="Titre de l'examen" />
+                      <input value={newCustomExam.description} onChange={e => setNewCustomExam(ex => ({...ex, description: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} placeholder="Description (optionnel)" />
+                    </div>
+                    <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}` }}>
+                      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: false}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: !customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: !customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>🃏 Flashcard</button>
+                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: true}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>📝 QCM</button>
+                      </div>
+                      <input value={customExamEditQ.question} onChange={e => setCustomExamEditQ(q => ({...q, question: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 12 }} placeholder="Question" />
+                      <input value={customExamEditQ.answer} onChange={e => setCustomExamEditQ(q => ({...q, answer: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: customExamEditQ.isQcm ? 12 : 20 }} placeholder="Réponse correcte" />
+                      {customExamEditQ.isQcm && customExamEditQ.choices.slice(0,3).map((ch, ci) => <input key={ci} value={ch} onChange={e => { const c = [...customExamEditQ.choices]; c[ci] = e.target.value; setCustomExamEditQ(q => ({...q, choices: c})); }} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 8 }} placeholder={`Fausse réponse ${ci+1}`} />)}
+                      <button onClick={() => { if (!customExamEditQ.question || !customExamEditQ.answer) return; setNewCustomExam(ex => ({...ex, questions: [...ex.questions, { id: Date.now().toString(), question: customExamEditQ.question, answer: customExamEditQ.answer, isQcm: customExamEditQ.isQcm, choices: customExamEditQ.isQcm ? [...customExamEditQ.choices.slice(0,3), customExamEditQ.answer] : [] }]})); setCustomExamEditQ({ question: "", answer: "", choices: ["","","",""], isQcm: customExamEditQ.isQcm }); showToast("Question ajoutée"); }} style={{ width: "100%", padding: "14px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 12 }}>+ Ajouter la question</button>
+                    </div>
+                    <button onClick={() => { if (!newCustomExam.title || newCustomExam.questions.length === 0) return; setCustomExams(p => [...p, { ...newCustomExam, id: Date.now().toString(), createdAt: today() }]); setExamSubView("custom"); showToast("Examen sauvegardé !"); }} style={{ width: "100%", padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 20 }}>💾 Sauvegarder l'examen</button>
+                  </div>
+                  <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, maxHeight: 600, overflowY: "auto" }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: theme.textMuted, marginBottom: 16 }}>APERÇU ({newCustomExam.questions.length} questions)</div>
+                    {newCustomExam.questions.map((q, i) => (
+                      <div key={q.id} style={{ background: theme.inputBg, padding: 14, borderRadius: 12, marginBottom: 10, borderLeft: `4px solid ${q.isQcm ? "#7B5FF5" : "#3B82F6"}` }}><div style={{ fontSize: 11, color: q.isQcm ? "#7B5FF5" : "#3B82F6", fontWeight: 800, marginBottom: 4 }}>{q.isQcm ? "QCM" : "FLASHCARD"}</div><div style={{ fontWeight: 700, color: theme.text }}>{q.question}</div><div style={{ color: "#10B981", fontSize: 12 }}>✓ {q.answer}</div></div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AI ENGLISH PRACTICE */}
+        {view === "practice" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #065F46 60%, #059669 100%)", borderRadius: 28, padding: "36px", marginBottom: 28, position: "relative", overflow: "hidden", boxShadow: "0 10px 40px rgba(5,150,105,0.2)" }}>
+              <div style={{ position: "absolute", top: -20, right: -20, fontSize: 160, opacity: 0.06 }}>🗣️</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#6EE7B7", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>AI CONVERSATION PARTNER</div>
+              <h1 style={{ fontSize: 30, fontWeight: 900, color: "white", marginBottom: 8 }}>English Practice Room 🇬🇧</h1>
+              <p style={{ color: "#A7F3D0", fontSize: 14, marginBottom: 20 }}>Speak or type in English. Choose a Persona to force yourself to adapt to different accents.</p>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>TOPIC</span><select value={practiceTopic} onChange={e => setPracticeTopic(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 160 }}>{["Free conversation", "Job interview", "Technology & AI", "Daily life in Senegal", "Programming & coding"].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>LEVEL</span><select value={practiceLevel} onChange={e => setPracticeLevel(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="beginner">🟢 Beginner</option><option value="intermediate">🟡 Intermediate</option><option value="advanced">🔴 Advanced</option></select></div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>PERSONA</span><select value={practicePersona} onChange={e => setPracticePersona(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="Standard">👨‍🏫 Standard</option><option value="MMA">🥊 MMA Fighter</option><option value="Recruteur">💼 Tech Recruiter</option></select></div>
+                <button onClick={resetPracticeChat} className="hov" style={{ padding: "10px 18px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}>🔄 New Session</button>
+              </div>
+            </div>
+            <div style={{ background: theme.cardBg, border: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", height: 480 }}>
+              <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 16 }}>
+                {practiceMessages.map((msg, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
+                    {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div>}
+                    <div style={{ maxWidth: "75%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : (isDarkMode?"#334155":"#F0FDF4"), color: msg.role === "user" ? "white" : theme.text, fontSize: 15, lineHeight: 1.6, border: msg.role === "assistant" && !isDarkMode ? "1px solid #D1FAE5" : "none" }}>
+                      {msg.text}
+                      {msg.role === "assistant" && <button onClick={() => speakText(msg.text)} style={{ display: "block", marginTop: 8, background: "none", border: "none", color: "#059669", cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>🔊 Listen again</button>}
+                    </div>
+                    {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#1D4ED8,#7B5FF5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>😊</div>}
+                  </div>
+                ))}
+                {practiceLoading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div><div style={{ background: isDarkMode?"#334155":"#F0FDF4", borderRadius: "20px 20px 20px 4px", padding: "14px 18px", display: "flex", gap: 6 }}>{[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#059669", animation: `pulse 1.2s ${i*0.2}s infinite` }} />)}</div></div>}
+                <div ref={practiceEndRef} />
+              </div>
+              <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, background: isDarkMode?"#1E293B":"#F0FDF4", display: "flex", gap: 10, alignItems: "center" }}>
+                <button onClick={togglePracticeMic} style={{ width: 52, height: 52, borderRadius: 16, flexShrink: 0, background: practiceListening ? "linear-gradient(135deg, #EF4444, #F97316)" : "linear-gradient(135deg, #059669, #10B981)", border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", animation: practiceListening ? "pulse 0.8s infinite" : "none" }}>{practiceListening ? "⏹️" : "🎙️"}</button>
+                <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPracticeMessage(practiceInput); } }} placeholder={practiceListening ? "🎙️ Listening... click ⏹️ when finished!" : "Type in English or use mic..."} style={{ flex: 1, padding: "14px 18px", background: theme.inputBg, border: `2px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 14, fontSize: 15, color: theme.text }} disabled={practiceListening || practiceInput.includes("⏳")} />
+                <button onClick={() => sendPracticeMessage(practiceInput)} disabled={!practiceInput.trim() || practiceLoading || practiceListening} style={{ width: 52, height: 52, borderRadius: 16, background: practiceInput.trim() ? "linear-gradient(135deg,#1D4ED8,#3B82F6)" : theme.inputBg, border: "none", cursor: practiceInput.trim() ? "pointer" : "default", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{practiceLoading ? "⏳" : "➤"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ACADEMY GOD LEVEL */}
+        {view === "academy" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+            {academyView === "home" && (
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>🏫 MémoMaître Academy</h1>
+                <p style={{ color: theme.textMuted, marginBottom: 24 }}>Apprends un sujet de A à Z, sans friction.</p>
+                <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+                  <input value={academyTopic} onChange={e => setAcademyTopic(e.target.value)} placeholder="Ex: Angular, React, Machine Learning..." style={{ flex: 1, padding: 14, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                  <button onClick={generateSyllabus} disabled={academyLoading} className="btn-glow hov" style={{ padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+                    {academyLoading ? "⏳" : "Générer Syllabus"}
+                  </button>
+                </div>
+                {academySyllabus && (
+                  <div>
+                    <h2 style={{ fontWeight: 800, marginBottom: 16 }}>📚 Roadmap générée</h2>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      {academySyllabus.concepts.map((concept, idx) => {
+                        const mastered = (academyProgress[concept.title] || 0) >= 5;
+                        const unlocked = canStartConcept(concept);
+                        return (
+                          <div key={idx} style={{
+                            background: theme.cardBg, borderRadius: 14, padding: "16px 20px",
+                            borderLeft: `4px solid ${mastered ? "#10B981" : unlocked ? "#3B82F6" : "#9CA3AF"}`,
+                            opacity: unlocked ? 1 : 0.5,
+                            display: "flex", justifyContent: "space-between", alignItems: "center"
+                          }}>
+                            <div>
+                              <div style={{ fontWeight: 800, color: theme.text }}>{concept.title}</div>
+                              <div style={{ fontSize: 12, color: theme.textMuted }}>{concept.description}</div>
+                              {mastered && <span style={{ color: "#10B981", fontSize: 11 }}>✓ Maîtrisé</span>}
+                            </div>
+                            <button
+                              onClick={() => { if (unlocked) startLesson(concept); }}
+                              disabled={!unlocked}
+                              style={{
+                                padding: "10px 18px", borderRadius: 10, border: "none",
+                                background: unlocked ? "#1D4ED8" : "#E5E7EB",
+                                color: unlocked ? "white" : "#9CA3AF",
+                                fontWeight: 700, cursor: unlocked ? "pointer" : "default"
+                              }}
+                            >
+                              Commencer
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {academyView === "lesson" && currentLesson && (
+              <div>
+                <button onClick={() => setAcademyView("syllabus")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 20 }}>← Retour à la roadmap</button>
+                <h2 style={{ fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>{currentLesson.title}</h2>
+                {lessonState.startsWith("explain") && (
+                  <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, marginBottom: 20 }}>
+                    <div dangerouslySetInnerHTML={{ __html: currentLesson.explanation }} style={{ lineHeight: 1.7 }} />
+                    {lessonState === "explain" ? (
+                      <button onClick={() => setLessonState("quiz")} className="btn-glow hov" style={{ marginTop: 16, padding: "12px 24px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Commencer le quiz</button>
+                    ) : (
+                      <p style={{ color: "#EF4444" }}>L'IA va reformuler...</p>
+                    )}
+                  </div>
+                )}
+                {lessonState === "quiz" && lessonQuiz && (
+                  <div>
+                    {lessonQuiz.map((q, idx) => (
+                      <div key={idx} style={{ background: theme.cardBg, borderRadius: 14, padding: 16, marginBottom: 12 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 8 }}>{q.question}</div>
+                        <input
+                          style={{ width: "100%", padding: 10, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 8, color: theme.text }}
+                          value={quizAnswers[idx] || ""}
+                          onChange={(e) => checkQuizAnswer(idx, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                    <button onClick={submitQuiz} className="btn-glow hov" style={{ padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Valider le quiz</button>
+                    {quizFeedback && <div style={{ marginTop: 16, padding: 14, borderRadius: 12, background: quizFeedback.includes("Bonne") ? "#D1FAE5" : "#FEF3C7", color: theme.text }}>{quizFeedback}</div>}
+                  </div>
+                )}
+                {lessonState === "auto-generate" && (
+                  <div style={{ textAlign: "center", padding: 30 }}>
+                    <div style={{ fontSize: 40 }}>✨</div>
+                    <h3 style={{ color: "#10B981" }}>Fiches FSRS générées automatiquement !</h3>
+                    <button onClick={() => setAcademyView("syllabus")} className="btn-glow hov" style={{ marginTop: 16, padding: "12px 24px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au syllabus</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ══════════════════════════════════════════════════════════════════
             LABORATOIRE GOD LEVEL
@@ -1646,633 +2772,37 @@ export default function MemoMaster() {
           </div>
         )}
 
-        {/* DASHBOARD */}
-        {view === "dashboard" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: theme.cardBg, padding: "24px 32px", borderRadius: 24, marginBottom: 24, boxShadow: "0 4px 15px rgba(0,0,0,0.03)", border: `1px solid ${theme.border}`, flexWrap: "wrap", gap: 16 }}>
-              <div>
-                <h1 style={{ fontSize: 26, fontWeight: 900, color: theme.text, letterSpacing: "-0.5px", marginBottom: 4 }}>{greeting} El Hadji Malick {hour >= 18 ? "🌙" : "☀️"}</h1>
-                <p style={{ fontSize: 15, color: theme.textMuted, fontWeight: 500 }}>
-                  {stats.streak > 0 ? `Tu es sur une série de ${stats.streak} jours. Protège ton streak ! 🔥` : "C'est le moment de lancer ton premier streak de la semaine. 🌱"}
-                </p>
-                <div style={{ marginTop: 15, padding: 12, background: isDarkMode ? "#1E3A8A" : "rgba(59,130,246,0.1)", borderRadius: 8, fontSize: 13, color: isDarkMode ? "#DBEAFE" : "#1D4ED8", border: `1px solid ${theme.highlight}44` }}>
-                  <strong>🔮 Graphe Prédictif :</strong> {predictedDaysToMastery > 0 ? `À ce rythme (${avgReviewsPerDay} rév/jour), ton graphe sera maîtrisé dans ~${predictedDaysToMastery} jours.` : "Connaissances actuelles 100% maîtrisées !"}
-                </div>
-              </div>
-              <div style={{ background: theme.inputBg, padding: "12px 16px", borderRadius: 16, border: `1px solid ${theme.border}`, display: "flex", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700, marginRight: 8 }}>CETTE SEMAINE</span>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {weeks[11]?.map(date => {
-                    const cnt = heatmap[date] || 0;
-                    const isToday = date === today();
-                    return <div key={date} title={`${date} : ${cnt} rév.`} style={{ width: 16, height: 16, borderRadius: 4, background: cnt > 0 ? "#4F8EF7" : (isDarkMode?"#334155":"#EFF6FF"), border: isToday ? "2px solid #1D4ED8" : "none", opacity: date > today() ? 0.3 : 1 }} />;
-                  })}
-                </div>
-              </div>
-            </div>
-            <div style={{ background: isDarkMode ? "linear-gradient(135deg, #1E293B, #0F172A)" : "linear-gradient(135deg, #ffffff, #F8FAFF)", padding: "32px", borderRadius: 24, border: `2px solid ${theme.border}`, marginBottom: 32, position: "relative", overflow: "hidden" }} className="card-hov">
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#EF4444", animation: "pulse 1.5s infinite" }}></div>
-                <h2 style={{ fontSize: 20, fontWeight: 900, color: theme.highlight, margin: 0 }}>Mission du jour</h2>
-              </div>
-              <div style={{ display: "flex", gap: 20, marginTop: 24, flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 200 }}>
-                  <div style={{ fontSize: 42, fontWeight: 900, color: todayReviews.length > 0 ? theme.text : "#40C080", lineHeight: 1 }}>{todayReviews.length}</div>
-                  <div style={{ color: theme.textMuted, fontWeight: 600, marginTop: 4 }}>Fiches à réviser (~{estimatedTime} min)</div>
-                  {criticalCards.length > 0 && <div style={{ marginTop: 12, padding: "10px 14px", background: "#FEF2F2", color: "#B91C1C", borderRadius: 10, fontSize: 13, borderLeft: "3px solid #EF4444" }}>⚠️ <strong>Attention :</strong> {criticalCards.length} fiches critiques risquent de repasser au niveau zéro d'ici demain.</div>}
-                </div>
-                <div style={{ background: isDarkMode ? "#312E81" : "#F5F3FF", border: `1px solid ${isDarkMode?"#4338CA":"#E0E7FF"}`, borderRadius: 16, padding: "16px 20px", minWidth: 160, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7B5FF5" }}>{newCards.length}</div>
-                  <div style={{ color: theme.text, fontSize: 13, fontWeight: 700 }}>Dans l'Inbox</div>
-                  <div style={{ color: theme.textMuted, fontSize: 11, marginTop: 2 }}>Nouvelles fiches non apprises</div>
-                </div>
-              </div>
-              <button className="btn-glow hov" onClick={() => startReview()} disabled={todayReviews.length === 0} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 18, fontWeight: 800, cursor: todayReviews.length===0 ? "default":"pointer", opacity: todayReviews.length === 0 ? 0.5 : 1, marginTop: 24 }}>
-                {todayReviews.length > 0 ? "🚀 Lancer le Deep Focus" : "✅ Mission accomplie pour aujourd'hui"}
-              </button>
-            </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.highlight, marginBottom: 16, marginTop: 32 }}>⚡ État des modules</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
-              {categories.map((cat) => {
-                const catExps = expressions.filter((e) => e.category === cat.name);
-                const dueCount = catExps.filter((e) => e.nextReview <= today() && e.level < 7).length;
-                const mastered = catExps.filter((e) => e.level >= 7).length;
-                const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
-                const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
-                const isUrgent = daysToExam !== null && daysToExam <= 7;
-                const catColor = isUrgent ? "#EF4444" : (cat.color || "#1D4ED8");
-                return (
-                  // ✅ MODIFICATION ICI
-                  <div key={cat.name} style={{
-                    background: theme.cardBg,
-                    borderRadius: 20,
-                    padding: "20px",
-                    boxShadow: "0 4px 15px rgba(0,0,0,0.03)",
-                    borderWidth: '1px',
-                    borderStyle: 'solid',
-                    borderColor: theme.border,
-                    borderLeftWidth: '6px',
-                    borderLeftStyle: 'solid',
-                    borderLeftColor: catColor,
-                    transition: "all 0.25s"
-                  }} className="card-hov">
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                      <div style={{ fontWeight: 800, color: theme.text, fontSize: 16, marginBottom: 12 }}>{cat.name}</div>
-                      {dueCount > 0 && <span style={{ background: "#FEE2E2", color: "#EF4444", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>{dueCount} dues</span>}
-                    </div>
-                    {daysToExam !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isUrgent ? "#EF4444" : "#D97706", marginBottom: 8 }}>{daysToExam > 0 ? `⏳ Examen J-${daysToExam}` : daysToExam === 0 ? "🚨 Examen aujourd'hui !" : "Passé"}</div>}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                      <div style={{ flex: 1, height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ height: "100%", borderRadius: 4, transition: "width 0.5s ease", width: `${pct}%`, background: pct >= (cat.targetScore || 80) ? "#10B981" : catColor }} />
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 800, color: catColor, minWidth: 38 }}>{pct}%</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <h2 style={{ fontSize: 18, fontWeight: 700, color: theme.highlight, marginBottom: 16, marginTop: 32 }}>🤖 Renforcer tes points faibles</h2>
-            <div style={{ background: isDarkMode ? "#1E293B" : "linear-gradient(135deg, #F5F3FF, #EFF6FF)", border: `1px solid ${isDarkMode?"#334155":"#E0E7FF"}`, borderRadius: 22, padding: "24px", marginBottom: 32 }}>
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                <span style={{ fontSize: 32, lineHeight: 1 }}>✨</span>
-                <div>
-                  <div style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Suggestion IA : Concentre-toi sur <span style={{ color: "#7B5FF5" }}>{weakestCat}</span></div>
-                  <div style={{ color: theme.textMuted, fontSize: 13 }}>C'est ton module le moins maîtrisé. Génère une nouvelle fiche pour consolider tes bases.</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-                <select value={addForm.category || weakestCat} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ flex: "0 0 auto", width: "auto", minWidth: 160, padding: "14px 16px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 14, color: theme.text, cursor: "pointer" }}>
-                  {catNames.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "14px 18px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 12, fontSize: 14, color: theme.text }} placeholder="Tape un concept que tu as du mal à retenir..." />
-                <button className="hov btn-glow" onClick={async () => { if(!addForm.category) setAddForm(f => ({...f, category: weakestCat})); await handleAIGenerate(); setView("add"); }} disabled={aiLoading || !aiPrompt.trim()} style={{ padding: "14px 24px", background: "#7B5FF5", color: "white", border: "none", borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: "pointer", whiteSpace: "nowrap" }}>
-                  {aiLoading ? <span style={{ animation: "pulse 1s infinite" }}>⏳</span> : "Générer la fiche"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* VUE AJOUT / ÉDITION */}
-        {view === "add" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, letterSpacing: "-1px" }}>{editingId ? "✏️ Mode Édition" : "⚡ Création de Fiches"}</h1>
-                <p style={{ color: theme.textMuted, fontSize: 14, marginTop: 6 }}>{editingId ? "Ajuste ta fiche." : "Crée, génère en rafale, importe ou analyse une image."}</p>
-              </div>
-              {editingId && <button onClick={cancelEdit} className="hov" style={{ padding: "10px 20px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>✕ Annuler</button>}
-            </div>
-            {!editingId && (
-              <div style={{ display: "flex", gap: 8, marginBottom: 24, background: theme.cardBg, padding: 6, borderRadius: 18, border: `1px solid ${theme.border}`, boxShadow: "0 4px 15px rgba(0,0,0,0.04)" }}>
-                {[
-                  { id: "single", icon: "✦", label: "Fiche unique" },
-                  { id: "batch", icon: "🚀", label: "Batch IA" },
-                  { id: "text", icon: "📄", label: "Depuis un texte" },
-                  { id: "file", icon: "📎", label: "Image & Vision IA" },
-                ].map(t => (
-                  <button key={t.id} onClick={() => { setAddSubView(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, padding: "12px 8px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.2s", background: addSubView === t.id ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : "transparent", color: addSubView === t.id ? "white" : theme.textMuted }}>
-                    {t.icon} {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {/* Blocs single, batch, text, file */}
-            {(addSubView === "single" || editingId) && (
-              <div style={{ background: "linear-gradient(135deg, #1D4ED8 0%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>Décris un concept, l'IA crée la fiche complète.</div></div></div>
-                <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                  <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
-                  <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
-                </div>
-              </div>
-            )}
-            {addSubView === "batch" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 50%, #059669 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
-                <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
-                  <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Annotations Spring Boot"...' />
-                  <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "#1e3a8a", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
-                  <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
-                </div>
-                {showBatchPreview && batchPreview.length > 0 && (
-                  <div style={{ marginTop: 20, background: "rgba(255,255,255,0.08)", borderRadius: 18, padding: "20px", border: "1px solid rgba(255,255,255,0.15)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                      <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>📋 {batchPreview.length} fiches prêtes</div>
-                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => { setBatchPreview([]); setShowBatchPreview(false); }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", borderRadius: 10, padding: "8px 14px", cursor: "pointer" }}>Annuler</button><button className="hov btn-glow" onClick={confirmBatch} style={{ background: "#10B981", border: "none", color: "white", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>✅ Sauvegarder</button></div>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 380, overflowY: "auto" }}>
-                      {batchPreview.map((card, idx) => (
-                        <div key={idx} style={{ background: "white", borderRadius: 14, padding: "16px", display: "flex", gap: 12 }}>
-                          <div style={{ flex: 1 }}><div style={{ fontWeight: 800, color: "#1D4ED8", marginBottom: 6 }}>{card.front}</div><div style={{ color: "#4B5563", fontSize: 13 }}>{card.back}</div></div>
-                          <button onClick={() => removeBatchCard(idx)} style={{ background: "#FEF2F2", border: "none", borderRadius: 8, padding: "6px 10px", color: "#EF4444", cursor: "pointer" }}>✕</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            {addSubView === "text" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #312E81 0%, #4338CA 50%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>📄</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération depuis un Texte</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>Colle un cours, l'IA extrait les concepts.</div></div></div>
-                <div style={{ marginTop: 16 }}>
-                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#312E81", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 8 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 140 }} placeholder="Colle ton texte ici..." />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}><span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{aiFromText.length}/3000</span><button className="hov btn-glow" onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ padding: "14px 24px", background: "white", color: "#312E81", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "🔍 Analyser"}</button></div>
-                </div>
-              </div>
-            )}
-            {addSubView === "file" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #064E3B 0%, #059669 50%, #10B981 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>👁️</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>L'Œil de l'IA (Vision)</div><div style={{ color: "#D1FAE5", fontSize: 13 }}>Upload un schéma ou une capture d'écran. L'IA l'analysera pour en faire une fiche.</div></div></div>
-                <div style={{ marginTop: 16 }}>
-                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 12 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                  <div style={{ border: "2px dashed rgba(255,255,255,0.4)", borderRadius: 16, padding: "40px 20px", textAlign: "center", background: "rgba(0,0,0,0.1)" }}>
-                    {uploadLoading ? <div style={{ color: "white", fontWeight: 700 }}>⏳ Upload vers Storage en cours...</div> : (
-                      <>
-                        <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} id="file-upload-vision" />
-                        <label htmlFor="file-upload-vision" className="hov" style={{ cursor: "pointer", color: "white", fontWeight: 800, fontSize: 16 }}><div style={{ fontSize: 40, marginBottom: 8 }}>📤</div>Clique pour sélectionner une image</label>
-                      </>
-                    )}
-                  </div>
-                  {addForm.imageUrl && (
-                    <div style={{ marginTop: 20, textAlign: "center" }}>
-                      <img src={addForm.imageUrl} alt="upload preview" style={{ maxHeight: 200, borderRadius: 12, marginBottom: 16, border: "2px solid white" }} />
-                      <button onClick={handleVisionAI} disabled={aiLoading} className="btn-glow hov" style={{ display: "block", width: "100%", padding: "16px", background: "white", color: "#065F46", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", fontSize: 16 }}>{aiLoading ? "🧠 Analyse complexe en cours..." : "✨ Extraire le concept avec Vision IA"}</button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 32, alignItems: "start" }}>
-              <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.04)" }}>
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8, display: "block" }}>Module de destination</label>
-                  <select value={addForm.category} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, fontWeight: 600, color: theme.text }}>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                </div>
-                <div style={{ marginBottom: 20 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Recto <span style={{ color: "#3B82F6" }}>*</span></label>
-                  <div style={{ position: "relative" }}>
-                    <input autoFocus value={addForm.front} onChange={(e) => setAddForm((f) => ({ ...f, front: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Le concept à mémoriser..." />
-                    <button onClick={() => listening === "front" ? stopVoice() : startVoice("front")} className={listening === "front" ? "mic-pulse" : "hov"} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: theme.cardBg, border: `1px solid ${theme.border}`, cursor: "pointer", fontSize: 20, padding: 8, borderRadius: 12, color: listening === "front" ? "#EF4444" : theme.textMuted }}>🎙️</button>
-                  </div>
-                </div>
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Verso <span style={{ color: "#3B82F6" }}>*</span></label><button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>✨ Expliquer</button></div>
-                  <textarea value={addForm.back} onChange={(e) => setAddForm((f) => ({ ...f, back: e.target.value }))} onKeyDown={(e) => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); handleAdd(); } }} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 110 }} placeholder="L'explication claire..." />
-                </div>
-                <div style={{ marginBottom: 20 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Exemple</label><button onClick={() => handleMicroAI("example")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>💡 Exemple</button></div>
-                  <input value={addForm.example} onChange={(e) => setAddForm((f) => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Mise en contexte..." />
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button className="hov btn-glow" onClick={handleAdd} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>{editingId ? "💾 Mettre à jour" : "⚡ Ajouter la fiche"}</button>
-                  {!editingId && <button className="hov" onClick={() => setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null }))} style={{ padding: "18px 24px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Effacer</button>}
-                </div>
-              </div>
-              <div style={{ position: "sticky", top: 90, display: "flex", flexDirection: "column", gap: 20 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: theme.textMuted, letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", paddingLeft: 12 }}>LIVE PREVIEW</div>
-                <div style={{ background: theme.cardBg, border: `2px dashed ${theme.highlight}55`, borderRadius: 24, padding: "28px", boxShadow: "0 20px 50px rgba(0,0,0,0.05)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{addForm.category || "Catégorie"}</span><span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Niveau 0</span></div>
-                  <div style={{ background: theme.inputBg, borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}><div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>QUESTION</div><div style={{ fontSize: 26, fontWeight: 800, color: addForm.front ? theme.highlight : theme.textMuted }}>{addForm.front || "Tape un concept..."}</div></div>
-                  {addForm.imageUrl && <img src={addForm.imageUrl} className="occlusion-img" alt="media" style={{ width: "100%", borderRadius: 16, marginBottom: 20, border: `1px solid ${theme.border}` }} title="L'image sera floutée pendant la révision" />}
-                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px" }}><div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div><div style={{ fontSize: 18, fontWeight: 600, color: addForm.back ? theme.text : theme.textMuted }}>{addForm.back || "Tape la réponse..."}</div>{(addForm.example || editingId) && <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}><span style={{ color: "#4F8EF7", fontSize: 11 }}>// exemple</span><br />{addForm.example || "L'exemple s'affichera ici..."}</div>}</div>
-                </div>
-                <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 16, padding: "20px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>📤 Import en masse (CSV)</span><button className="hov" onClick={() => setShowImport(!showImport)} style={{ background: theme.inputBg, color: theme.highlight, border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{showImport ? "Fermer" : "Ouvrir"}</button></div>
-                  {showImport && <div style={{ marginTop: 12, animation: "fadeUp 0.3s ease" }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 12, color: theme.text, minHeight: 80, fontFamily: "JetBrains Mono" }} placeholder="front,back,category,example..." /><button className="hov" onClick={handleImport} style={{ width: "100%", padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* LISTE & RECHERCHE SÉMANTIQUE */}
-        {view === "list" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 24, marginBottom: 32 }}>
-              <div style={{ flex: 1 }}><h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>◈ Le Second Cerveau</h1><p style={{ color: theme.textMuted }}>Explore et visualise tes connaissances.</p></div>
-              <div style={{ display: "flex", gap: 16 }}>
-                <div style={{ background: theme.cardBg, padding: "16px 24px", borderRadius: 20, border: `1px solid ${theme.border}`, textAlign: "center" }}><div style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>{filteredExps.length}</div><div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>Fiches</div></div>
-                <div style={{ background: theme.cardBg, padding: "16px 24px", borderRadius: 20, border: `1px solid ${theme.border}`, textAlign: "center" }}><div style={{ fontSize: 28, fontWeight: 900, color: "#10B981" }}>{masteredCount}</div><div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>Maîtrisées</div></div>
-              </div>
-            </div>
-            <div style={{ background: theme.cardBg, padding: "16px", borderRadius: 24, border: `1px solid ${theme.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.05)", marginBottom: 32, position: "sticky", top: 85, zIndex: 50 }}>
-              <div style={{ display: "flex", alignItems: "center", background: theme.inputBg, padding: "0 12px", borderRadius: 16, border: `2px solid ${theme.border}`, marginBottom: 16 }}>
-                <span style={{ fontSize: 18, color: theme.textMuted }}>🔍</span>
-                <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ flex: 1, padding: "16px 12px", background: "transparent", border: "none", fontSize: 15, color: theme.text }} placeholder="Chercher un concept..." />
-                {searchQuery && <button onClick={() => setSearchQuery("")} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 14, padding: 8 }}>✕</button>}
-                <button onClick={handleSemanticSearch} disabled={semanticLoading} className="btn-glow hov" style={{ background: "linear-gradient(135deg, #7B5FF5, #6D28D9)", color: "white", border: "none", padding: "10px 16px", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginLeft: 8 }}>
-                  {semanticLoading ? "🧠 Recherche..." : "🧠 IA Sémantique"}
-                </button>
-              </div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
-                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, flex: 1 }}>
-                  {["Toutes", ...catNames].map((c) => <button key={c} onClick={() => setFilterCat(c)} className="hov" style={{ padding: "8px 16px", borderRadius: 100, fontSize: 13, fontWeight: 700, cursor: "pointer", background: filterCat === c ? theme.highlight : theme.cardBg, color: filterCat === c ? "white" : theme.textMuted, border: filterCat === c ? `1px solid ${theme.highlight}` : `1px solid ${theme.border}` }}>{c}</button>)}
-                </div>
-                <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
-                  {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => <button key={l} onClick={() => setFilterLevel(l)} className="hov" style={{ padding: "8px 16px", borderRadius: 100, fontSize: 12, cursor: "pointer", border: "none", background: filterLevel === l ? "#F5F3FF" : "transparent", color: filterLevel === l ? "#7B5FF5" : theme.textMuted, fontWeight: filterLevel === l ? 800 : 600 }}>{l}</button>)}
-                </div>
-              </div>
-            </div>
-            {filteredExps.length === 0 ? (
-              <div style={{ background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: 32, padding: "80px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: 64, marginBottom: 16 }}>📭</div>
-                <h3 style={{ color: theme.text, fontSize: 20, fontWeight: 800 }}>Aucune fiche trouvée</h3>
-                <p style={{ color: theme.textMuted, marginTop: 8, marginBottom: 24 }}>Élargis ta recherche ou crée un nouveau concept.</p>
-                <button onClick={() => setView("add")} className="btn-glow hov" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚡ Créer une fiche</button>
-              </div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 24 }}>
-                {filteredExps.map((exp) => {
-                  const lvl = exp.level || 0;
-                  const lvlColor = lvl >= 7 ? "#10B981" : lvl >= 5 ? "#3B82F6" : lvl >= 3 ? "#8B5CF6" : lvl >= 1 ? "#F59E0B" : "#9CA3AF";
-                  const catColor = categories.find((c) => c.name === exp.category)?.color || "#3B82F6";
-                  return (
-                    <div key={exp.id} style={{ background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column", boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden" }} className="card-hov">
-                      <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: "50%", background: lvlColor }} /><span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>N{lvl}</span></div>
-                      </div>
-                      <div style={{ padding: "0 24px", flex: 1 }}>
-                        <div style={{ fontSize: 20, fontWeight: 800, color: theme.highlight, marginBottom: 12, lineHeight: 1.3 }}>{exp.front}</div>
-                        {exp.imageUrl && <div style={{ fontSize: 11, background: "#10B98122", color: "#10B981", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
-                        <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.6, marginBottom: 16 }}>{exp.back}</div>
-                        {exp.example && <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #3B82F6", marginBottom: 16 }}><span style={{ color: "#3B82F6", fontSize: 10 }}>// exemple</span><br />{exp.example}</div>}
-                      </div>
-                      <div style={{ padding: "16px 24px", background: theme.inputBg, borderTop: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>
-                          <div>{lvl >= 7 ? "✅ Maîtrisée" : `📅 Rév: ${formatDate(exp.nextReview)}`}</div>
-                          <div style={{ fontSize: 10, marginTop: 2 }}>{exp.difficulty !== undefined ? `Diff: ${exp.difficulty} ` : (exp.easeFactor ? `EF: ${exp.easeFactor} ` : "")}{(exp.reviewHistory?.length || 0) > 0 && `• ${exp.reviewHistory.length} Rév.`}</div>
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#F5F3FF", color: "#8B5CF6" }} title="Améliorer">✨</button>
-                          <button onClick={() => startEdit(exp)} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#EFF6FF", color: "#3B82F6" }} title="Éditer">✏️</button>
-                          <button onClick={() => deleteExp(exp.id)} className="hov" style={{ width: 34, height: 34, borderRadius: 10, border: "none", cursor: "pointer", background: "#FEF2F2", color: "#EF4444" }} title="Supprimer">🗑️</button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* RÉVISION SOCRATIQUE & MNÉMONIQUES */}
-        {view === "review" && currentCard && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <button onClick={() => { setView("dashboard"); if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone); }} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>← Quitter</button>
-              <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{reviewIndex + 1}</span> / {reviewQueue.length}</div>
-            </div>
-            <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, marginBottom: 32, overflow: "hidden" }}>
-              <div style={{ height: "100%", background: "linear-gradient(90deg, #1D4ED8, #3B82F6)", borderRadius: 4, transition: "width 0.4s ease", width: `${(reviewIndex / reviewQueue.length) * 100}%` }} />
-            </div>
-            <div className="card-hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.08)", maxWidth: 700, margin: "0 auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{currentCard.category}</span>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>{currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}</span>
-                  <span style={{ background: "#40C08022", color: "#40C080", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>N{currentCard.level}</span>
-                </div>
-              </div>
-              <div style={{ background: isDarkMode?"#0F172A":"#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>QUESTION</div>
-                <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{currentCard.front}</div>
-                {currentCard.imageUrl && (
-                  <img src={currentCard.imageUrl} alt="support visuel" className={!revealed ? "occlusion-img" : ""} style={{ width: "100%", borderRadius: 16, border: `2px solid ${theme.border}` }} title={!revealed ? "Survole l'image pour l'apercevoir" : ""} />
-                )}
-              </div>
-              {!revealed ? (
-                <div style={{ marginTop: 24 }}>
-                  <textarea style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 80, marginBottom: 12 }} placeholder="Tape ta réponse ici. L'IA Socratique va l'évaluer..." value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} />
-                  {socraticHint && <div style={{ background: "#FFFBEB", borderLeft: "4px solid #F59E0B", padding: 12, borderRadius: 4, marginBottom: 16, color: "#92400E", fontSize: 14 }}><strong style={{ display: "block", marginBottom: 4 }}>🧙‍♂️ Tuteur IA :</strong> {socraticHint}</div>}
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <button className="hov btn-glow" onClick={handleSemanticEval} disabled={evalLoading || !userAnswer.trim()} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer", opacity: (!userAnswer.trim() || evalLoading) ? 0.6 : 1 }}>{evalLoading ? "Analyse..." : "🧠 IA Socratique"}</button>
-                    <button className="hov" onClick={handleReveal} style={{ flex: "0 0 auto", padding: "18px", background: "transparent", color: theme.textMuted, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>Passer / Voir</button>
-                  </div>
-                  <div style={{ textAlign: "center", marginTop: 12, color: theme.textMuted, fontSize: 12 }}>⌨️ Espace pour forcer l'affichage</div>
-                </div>
-              ) : (
-                <div style={{ animation: "slideIn 0.3s ease" }}>
-                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
-                    <div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
-                    <div style={{ fontSize: 18, fontWeight: 600, color: theme.text, lineHeight: 1.6 }}>{currentCard.back}</div>
-                    {currentCard.example && <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}><span style={{ color: "#4F8EF7", fontSize: 11, fontFamily: "JetBrains Mono" }}>// exemple</span><br />{currentCard.example}</div>}
-                  </div>
-                  <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ display: "block", width: "100%", padding: "12px", background: "linear-gradient(135deg, #F5F3FF, #EDE9FE)", color: "#7B5FF5", border: "1px solid #DDD6FE", borderRadius: 12, fontWeight: 800, marginBottom: 20, cursor: "pointer" }}>
-                    {mnemonicLoading ? "⏳ Création d'une histoire absurde..." : "✨ Générer un Mnémonique Absurde (Ancrage)"}
-                  </button>
-                  {mnemonicText && (
-                    <div style={{ background: "#F5F3FF", borderLeft: "4px solid #7B5FF5", padding: "16px", borderRadius: 12, color: "#4C1D95", marginBottom: 20, fontSize: 14, fontStyle: "italic", lineHeight: 1.6 }}>
-                      {mnemonicText}
-                    </div>
-                  )}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                    <button className="hov" onClick={() => handleAnswer(0)} style={{ position: "relative", padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>😓 Oublié<br /><span style={{ fontSize: 11, opacity: 0.8 }}>Retour à zéro</span><span style={{ position: "absolute", top: 8, right: 10, fontSize: 10, background: "white", padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(0,0,0,0.1)" }}>1</span></button>
-                    <button className="hov" onClick={() => handleAnswer(3)} style={{ position: "relative", padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🤔 Hésité<br /><span style={{ fontSize: 11, opacity: 0.8 }}>Intervalle ×EF/2</span><span style={{ position: "absolute", top: 8, right: 10, fontSize: 10, background: "white", padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(0,0,0,0.1)" }}>2</span></button>
-                    <button className="hov" onClick={() => handleAnswer(5)} style={{ position: "relative", padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⚡ Facile<br /><span style={{ fontSize: 11, opacity: 0.8 }}>FSRS optimisé</span><span style={{ position: "absolute", top: 8, right: 10, fontSize: 10, background: "white", padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(0,0,0,0.1)" }}>3</span></button>
-                  </div>
-                </div>
-              )}
-            </div>
-            {(currentCard.reviewHistory?.length || 0) > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 20, justifyContent: "center" }}>
-                <span style={{ color: theme.textMuted, fontSize: 12, fontFamily: "JetBrains Mono" }}>Historique: </span>
-                {currentCard.reviewHistory.slice(-7).map((h, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: h.q === 0 ? "#F04040" : h.q === 3 ? "#F0A040" : "#40C080" }} title={`${h.date} — ${h.q === 0 ? "Oublié" : h.q === 3 ? "Hésité" : "Facile"}`} />)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* MODE EXAMEN */}
-        {view === "exam" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            {examSubView === "home" && (
-              <div>
-                <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 60%, #7B5FF5 100%)", borderRadius: 28, padding: "40px 36px", marginBottom: 32, position: "relative", overflow: "hidden" }}>
-                  <div style={{ position: "absolute", top: -30, right: -30, fontSize: 180, opacity: 0.05 }}>🎯</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#93C5FD", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>CENTRE D'EXAMENS</div>
-                  <h1 style={{ fontSize: 34, fontWeight: 900, color: "white", marginBottom: 10 }}>Prouve ta maîtrise 🏆</h1>
-                  <p style={{ color: "#93C5FD", fontSize: 15, marginBottom: 28, maxWidth: 520, lineHeight: 1.6 }}>Affronte tes propres connaissances. La difficulté forge les champions.</p>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>🎯 {stats.examsDone} examens passés</div>
-                    <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>📚 {expressions.length} fiches disponibles</div>
-                  </div>
-                </div>
-                <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.highlight, marginBottom: 16, fontFamily: "JetBrains Mono", letterSpacing: 1 }}>CHOISIR UN MODE</h2>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 36 }}>
-                  {[
-                    { mode: "flashcard", icon: "🃏", title: "Classique", sub: "Auto-évaluation", desc: "Questions recto/verso avec un timer généreux.", color: "#1D4ED8", bg: "linear-gradient(135deg,#EFF6FF,#DBEAFE)", border: "#BFDBFE" },
-                    { mode: "qcm", icon: "📝", title: "QCM IA", sub: "L'IA te piège", desc: "L'IA génère 3 fausses réponses ultra-crédibles.", color: "#7B5FF5", bg: "linear-gradient(135deg,#F5F3FF,#EDE9FE)", border: "#DDD6FE" },
-                    { mode: "speedrun", icon: "⚡", title: "Speedrun", sub: "5s par question", desc: "Test de réflexes absolu. Pas le temps de réfléchir.", color: "#F59E0B", bg: "linear-gradient(135deg,#FEF3C7,#FDE68A)", border: "#FCD34D" },
-                    { mode: "boss", icon: "💀", title: "Boss Fight", sub: "Sanction extrême", desc: "Simule tes profs. Si tu échoues, tes fiches sont rétrogradées.", color: "#EF4444", bg: "linear-gradient(135deg,#FEE2E2,#FECACA)", border: "#FCA5A5" },
-                    { mode: "custom", icon: "🛠️", title: "Examens Perso", sub: "Tes propres règles", desc: "Crée et passe tes propres devoirs surveillés.", color: "#059669", bg: "linear-gradient(135deg,#ECFDF5,#D1FAE5)", border: "#A7F3D0" },
-                  ].map(m => (
-                    <div key={m.mode} onClick={() => { if (m.mode === "custom") setExamSubView("custom"); else { setExamConfig(c => ({...c, mode: m.mode})); setExamSubView("config"); } }} className="card-hov" style={{ background: m.bg, border: `2px solid ${m.border}`, borderRadius: 24, padding: "28px", cursor: "pointer", position: "relative", overflow: "hidden" }}>
-                      <div style={{ fontSize: 40, marginBottom: 12 }}>{m.icon}</div>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: m.color, letterSpacing: 2, marginBottom: 4, fontFamily: "JetBrains Mono" }}>{m.sub}</div>
-                      <div style={{ fontSize: 20, fontWeight: 900, color: "#1F2937", marginBottom: 8 }}>{m.title}</div>
-                      <div style={{ fontSize: 13, color: "#4B5563", lineHeight: 1.6 }}>{m.desc}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {examSubView === "config" && (
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24 }}>
-                  <button onClick={() => setExamSubView("home")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>← Retour</button>
-                  <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>{examConfig.mode === "qcm" ? "📝 Configuration QCM" : examConfig.mode === "speedrun" ? "⚡ Configuration Speedrun" : examConfig.mode === "boss" ? "💀 Configuration Boss Fight" : "🃏 Configuration Classique"}</h1>
-                </div>
-                <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", boxShadow: "0 4px 15px rgba(0,0,0,0.03)" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20, marginBottom: 24 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>📚 Module</label>
-                      <select value={examConfig.category} onChange={(e) => setExamConfig((c) => ({ ...c, category: e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, cursor: "pointer" }}><option value="Toutes">Toutes les matières</option>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>🔢 Nombre de questions</label>
-                      <input type="number" min={3} max={50} value={examConfig.count} onChange={(e) => setExamConfig((c) => ({ ...c, count: +e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>⏱️ Temps (sec)</label>
-                      <input type="number" min={examConfig.mode === "speedrun" ? 3 : 10} max={examConfig.mode === "speedrun" ? 10 : 300} value={examConfig.mode === "speedrun" && examConfig.timePerCard > 10 ? 5 : examConfig.timePerCard} onChange={(e) => setExamConfig((c) => ({ ...c, timePerCard: +e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} disabled={examConfig.mode === "speedrun"} />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>🔥 Difficulté</label>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12, marginBottom: 20 }}>
-                      {[
-                        { val: "facile", icon: "😌", label: "Facile", color: "#10B981" },
-                        { val: "adaptative", icon: "🎯", label: "Adaptative", color: "#3B82F6" },
-                        { val: "difficile", icon: "💪", label: "Difficile", color: "#F59E0B" },
-                        { val: "extreme", icon: "💀", label: "EXTRÊME", color: "#EF4444" },
-                      ].map(d => (
-                        <div key={d.val} onClick={() => setExamConfig(c => ({...c, difficulty: d.val}))} style={{ border: `2px solid ${examConfig.difficulty === d.val ? d.color : theme.border}`, borderRadius: 16, padding: "14px", cursor: "pointer", background: examConfig.difficulty === d.val ? d.color + "15" : theme.inputBg, textAlign: "center" }}>
-                          <div style={{ fontSize: 22, marginBottom: 4 }}>{d.icon}</div><div style={{ fontWeight: 800, fontSize: 13, color: examConfig.difficulty === d.val ? d.color : theme.text }}>{d.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <button className="hov btn-glow" onClick={() => startExam()} style={{ width: "100%", padding: "18px 36px", background: examConfig.mode === "boss" ? "linear-gradient(135deg, #EF4444, #B91C1C)" : "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer l'examen</button>
-                </div>
-              </div>
-            )}
-
-            {examSubView === "active" && examActive && examQueue[examIndex] && (() => {
-              const card = examQueue[examIndex];
-              const isQcmMode = examConfig.mode === "qcm" || (card.isCustom && card.isQcm);
-              const timerDanger = examTimer <= (examConfig.mode === "speedrun" ? 3 : 10);
-              return (
-                <div style={{ animation: "fadeUp 0.4s ease" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
-                    <button onClick={() => { clearInterval(examTimerRef.current); setExamActive(false); setExamSubView("home"); }} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>✕ Abandonner</button>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      {examStreak >= 3 && <div style={{ background: "#FEF3C7", color: "#92400E", padding: "6px 12px", borderRadius: 10, fontSize: 12, fontWeight: 800, animation: "pulse 1s infinite" }}>🔥 Streak ×{examStreak}</div>}
-                      <div style={{ fontFamily: "JetBrains Mono", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{examIndex + 1}</span> / {examQueue.length}</div>
-                      <div style={{ padding: "6px 14px", borderRadius: 10, fontFamily: "JetBrains Mono", fontWeight: 900, fontSize: 14, background: timerDanger ? "#FEE2E2" : "#EFF6FF", color: timerDanger ? "#EF4444" : "#1D4ED8", animation: examTimer <= 5 ? "pulse 0.5s infinite" : "none" }}>⏱ {examTimer}s</div>
-                    </div>
-                  </div>
-                  <div style={{ height: 4, background: theme.inputBg, borderRadius: 4, marginBottom: 28 }}><div style={{ height: "100%", background: "linear-gradient(90deg,#10B981,#3B82F6)", borderRadius: 4, transition: "width 0.4s", width: `${((examIndex) / examQueue.length) * 100}%` }} /></div>
-                  <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", maxWidth: 720, margin: "0 auto", boxShadow: "0 10px 40px rgba(0,0,0,0.05)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                      <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{card.category || "Perso"}</span>
-                      {isQcmMode && <span style={{ background: "#F5F3FF", color: "#7B5FF5", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>📝 QCM</span>}
-                      {examConfig.mode === "boss" && <span style={{ background: "#FEF2F2", color: "#EF4444", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>💀 BOSS</span>}
-                    </div>
-                    <div style={{ background: theme.inputBg, borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}><div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>QUESTION</div><div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight }}>{card.front || card.question}</div></div>
-                    {isQcmMode ? (
-                      qcmLoading ? <div style={{ textAlign: "center", padding: "28px", color: "#7B5FF5" }}><div style={{ fontSize: 28, animation: "pulse 1s infinite" }}>🤖</div><div style={{ fontWeight: 700 }}>L'IA prépare les pièges...</div></div>
-                      : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                          {qcmChoices.map((choice, ci) => {
-                            const isCorrect = choice === (card.back || card.answer);
-                            const isSelected = qcmSelected === ci;
-                            let bg = theme.inputBg, border = `2px solid ${theme.border}`, color = theme.text;
-                            if (isSelected && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
-                            else if (isSelected && !isCorrect) { bg = "#FEE2E2"; border = "2px solid #EF4444"; color = "#991B1B"; }
-                            else if (qcmSelected !== null && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
-                            return (
-                              <button key={ci} onClick={() => { if (qcmSelected !== null) return; setQcmSelected(ci); setTimeout(() => handleExamAnswer(isCorrect ? 5 : 0), 900); }} disabled={qcmSelected !== null} style={{ background: bg, border, borderRadius: 14, padding: "16px 20px", textAlign: "left", cursor: qcmSelected !== null ? "default" : "pointer", color, fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 12 }}>
-                                <span style={{ width: 28, height: 28, borderRadius: "50%", background: isSelected ? (isCorrect ? "#10B981" : "#EF4444") : (qcmSelected !== null && isCorrect ? "#10B981" : (isDarkMode?"#334155":"#EFF6FF")), color: (isSelected || (qcmSelected !== null && isCorrect)) ? "white" : theme.textMuted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800 }}>{String.fromCharCode(65 + ci)}</span>
-                                {choice} {qcmSelected !== null && isCorrect && <span style={{ marginLeft: "auto" }}>✅</span>} {isSelected && !isCorrect && <span style={{ marginLeft: "auto" }}>❌</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
-                    ) : (
-                      !examRevealed ? <button className="hov btn-glow" onClick={() => setExamRevealed(true)} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>👁️ Voir la réponse (Espace)</button>
-                      : <div style={{ animation: "slideIn 0.3s ease" }}>
-                          <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}><div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div><div style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>{card.back || card.answer}</div></div>
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                            <button className="hov" onClick={() => handleExamAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>😓 Pas su (1)</button>
-                            <button className="hov" onClick={() => handleExamAnswer(3)} style={{ padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🤔 Hésité (2)</button>
-                            <button className="hov" onClick={() => handleExamAnswer(5)} style={{ padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>⚡ Su ! (3)</button>
-                          </div>
-                        </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {examSubView === "results" && examAnswers.length > 0 && (() => {
-              const correct = examAnswers.filter(a => a.q >= 3).length;
-              const score = Math.round((correct / examAnswers.length) * 100);
-              const duration = examStartTime ? Math.round((Date.now() - examStartTime) / 1000) : 0;
-              const grade = score >= 90 ? { label: "LÉGENDAIRE", icon: "🏆", color: "#7B5FF5" } : score >= 70 ? { label: "BIEN", icon: "👍", color: "#3B82F6" } : { label: "À RETRAVAILLER", icon: "💪", color: "#EF4444" };
-              const bossPenalty = examConfig.mode === "boss" && score < 100;
-              return (
-                <div style={{ animation: "fadeUp 0.4s ease" }}>
-                  <div style={{ background: bossPenalty ? "linear-gradient(135deg, #FEF2F2, #FECACA)" : `linear-gradient(135deg, ${grade.color}22, ${grade.color}08)`, border: `2px solid ${bossPenalty ? "#EF4444" : grade.color}44`, borderRadius: 28, padding: "40px 32px", marginBottom: 28, textAlign: "center" }}>
-                    <div style={{ fontSize: 80, marginBottom: 8 }}>{bossPenalty ? "💀" : grade.icon}</div>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: bossPenalty ? "#EF4444" : grade.color, letterSpacing: 3, marginBottom: 8 }}>{bossPenalty ? "ÉCHEC FACE AU BOSS" : grade.label}</div>
-                    <div style={{ fontSize: 80, fontWeight: 900, color: bossPenalty ? "#EF4444" : grade.color, lineHeight: 1 }}>{score}%</div>
-                    {bossPenalty && <div style={{ color: "#991B1B", fontWeight: 700, marginTop: 10 }}>Pénalité: Tes fiches de ce module perdent de la maîtrise.</div>}
-                    <div style={{ fontSize: 14, color: theme.textMuted, marginTop: 10 }}>{correct} / {examAnswers.length} correctes · Temps: {Math.floor(duration/60)}m{duration%60}s</div>
-                  </div>
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <button className="hov btn-glow" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamSubView("config"); }} style={{ flex: 1, padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>🔄 Recommencer</button>
-                    <button className="hov" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamSubView("home"); }} style={{ flex: 1, padding: "16px", background: theme.cardBg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🏠 Accueil Examens</button>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {examSubView === "custom" && (
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}><button onClick={() => setExamSubView("home")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>← Retour</button><button onClick={() => { setNewCustomExam({ title: "", description: "", questions: [] }); setExamSubView("createCustom"); }} style={{ padding: "10px 20px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>+ Créer</button></div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-                  {customExams.map(exam => (
-                    <div key={exam.id} style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, borderTop: "4px solid #7B5FF5" }}>
-                      <div style={{ fontWeight: 900, color: theme.text, fontSize: 18, marginBottom: 6 }}>{exam.title}</div><div style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>{exam.description}</div><div style={{ fontSize: 12, color: "#7B5FF5", fontWeight: 700, marginBottom: 16 }}>{exam.questions.length} questions</div>
-                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => startExam(exam)} style={{ flex: 1, padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>🚀 Passer</button><button onClick={() => setCustomExams(p => p.filter(e => e.id !== exam.id))} style={{ padding: "10px 14px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 10, cursor: "pointer" }}>🗑️</button></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {examSubView === "createCustom" && (
-              <div>
-                <button onClick={() => setExamSubView("custom")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600, marginBottom: 20 }}>← Retour</button>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
-                  <div>
-                    <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, marginBottom: 20 }}>
-                      <input value={newCustomExam.title} onChange={e => setNewCustomExam(ex => ({...ex, title: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 12 }} placeholder="Titre de l'examen" />
-                      <input value={newCustomExam.description} onChange={e => setNewCustomExam(ex => ({...ex, description: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} placeholder="Description (optionnel)" />
-                    </div>
-                    <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}` }}>
-                      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: false}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: !customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: !customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>🃏 Flashcard</button>
-                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: true}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>📝 QCM</button>
-                      </div>
-                      <input value={customExamEditQ.question} onChange={e => setCustomExamEditQ(q => ({...q, question: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 12 }} placeholder="Question" />
-                      <input value={customExamEditQ.answer} onChange={e => setCustomExamEditQ(q => ({...q, answer: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: customExamEditQ.isQcm ? 12 : 20 }} placeholder="Réponse correcte" />
-                      {customExamEditQ.isQcm && customExamEditQ.choices.slice(0,3).map((ch, ci) => <input key={ci} value={ch} onChange={e => { const c = [...customExamEditQ.choices]; c[ci] = e.target.value; setCustomExamEditQ(q => ({...q, choices: c})); }} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 8 }} placeholder={`Fausse réponse ${ci+1}`} />)}
-                      <button onClick={() => { if (!customExamEditQ.question || !customExamEditQ.answer) return; setNewCustomExam(ex => ({...ex, questions: [...ex.questions, { id: Date.now().toString(), question: customExamEditQ.question, answer: customExamEditQ.answer, isQcm: customExamEditQ.isQcm, choices: customExamEditQ.isQcm ? [...customExamEditQ.choices.slice(0,3), customExamEditQ.answer] : [] }]})); setCustomExamEditQ({ question: "", answer: "", choices: ["","","",""], isQcm: customExamEditQ.isQcm }); showToast("Question ajoutée"); }} style={{ width: "100%", padding: "14px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 12 }}>+ Ajouter la question</button>
-                    </div>
-                    <button onClick={() => { if (!newCustomExam.title || newCustomExam.questions.length === 0) return; setCustomExams(p => [...p, { ...newCustomExam, id: Date.now().toString(), createdAt: today() }]); setExamSubView("custom"); showToast("Examen sauvegardé !"); }} style={{ width: "100%", padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 20 }}>💾 Sauvegarder l'examen</button>
-                  </div>
-                  <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, maxHeight: 600, overflowY: "auto" }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: theme.textMuted, marginBottom: 16 }}>APERÇU ({newCustomExam.questions.length} questions)</div>
-                    {newCustomExam.questions.map((q, i) => (
-                      <div key={q.id} style={{ background: theme.inputBg, padding: 14, borderRadius: 12, marginBottom: 10, borderLeft: `4px solid ${q.isQcm ? "#7B5FF5" : "#3B82F6"}` }}><div style={{ fontSize: 11, color: q.isQcm ? "#7B5FF5" : "#3B82F6", fontWeight: 800, marginBottom: 4 }}>{q.isQcm ? "QCM" : "FLASHCARD"}</div><div style={{ fontWeight: 700, color: theme.text }}>{q.question}</div><div style={{ color: "#10B981", fontSize: 12 }}>✓ {q.answer}</div></div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* AI ENGLISH PRACTICE */}
-        {view === "practice" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #065F46 60%, #059669 100%)", borderRadius: 28, padding: "36px", marginBottom: 28, position: "relative", overflow: "hidden", boxShadow: "0 10px 40px rgba(5,150,105,0.2)" }}>
-              <div style={{ position: "absolute", top: -20, right: -20, fontSize: 160, opacity: 0.06 }}>🗣️</div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#6EE7B7", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>AI CONVERSATION PARTNER</div>
-              <h1 style={{ fontSize: 30, fontWeight: 900, color: "white", marginBottom: 8 }}>English Practice Room 🇬🇧</h1>
-              <p style={{ color: "#A7F3D0", fontSize: 14, marginBottom: 20 }}>Speak or type in English. Choose a Persona to force yourself to adapt to different accents.</p>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>TOPIC</span><select value={practiceTopic} onChange={e => setPracticeTopic(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 160 }}>{["Free conversation", "Job interview", "Technology & AI", "Daily life in Senegal", "Programming & coding"].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>LEVEL</span><select value={practiceLevel} onChange={e => setPracticeLevel(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="beginner">🟢 Beginner</option><option value="intermediate">🟡 Intermediate</option><option value="advanced">🔴 Advanced</option></select></div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>PERSONA</span><select value={practicePersona} onChange={e => setPracticePersona(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="Standard">👨‍🏫 Standard</option><option value="MMA">🥊 MMA Fighter</option><option value="Recruteur">💼 Tech Recruiter</option></select></div>
-                <button onClick={resetPracticeChat} className="hov" style={{ padding: "10px 18px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}>🔄 New Session</button>
-              </div>
-            </div>
-            <div style={{ background: theme.cardBg, border: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", height: 480 }}>
-              <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 16 }}>
-                {practiceMessages.map((msg, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
-                    {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div>}
-                    <div style={{ maxWidth: "75%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : (isDarkMode?"#334155":"#F0FDF4"), color: msg.role === "user" ? "white" : theme.text, fontSize: 15, lineHeight: 1.6, border: msg.role === "assistant" && !isDarkMode ? "1px solid #D1FAE5" : "none" }}>
-                      {msg.text}
-                      {msg.role === "assistant" && <button onClick={() => speakText(msg.text)} style={{ display: "block", marginTop: 8, background: "none", border: "none", color: "#059669", cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>🔊 Listen again</button>}
-                    </div>
-                    {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#1D4ED8,#7B5FF5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>😊</div>}
-                  </div>
-                ))}
-                {practiceLoading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div><div style={{ background: isDarkMode?"#334155":"#F0FDF4", borderRadius: "20px 20px 20px 4px", padding: "14px 18px", display: "flex", gap: 6 }}>{[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#059669", animation: `pulse 1.2s ${i*0.2}s infinite` }} />)}</div></div>}
-                <div ref={practiceEndRef} />
-              </div>
-              <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, background: isDarkMode?"#1E293B":"#F0FDF4", display: "flex", gap: 10, alignItems: "center" }}>
-                <button onClick={togglePracticeMic} style={{ width: 52, height: 52, borderRadius: 16, flexShrink: 0, background: practiceListening ? "linear-gradient(135deg, #EF4444, #F97316)" : "linear-gradient(135deg, #059669, #10B981)", border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", animation: practiceListening ? "pulse 0.8s infinite" : "none" }}>{practiceListening ? "⏹️" : "🎙️"}</button>
-                <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPracticeMessage(practiceInput); } }} placeholder={practiceListening ? "🎙️ Listening... click ⏹️ when finished!" : "Type in English or use mic..."} style={{ flex: 1, padding: "14px 18px", background: theme.inputBg, border: `2px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 14, fontSize: 15, color: theme.text }} disabled={practiceListening || practiceInput.includes("⏳")} />
-                <button onClick={() => sendPracticeMessage(practiceInput)} disabled={!practiceInput.trim() || practiceLoading || practiceListening} style={{ width: 52, height: 52, borderRadius: 16, background: practiceInput.trim() ? "linear-gradient(135deg,#1D4ED8,#3B82F6)" : theme.inputBg, border: "none", cursor: practiceInput.trim() ? "pointer" : "default", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{practiceLoading ? "⏳" : "➤"}</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* STATS */}
+        {/* ══════════════════════════════════════════════════════════════════
+            VUE STATISTIQUES
+        ══════════════════════════════════════════════════════════════════ */}
         {view === "stats" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>▣ Statistiques FSRS</h1>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 24, marginBottom: 24 }}>
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>▣ Statistiques & Progression</h1>
+                <p style={{ color: theme.textMuted }}>Analyse tes performances et ton XP.</p>
+              </div>
+            </div>
+            
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 32 }}>
+              <div style={{ background: "linear-gradient(135deg, #F59E0B, #D97706)", padding: "24px", borderRadius: 20, color: "white", boxShadow: "0 10px 25px rgba(245,158,11,0.2)" }}>
+                <div style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>{stats.streak} <span style={{ fontSize: 16, fontWeight: 600 }}>jours</span></div>
+                <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9 }}>Série actuelle 🔥</div>
+              </div>
+              <div style={{ background: "linear-gradient(135deg, #10B981, #059669)", padding: "24px", borderRadius: 20, color: "white", boxShadow: "0 10px 25px rgba(16,185,129,0.2)" }}>
+                <div style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>{masteredCount} <span style={{ fontSize: 16, fontWeight: 600 }}>/ {expressions.length}</span></div>
+                <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9 }}>Fiches maîtrisées 🧠</div>
+              </div>
+              <div style={{ background: "linear-gradient(135deg, #3B82F6, #1D4ED8)", padding: "24px", borderRadius: 20, color: "white", boxShadow: "0 10px 25px rgba(59,130,246,0.2)" }}>
+                <div style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>{stats.totalReviews}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9 }}>Révisions totales 🔄</div>
+              </div>
+              <div style={{ background: "linear-gradient(135deg, #8B5CF6, #6D28D9)", padding: "24px", borderRadius: 20, color: "white", boxShadow: "0 10px 25px rgba(139,92,246,0.2)" }}>
+                <div style={{ fontSize: 32, fontWeight: 900, marginBottom: 8 }}>{stats.aiGenerated || 0}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, opacity: 0.9 }}>Générées par l'IA ✨</div>
+              </div>
+            </div>
+
             <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 22, padding: "24px", marginBottom: 32, boxShadow: "0 4px 15px rgba(0,0,0,0.03)" }}>
               <h2 style={{ fontSize: 16, color: theme.text, marginBottom: 16 }}>📊 Distribution des niveaux (0 à 7)</h2>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-end", height: 220 }}>
@@ -2290,34 +2820,62 @@ export default function MemoMaster() {
                 })}
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
-              {[
-                { icon: "🔁", val: stats.totalReviews, label: "Révisions totales", color: "#3B82F6" },
-                { icon: "🤖", val: stats.aiGenerated, label: "Fiches IA", color: "#8B5CF6" },
-                { icon: "🎯", val: stats.examsDone, label: "Examens blancs", color: "#F59E0B" },
-                { icon: "📅", val: sessions.length, label: "Jours actifs", color: "#10B981" },
-              ].map((stat, i) => (
-                <div key={i} style={{ background: theme.cardBg, borderRadius: 20, padding: "24px 16px", textAlign: "center", border: `1px solid ${theme.border}`, borderTop: `3px solid ${stat.color}` }}>
-                  <div style={{ fontSize: 28, marginBottom: 12 }}>{stat.icon}</div><div style={{ fontSize: 38, fontWeight: 900, color: stat.color }}>{stat.val}</div><div style={{ fontSize: 13, color: theme.textMuted, marginTop: 8, fontWeight: 600 }}>{stat.label}</div>
-                </div>
-              ))}
+
+            <div style={{ background: theme.cardBg, borderRadius: 24, padding: "32px", border: `1px solid ${theme.border}`, marginBottom: 32 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: theme.text, marginBottom: 24 }}>Activité des 12 dernières semaines</h2>
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 16 }}>
+                {weeks.map((week, i) => (
+                  <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {week.map(date => {
+                      const count = heatmap[date] || 0;
+                      const intensity = count > 20 ? "#1D4ED8" : count > 10 ? "#3B82F6" : count > 0 ? "#93C5FD" : (isDarkMode ? "#334155" : "#F1F5F9");
+                      return (
+                        <div key={date} title={`${date} : ${count} révisions`} style={{ width: 14, height: 14, borderRadius: 4, background: intensity, cursor: "pointer", border: date === today() ? `2px solid ${isDarkMode ? "white" : "black"}` : "none", opacity: date > today() ? 0.2 : 1 }} />
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
+                <span>Moins</span>
+                <div style={{ width: 12, height: 12, borderRadius: 3, background: isDarkMode ? "#334155" : "#F1F5F9" }} />
+                <div style={{ width: 12, height: 12, borderRadius: 3, background: "#93C5FD" }} />
+                <div style={{ width: 12, height: 12, borderRadius: 3, background: "#3B82F6" }} />
+                <div style={{ width: 12, height: 12, borderRadius: 3, background: "#1D4ED8" }} />
+                <span>Plus</span>
+              </div>
+            </div>
+            
+            <div style={{ background: theme.cardBg, borderRadius: 24, padding: "32px", border: `1px solid ${theme.border}` }}>
+              <h2 style={{ fontSize: 18, fontWeight: 800, color: theme.text, marginBottom: 24 }}>Power Level : <span style={{ color: "#F59E0B" }}>{powerLevel} XP</span></h2>
+              <div style={{ height: 12, background: theme.inputBg, borderRadius: 6, overflow: "hidden", marginBottom: 12 }}>
+                <div style={{ height: "100%", width: `${Math.min(100, (powerLevel / 10000) * 100)}%`, background: "linear-gradient(90deg, #F59E0B, #EF4444)", borderRadius: 6, transition: "width 1s ease" }} />
+              </div>
+              <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>Prochain palier God Level à 10 000 XP. Continue d'apprendre !</div>
             </div>
           </div>
         )}
 
-        {/* BADGES */}
+        {/* ══════════════════════════════════════════════════════════════════
+            VUE BADGES
+        ══════════════════════════════════════════════════════════════════ */}
         {view === "badges" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>🏆 Badges</h1>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginTop: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>🏆 Tes Hauts Faits</h1>
+                <p style={{ color: theme.textMuted }}>Débloqués : {unlockedBadges.length} / {BADGES.length}</p>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 20 }}>
               {BADGES.map((badge) => {
-                const unlocked = unlockedBadges.includes(badge.id);
+                const isUnlocked = unlockedBadges.includes(badge.id);
                 return (
-                  <div key={badge.id} style={{ background: theme.cardBg, border: `1px solid ${unlocked?"#3B82F655":theme.border}`, borderRadius: 22, padding: "28px", textAlign: "center", opacity: unlocked ? 1 : 0.4 }}>
-                    <div style={{ fontSize: 40, marginBottom: 10, filter: unlocked ? "none" : "grayscale(1)" }}>{badge.icon}</div>
-                    <div style={{ fontWeight: 700, color: unlocked ? theme.text : theme.textMuted, fontSize: 14 }}>{badge.label}</div>
-                    <div style={{ color: theme.textMuted, fontSize: 12, marginTop: 4 }}>{badge.desc}</div>
-                    {unlocked && <div style={{ marginTop: 10, color: "#10B981", fontSize: 11, fontWeight: 800 }}>✓ DÉBLOQUÉ</div>}
+                  <div key={badge.id} style={{ background: isUnlocked ? (isDarkMode ? "#1E293B" : "white") : (isDarkMode ? "#0F172A" : "#F8FAFC"), border: `2px solid ${isUnlocked ? "#F59E0B" : theme.border}`, borderRadius: 24, padding: "24px", textAlign: "center", opacity: isUnlocked ? 1 : 0.4, filter: isUnlocked ? "none" : "grayscale(100%)", transition: "all 0.3s", position: "relative" }} className={isUnlocked ? "card-hov" : ""}>
+                    {isUnlocked && <div style={{ position: "absolute", top: 12, right: 12, fontSize: 16 }}>✨</div>}
+                    <div style={{ fontSize: 48, marginBottom: 16 }}>{badge.icon}</div>
+                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 15, marginBottom: 6 }}>{badge.label}</div>
+                    <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>{badge.desc}</div>
                   </div>
                 );
               })}
@@ -2325,16 +2883,33 @@ export default function MemoMaster() {
           </div>
         )}
 
-        {/* CATEGORIES */}
+        {/* ══════════════════════════════════════════════════════════════════
+            VUE CATEGORIES
+        ══════════════════════════════════════════════════════════════════ */}
         {view === "categories" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 24 }}>◉ Modules</h1>
+            <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 32 }}>◉ Gestion des Modules</h1>
             <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", marginBottom: 32 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <input value={newCat.name} onChange={(e) => setNewCat((c) => ({ ...c, name: e.target.value }))} style={{ padding: 14, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} placeholder="Nom du module" />
-                <input type="date" value={newCat.examDate} onChange={(e) => setNewCat((c) => ({ ...c, examDate: e.target.value }))} style={{ padding: 14, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+              <h2 style={{ fontSize: 16, fontWeight: 800, color: theme.text, marginBottom: 20 }}>Créer un nouveau module</h2>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, display: "block", marginBottom: 8 }}>Nom du module</label>
+                  <input value={newCat.name} onChange={(e) => setNewCat((c) => ({ ...c, name: e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} placeholder="Ex: Algorithmique..." />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, display: "block", marginBottom: 8 }}>Couleur</label>
+                  <input type="color" value={newCat.color} onChange={(e) => setNewCat((c) => ({ ...c, color: e.target.value }))} style={{ width: "100%", height: 50, padding: 4, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, cursor: "pointer" }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, display: "block", marginBottom: 8 }}>Date d'examen (Optionnel)</label>
+                  <input type="date" value={newCat.examDate} onChange={(e) => setNewCat((c) => ({ ...c, examDate: e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, display: "block", marginBottom: 8 }}>Objectif (%)</label>
+                  <input type="number" min={50} max={100} value={newCat.targetScore} onChange={(e) => setNewCat((c) => ({ ...c, targetScore: +e.target.value }))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                </div>
               </div>
-              <button onClick={handleAddCat} className="btn-glow hov" style={{ width: "100%", padding: 16, background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, marginTop: 16, cursor: "pointer" }}>Créer le module</button>
+              <button onClick={handleAddCat} className="hov btn-glow" disabled={!newCat.name.trim()} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, marginTop: 16, cursor: "pointer" }}>Créer le module</button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
               {categories.map((cat) => (
@@ -2348,8 +2923,8 @@ export default function MemoMaster() {
         )}
 
       </main>
-      <footer style={{ textAlign: "center", padding: "24px", color: theme.textMuted, fontSize: 12, borderTop: `1px solid ${theme.border}`, fontFamily: "JetBrains Mono, monospace" }}>
-        MémoMaître God Level Edition v5 · FSRS v5 + IA + Voice + Exam Mode · {new Date().getFullYear()} · Dakar 🇸🇳
+      <footer style={{ textAlign: "center", padding: "24px", color: theme.textMuted, fontSize: 12, borderTop: `1px solid ${theme.border}`, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5 }}>
+        MémoMaître GOD LEVEL v6 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 Powered
       </footer>
     </div>
   );
