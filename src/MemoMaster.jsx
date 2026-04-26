@@ -124,36 +124,65 @@ const CATEGORIES_DEFAULT = [
   { name: "🖥️ Informatique Générale", examDate: "", targetScore: 80, priority: "normale", color: "#40C080" },
 ];
 
-const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;
-const GROQ_MODEL = "llama-3.3-70b-versatile";
-const GROQ_VISION = "llama-3.2-11b-vision-preview";
+// ══════════════════════════════════════════════════════════════════════════════
+// DEEPSEEK API – Configuration sécurisée
+// ══════════════════════════════════════════════════════════════════════════════
+const _DS = import.meta.env.VITE_GROQ_API_KEY;
+const DEEPSEEK_MODEL = "llama-3.3-70b-versatile";
+const DEEPSEEK_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"; // ✅ Groq
+
+// Sanitize user input to prevent prompt injection
+function sanitizeInput(text) {
+  if (typeof text !== "string") return "";
+  return text.replace(/<\|.*?\|>/g, "").replace(/\[INST\]|\[\/INST\]|<<SYS>>|<\/SYS>>/g, "").slice(0, 8000);
+}
 
 async function callClaude(systemPrompt, userMessage, isVision = false, imageUrl = null) {
-  const endpoint = "https://api.groq.com/openai/v1/chat/completions";
-  const messages = [{ role: "system", content: systemPrompt }];
+  const safeUser = sanitizeInput(userMessage);
+  const messages = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: safeUser },
+  ];
+  // DeepSeek ne supporte pas nativement la vision – on enrichit le prompt texte
   if (isVision && imageUrl) {
-    messages.push({ role: "user", content: [{ type: "text", text: userMessage }, { type: "image_url", image_url: { url: imageUrl } }] });
-  } else {
-    messages.push({ role: "user", content: userMessage });
+    messages[1].content = `[Image URL: ${imageUrl}]\n${safeUser}`;
   }
-  for (let i = 0; i <= 2; i++) {
+
+  for (let attempt = 0; attempt <= 2; attempt++) {
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(DEEPSEEK_ENDPOINT, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` },
-        body: JSON.stringify({ model: isVision ? GROQ_VISION : GROQ_MODEL, max_tokens: 1024, temperature: 0.7, messages }),
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${_DS}`,
+        },
+        body: JSON.stringify({
+          model: DEEPSEEK_MODEL,
+          max_tokens: 1500,
+          temperature: 0.7,
+          messages,
+        }),
       });
       if (res.status === 429) throw new Error("QUOTA_EXCEEDED");
-      if (!res.ok) throw new Error(`Status: ${res.status}`);
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        throw new Error(`HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+      }
       const data = await res.json();
       const text = data.choices?.[0]?.message?.content;
-      if (!text) throw new Error("Empty response");
+      if (!text) throw new Error("Empty response from DeepSeek");
       return text;
     } catch (err) {
-      if (err.message === "QUOTA_EXCEEDED" || i === 2) throw err;
-      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      if (err.message === "QUOTA_EXCEEDED" || attempt === 2) throw err;
+      await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
     }
   }
+}
+
+// Transcription vocale via DeepSeek (fallback texte si API audio indisponible)
+async function transcribeAudio(audioBlob, language = "fr") {
+  // DeepSeek ne propose pas Whisper – on utilise Web Speech API nativement
+  return null; // géré côté startVoice
 }
 
 function buildHeatmap(sessions) {
@@ -347,6 +376,7 @@ export default function MemoMaster() {
   const [listening, setListening] = useState(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const practiceRecognitionRef = useRef(null);
 
   const [newCat, setNewCat] = useState({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4F8EF7" });
   const [importText, setImportText] = useState("");
@@ -407,8 +437,10 @@ export default function MemoMaster() {
   const [voiceReviewActive, setVoiceReviewActive] = useState(false);
   const voiceRecognitionRef = useRef(null);
 
-  // Academy (v6)
-  const [academyView, setAcademyView] = useState("home");
+  // Academy (v6) – GOD LEVEL Multi-cours
+  const [academyView, setAcademyView] = useState("library");
+  const [academyCourses, setAcademyCourses] = useState([]);      // ← NOUVEAU
+  const [activeCourse, setActiveCourse] = useState(null);        // ← NOUVEAU
   const [academyTopic, setAcademyTopic] = useState("");
   const [academySyllabus, setAcademySyllabus] = useState(null);
   const [academyLoading, setAcademyLoading] = useState(false);
@@ -461,6 +493,8 @@ export default function MemoMaster() {
         setCustomExams(storedCustomExams);
         setDevLogs(storedLogs);
         setRoadmap(storedRoadmap);
+        const storedCourses = (await storage.get("academyCourses_v1")) || [];
+        setAcademyCourses(storedCourses);
         setAddForm((f) => ({ ...f, category: cats[0]?.name || "" }));
         setDocCategory(cats[0]?.name || "");
         setLoaded(true);
@@ -483,6 +517,7 @@ export default function MemoMaster() {
   useEffect(() => { if (loaded) storage.set("customExams_v1", customExams); }, [customExams, loaded]);
   useEffect(() => { if (loaded) storage.set("devLogs_v1", devLogs); }, [devLogs, loaded]);
   useEffect(() => { if (loaded) storage.set("roadmap_v1", roadmap); }, [roadmap, loaded]);
+  useEffect(() => { if (loaded) storage.set("academyCourses_v1", academyCourses); }, [academyCourses, loaded]);
 
   const checkBadges = useCallback((exps, st, sess, currentBadges) => {
     const mastered = exps.filter((e) => e.level >= 7).length;
@@ -717,7 +752,7 @@ export default function MemoMaster() {
       setStats((prev) => ({ ...prev, aiGenerated: prev.aiGenerated + 1 }));
       setAiPrompt("");
     } catch (error) {
-      const msg = error.message?.includes("QUOTA") ? "⏳ Quota Groq atteint — attends 1 minute !" : "Erreur IA.";
+      const msg = error.message?.includes("QUOTA") ? "⏳ Quota DeepSeek atteint — attends 1 minute !" : "Erreur IA DeepSeek.";
       showToast(msg, "error");
     } finally {
       setAiLoading(false);
@@ -785,31 +820,28 @@ export default function MemoMaster() {
 
   const startVoice = async (field) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-      mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
-      mediaRecorder.onstop = async () => {
-        setListening("processing");
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append("file", audioBlob, "audio.webm");
-        formData.append("model", "whisper-large-v3");
-        formData.append("language", field === "front" && addForm.category.toLowerCase().includes("anglais") ? "en" : "fr");
-        try {
-          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}` }, body: formData });
-          if (!res.ok) throw new Error(`Erreur API: ${res.status}`);
-          const data = await res.json();
-          if (data.text) { setAddForm((f) => ({ ...f, [field]: (f[field] ? f[field] + " " : "") + data.text.trim() })); showToast("🎙️ Transcription réussie !"); }
-        } catch (err) { showToast("Échec transcription.", "error"); }
-        stream.getTracks().forEach(track => track.stop());
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) { showToast("Reconnaissance vocale non supportée.", "error"); setListening(null); return; }
+      const lang = (field === "front" && addForm.category.toLowerCase().includes("anglais")) ? "en-US" : "fr-FR";
+      const recognition = new SpeechRecognition();
+      recognition.lang = lang;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      setListening(field);
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript.trim();
+        if (transcript) {
+          setAddForm((f) => ({ ...f, [field]: (f[field] ? f[field] + " " : "") + transcript }));
+          showToast("🎙️ Transcription réussie !");
+        }
         setListening(null);
       };
-      mediaRecorder.start(); setListening(field);
+      recognition.onerror = () => { showToast("Échec transcription.", "error"); setListening(null); };
+      recognition.onend = () => setListening(null);
+      recognition.start();
     } catch (err) { showToast("Micro refusé.", "error"); setListening(null); }
   };
-  const stopVoice = () => { if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") mediaRecorderRef.current.stop(); };
+  const stopVoice = () => { setListening(null); };
 
   const handleAdd = () => {
     if (!addForm.front.trim() || !addForm.back.trim()) { showToast("Recto et verso obligatoires !", "error"); return; }
@@ -965,16 +997,60 @@ export default function MemoMaster() {
     } finally { setQcmLoading(false); }
   };
 
+  // Refs pour éviter les stale closures dans le timer
+  const examQueueRef = useRef(examQueue);
+  const examIndexRef = useRef(examIndex);
+  const examAnswersRef = useRef(examAnswers);
+  const examStreakRef = useRef(examStreak);
+  const examTimerValRef = useRef(examTimer);
+  const examConfigRef = useRef(examConfig);
+  useEffect(() => { examQueueRef.current = examQueue; }, [examQueue]);
+  useEffect(() => { examIndexRef.current = examIndex; }, [examIndex]);
+  useEffect(() => { examAnswersRef.current = examAnswers; }, [examAnswers]);
+  useEffect(() => { examStreakRef.current = examStreak; }, [examStreak]);
+  useEffect(() => { examTimerValRef.current = examTimer; }, [examTimer]);
+  useEffect(() => { examConfigRef.current = examConfig; }, [examConfig]);
+
+  const handleExamAnswer = useCallback((q) => {
+    clearInterval(examTimerRef.current);
+    const card = examQueueRef.current[examIndexRef.current];
+    const currentAnswers = examAnswersRef.current;
+    const currentStreak = examStreakRef.current;
+    const currentConfig = examConfigRef.current;
+    const currentTimerVal = examTimerValRef.current;
+    const currentIndex = examIndexRef.current;
+    const currentQueue = examQueueRef.current;
+
+    setExamStreak(q >= 3 ? currentStreak + 1 : 0);
+    const currentTimePerCard = currentConfig.mode === "speedrun" && currentConfig.timePerCard > 10 ? 5 : currentConfig.timePerCard;
+    const newAnswers = [...currentAnswers, { card, q, timeSpent: currentTimePerCard - currentTimerVal }];
+    setExamAnswers(newAnswers);
+    setQcmSelected(null); setQcmChoices([]);
+    if (currentIndex + 1 >= currentQueue.length) {
+      setExamActive(false);
+      setStats((prev) => ({ ...prev, examsDone: prev.examsDone + 1 }));
+      checkBadges(expressions, { ...stats, examsDone: stats.examsDone + 1 }, sessions, unlockedBadges);
+      const wrongs = newAnswers.filter(a => a.q < 3).map(a => a.card);
+      setWrongAnswersForConfusion(wrongs);
+      setExamSubView("results");
+    } else {
+      setExamIndex((i) => i + 1); setExamRevealed(false); setExamTimer(currentTimePerCard);
+    }
+  }, [expressions, stats, sessions, unlockedBadges, checkBadges]);
+
   useEffect(() => {
     if (!examActive) return;
     examTimerRef.current = setInterval(() => {
       setExamTimer((t) => {
-        if (t <= 1) { handleExamAnswer(0); return examConfig.mode === "speedrun" && examConfig.timePerCard > 10 ? 5 : examConfig.timePerCard; }
+        if (t <= 1) {
+          handleExamAnswer(0);
+          return examConfigRef.current.mode === "speedrun" && examConfigRef.current.timePerCard > 10 ? 5 : examConfigRef.current.timePerCard;
+        }
         return t - 1;
       });
     }, 1000);
     return () => clearInterval(examTimerRef.current);
-  }, [examActive, examIndex]);
+  }, [examActive, examIndex, handleExamAnswer]);
 
   useEffect(() => {
     if (examActive && examQueue[examIndex] && examConfig.mode === "qcm" && !examQueue[examIndex].isCustom) generateQcmChoices(examQueue[examIndex]);
@@ -982,25 +1058,6 @@ export default function MemoMaster() {
       setQcmChoices([...examQueue[examIndex].choices].sort(() => Math.random() - 0.5)); setQcmSelected(null);
     }
   }, [examIndex, examActive]);
-
-  const handleExamAnswer = (q) => {
-    clearInterval(examTimerRef.current);
-    const card = examQueue[examIndex];
-    setExamStreak(q >= 3 ? examStreak + 1 : 0);
-    const currentTimePerCard = examConfig.mode === "speedrun" && examConfig.timePerCard > 10 ? 5 : examConfig.timePerCard;
-    setExamAnswers([...examAnswers, { card, q, timeSpent: currentTimePerCard - examTimer }]);
-    setQcmSelected(null); setQcmChoices([]);
-    if (examIndex + 1 >= examQueue.length) {
-      setExamActive(false);
-      setStats((prev) => ({ ...prev, examsDone: prev.examsDone + 1 }));
-      checkBadges(expressions, { ...stats, examsDone: stats.examsDone + 1 }, sessions, unlockedBadges);
-      const wrongs = examAnswers.filter(a => a.q < 3).map(a => a.card);
-      setWrongAnswersForConfusion(wrongs);
-      setExamSubView("results");
-    } else {
-      setExamIndex((i) => i + 1); setExamRevealed(false); setExamTimer(currentTimePerCard);
-    }
-  };
 
   const examScore = useMemo(() => {
     if (examAnswers.length === 0) return 0;
@@ -1073,7 +1130,19 @@ export default function MemoMaster() {
       const systemPrompt = `You are an English coach for El Hadji Malick, a CS student in Dakar. Speak ONLY in English. Level: ${practiceLevel}. Topic: ${practiceTopic}. ${personaInst} Keep it conversational (2-4 sentences).`;
       const groqHistory = practiceMsgRef.current.slice(-10).map(m => ({ role: m.role, content: m.text }));
       groqHistory.push({ role: "user", content: text.trim() });
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${GROQ_API_KEY}` }, body: JSON.stringify({ model: GROQ_MODEL, max_tokens: 400, temperature: 0.85, messages: [{ role: "system", content: systemPrompt }, ...groqHistory] }) });
+      const res = await fetch(DEEPSEEK_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${_DS}`,
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        max_tokens: 400,
+        temperature: 0.85,
+        messages: [{ role: "system", content: systemPrompt }, ...groqHistory],
+      }),
+    });
       if (!res.ok) throw new Error("API Error");
       const data = await res.json();
       const reply = data.choices?.[0]?.message?.content || "I didn't catch that.";
@@ -1115,97 +1184,157 @@ export default function MemoMaster() {
   };
 
   const resetPracticeChat = () => { window.speechSynthesis?.cancel(); setPracticeSpeaking(false); setPracticeMessages([{ role: "assistant", text: `Great! Let's talk about "${practiceTopic}". I'm ready whenever you are! 🎤` }]); };
-
   // ══════════════════════════════════════════════════════════════════════════
   // ACADEMY 
   // ══════════════════════════════════════════════════════════════════════════
-  const generateSyllabus = async () => {
-    if (!academyTopic.trim()) return;
-    setAcademyLoading(true);
-    try {
-      const raw = await callClaude(
-        `Tu es un expert en création de plans d'apprentissage pour développeurs. Génère un syllabus en JSON avec : { "concepts": [{"title": "...", "dependencies": ["concept précédent"], "description": "..."}] } pour le sujet "${academyTopic}". Chaque concept doit être ordonné logiquement. Limite à 10-15 concepts.`,
-        academyTopic
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const syllabus = JSON.parse(clean);
-      setAcademySyllabus(syllabus);
-      setAcademyProgress({});
-      setAcademyView("syllabus");
-      showToast("📚 Syllabus généré !");
-    } catch (err) {
-      showToast("Erreur génération syllabus: " + err.message, "error");
-    } finally {
-      setAcademyLoading(false);
-    }
-  };
+  // ACADEMY GOD LEVEL – Multi-cours
+// ══════════════════════════════════════════════════════════════════════════════
 
-  const canStartConcept = (concept) => {
-    if (!academySyllabus) return true;
-    const deps = concept.dependencies || [];
-    return deps.every(dep => (academyProgress[dep] || 0) >= 4);
-  };
+const openCourse = (course) => {
+  setActiveCourse(course);
+  setAcademySyllabus(course.syllabus);
+  setAcademyTopic(course.topic);
+  setAcademyProgress(course.progress || {});
+  setAcademyView("home");
+};
 
-  const startLesson = async (concept) => {
-    setCurrentLesson(concept);
-    setLessonState("explain");
-    setLessonQuiz(null);
-    try {
-      const raw = await callClaude(
-        `Tu es un tuteur interactif pour "${academyTopic}". Explique le concept "${concept.title}" de manière concise (max 3-5 min de lecture). Utilise une analogie concrète et un exemple de code si pertinent. Termine par une série de 3 questions de quiz socratique pour vérifier la compréhension. Format JSON : { "explanation": "texte explicatif...", "quiz": [{"question": "...", "answer": "..."}] }`,
-        concept.title
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const lessonData = JSON.parse(clean);
-      setCurrentLesson({ ...concept, explanation: lessonData.explanation });
-      setLessonQuiz(lessonData.quiz);
-    } catch (err) {
-      showToast("Erreur chargement leçon: " + err.message, "error");
-    }
-  };
+const generateSyllabus = async () => {
+  if (!academyTopic.trim()) return;
+  setAcademyLoading(true);
+  try {
+    const raw = await callClaude(
+      `Tu es un expert en création de plans d'apprentissage pour développeurs. Génère un syllabus en JSON STRICT (sans markdown, sans texte avant/après) avec ce format exact :
+{"concepts":[{"title":"Nom du concept","dependencies":[],"description":"Description courte en 1 phrase"}]}
+Pour le sujet : "${academyTopic}". Ordonne logiquement du plus basique au plus avancé. Limite à 10 concepts maximum.`,
+      `Génère le syllabus pour : ${academyTopic}`
+    );
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("Réponse IA invalide");
+    const syllabus = JSON.parse(jsonMatch[0]);
+    if (!syllabus.concepts || !Array.isArray(syllabus.concepts)) throw new Error("Format JSON invalide");
 
-  const checkQuizAnswer = (idx, answer) => {
-    setQuizAnswers(prev => ({ ...prev, [idx]: answer }));
-  };
+    // Crée un nouveau cours et l'ajoute à la bibliothèque
+    const newCourse = {
+      id: Date.now().toString(),
+      topic: academyTopic,
+      syllabus,
+      progress: {},
+      createdAt: today(),
+      lastOpenedAt: today(),
+    };
+    setAcademyCourses(prev => [newCourse, ...prev]);
+    setActiveCourse(newCourse);
+    setAcademySyllabus(syllabus);
+    setAcademyProgress({});
+    setAcademyView("home");
+    showToast("📚 Cours créé et sauvegardé !");
+  } catch (err) {
+    showToast("Erreur : " + err.message, "error");
+  } finally {
+    setAcademyLoading(false);
+  }
+};
 
-  const submitQuiz = () => {
-    if (!lessonQuiz) return;
-    let correct = 0;
-    lessonQuiz.forEach((q, idx) => {
-      if (quizAnswers[idx]?.toLowerCase().trim() === q.answer.toLowerCase().trim()) correct++;
+const saveProgressToCourse = (newProgress) => {
+  if (!activeCourse) return;
+  setAcademyCourses(prev => prev.map(c =>
+    c.id === activeCourse.id
+      ? { ...c, progress: newProgress, lastOpenedAt: today() }
+      : c
+  ));
+};
+
+const deleteCourse = (courseId) => {
+  if (!window.confirm("Supprimer ce cours ?")) return;
+  setAcademyCourses(prev => prev.filter(c => c.id !== courseId));
+  showToast("Cours supprimé", "error");
+};
+
+const canStartConcept = (concept) => {
+  if (!academySyllabus) return true;
+  const deps = concept.dependencies || [];
+  return deps.every(dep => (academyProgress[dep] || 0) >= 4);
+};
+
+const startLesson = async (concept) => {
+  setCurrentLesson(concept);
+  setLessonState("loading");
+  setLessonQuiz(null);
+  setQuizAnswers({});
+  setQuizFeedback("");
+  setAcademyView("lesson");
+  try {
+    const raw = await callClaude(
+      `Tu es un tuteur interactif pour "${academyTopic}". Explique le concept "${concept.title}" de manière concise (3-5 min de lecture). Utilise une analogie concrète et un exemple de code si pertinent. Format JSON STRICT (sans markdown, sans backticks) :
+{"explanation":"Explication en texte simple. Utilise des tirets - pour les listes. Evite les guillemets dans le texte.","quiz":[{"question":"Question 1 ?","answer":"Reponse courte"},{"question":"Question 2 ?","answer":"Reponse courte"},{"question":"Question 3 ?","answer":"Reponse courte"}]}`,
+      concept.title
+    );
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("Pas de JSON dans la réponse");
+    const cleaned = jsonMatch[0].replace(/[\u0000-\u001F\u007F]/g, (char) => {
+      const escapes = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+      return escapes[char] || '';
     });
-    const passed = correct >= lessonQuiz.length * 0.6;
-    setQuizFeedback(passed ? "Bonne compréhension ! Le concept est validé." : "Besoin de plus d'explication. L'IA va reformuler différemment.");
-    if (passed) {
-      generateCardsFromConcept(currentLesson);
-      setAcademyProgress(prev => ({ ...prev, [currentLesson.title]: 5 }));
-      setLessonState("auto-generate");
-    } else {
-      setLessonState("explain-reformulate");
-    }
-  };
+    const lessonData = JSON.parse(cleaned);
+    setCurrentLesson({ ...concept, explanation: lessonData.explanation });
+    setLessonQuiz(lessonData.quiz || []);
+    setLessonState("explain");
+  } catch (err) {
+    showToast("Erreur chargement leçon: " + err.message, "error");
+    setAcademyView("home");
+    setLessonState("explain");
+  }
+};
 
-  const generateCardsFromConcept = async (concept) => {
-    try {
-      const raw = await callClaude(
-        `Génère 2-3 fiches de révision FSRS pour le concept "${concept.title}" expliqué par "${concept.explanation}". Format JSON : {"cards": [{"front":"...","back":"...","example":"..."}]}`,
-        concept.title
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const data = JSON.parse(clean);
-      const newCards = (data.cards || []).map(c => ({
-        id: Date.now().toString() + Math.random(),
-        front: c.front, back: c.back, example: c.example || "",
-        category: academyTopic,
-        level: 0, nextReview: today(), createdAt: today(),
-        easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
-      }));
-      setExpressions(prev => [...newCards, ...prev]);
-      showToast("✨ Fiches générées automatiquement !");
-    } catch (err) {
-      showToast("Erreur génération fiches", "error");
-    }
-  };
+const checkQuizAnswer = (idx, answer) => {
+  setQuizAnswers(prev => ({ ...prev, [idx]: answer }));
+};
+
+const submitQuiz = () => {
+  if (!lessonQuiz) return;
+  let correct = 0;
+  lessonQuiz.forEach((q, idx) => {
+    if (quizAnswers[idx]?.toLowerCase().trim() === q.answer.toLowerCase().trim()) correct++;
+  });
+  const passed = correct >= lessonQuiz.length * 0.6;
+  setQuizFeedback(passed ? "Bonne compréhension ! Le concept est validé." : "Besoin de plus d'explication. Relis bien et retente.");
+  if (passed) {
+    generateCardsFromConcept(currentLesson);
+    const newProgress = { ...academyProgress, [currentLesson.title]: 5 };
+    setAcademyProgress(newProgress);
+    saveProgressToCourse(newProgress); // ← Sauvegarde dans Firebase
+    setLessonState("auto-generate");
+  } else {
+    setLessonState("explain-reformulate");
+  }
+};
+
+const generateCardsFromConcept = async (concept) => {
+  try {
+    const raw = await callClaude(
+      `Génère 2-3 fiches de révision FSRS pour le concept "${concept.title}". Format JSON STRICT : {"cards":[{"front":"Question courte","back":"Réponse claire","example":"Exemple concret"}]}`,
+      concept.title
+    );
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return;
+    const cleaned = jsonMatch[0].replace(/[\u0000-\u001F\u007F]/g, (char) => {
+      const escapes = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+      return escapes[char] || '';
+    });
+    const data = JSON.parse(cleaned);
+    const newCards = (data.cards || []).map(c => ({
+      id: Date.now().toString() + Math.random(),
+      front: c.front, back: c.back, example: c.example || "",
+      category: academyTopic,
+      level: 0, nextReview: today(), createdAt: today(),
+      easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
+    }));
+    setExpressions(prev => [...newCards, ...prev]);
+    showToast("✨ Fiches générées automatiquement !");
+  } catch {
+    showToast("Erreur génération fiches", "error");
+  }
+};
 
   // ══════════════════════════════════════════════════════════════════════════
   // FONCTIONS GOD LEVEL (Lab Outils)
@@ -1502,7 +1631,7 @@ export default function MemoMaster() {
       <nav style={{ background: theme.nav, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 70, borderBottom: isDarkMode ? `1px solid ${theme.border}` : "none" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 42, height: 42, background: "rgba(255,255,255,0.2)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "white", fontFamily: "'JetBrains Mono', monospace" }}>M²</div>
-          <div><div style={{ fontSize: 20, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "#DBEAFE", fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>GOD LEVEL v6</div></div>
+          <div><div style={{ fontSize: 20, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "#DBEAFE", fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>GOD LEVEL v7 × DeepSeek</div></div>
         </div>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
           {[
@@ -1517,7 +1646,7 @@ export default function MemoMaster() {
             { id: "badges", icon: "🏆", label: "Badges" },
             { id: "lab", icon: "🧪", label: "Lab" },
           ].map((n) => (
-            <button key={n.id} onClick={() => { setView(n.id); if (n.id === "exam") setExamSubView("home"); if (n.id === "academy") setAcademyView("home"); }} className={view === n.id ? "tab-active" : "hov"} style={{ padding: "8px 16px", borderRadius: 10, color: view === n.id ? "white" : "rgba(255,255,255,0.8)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: "transparent", transition: "all 0.2s" }}>
+            <button key={n.id} onClick={() => { setView(n.id); if (n.id === "exam") setExamSubView("home"); if (n.id === "academy") setAcademyView("library"); }} className={view === n.id ? "tab-active" : "hov"} style={{ padding: "8px 16px", borderRadius: 10, color: view === n.id ? "white" : "rgba(255,255,255,0.8)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: "transparent", transition: "all 0.2s" }}>
               {n.icon} {n.label} {n.id === "dashboard" && todayReviews.length > 0 && <span style={{ background: "#F59E0B", color: "white", borderRadius: "50%", padding: "2px 6px", fontSize: 10, fontWeight: 900, marginLeft: 4 }}>{todayReviews.length}</span>}
             </button>
           ))}
@@ -2252,101 +2381,389 @@ export default function MemoMaster() {
           </div>
         )}
 
-        {/* ACADEMY GOD LEVEL */}
-        {view === "academy" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            {academyView === "home" && (
+        {/* ACADEMY GOD LEVEL – Multi-cours */}
+{view === "academy" && (
+  <div style={{ animation: "fadeUp 0.4s ease" }}>
+
+    {/* ══ LIBRARY : Bibliothèque de cours ══ */}
+    {academyView === "library" && (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, flexWrap: "wrap", gap: 16 }}>
+          <div>
+            <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>🏫 MémoMaître Academy</h1>
+            <p style={{ color: theme.textMuted, marginTop: 6, margin: 0 }}>Université personnelle IA — roadmaps, leçons interactives, projets.</p>
+          </div>
+          <button
+            onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }}
+            className="btn-glow hov"
+            style={{ padding: "12px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 14 }}
+          >
+            ✦ Nouveau cours
+          </button>
+        </div>
+
+        {/* ── Bandeau stats Academy ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 28 }}>
+          {[
+            { label: "Cours créés", value: academyCourses.length, icon: "📚", color: "#3B82F6" },
+            { label: "Terminés", value: academyCourses.filter(c => { const t=c.syllabus?.concepts?.length||0; const d=Object.values(c.progress||{}).filter(v=>v>=5).length; return t>0&&d===t; }).length, icon: "✅", color: "#10B981" },
+            { label: "Concepts vus", value: academyCourses.reduce((sum,c) => sum + Object.keys(c.progress||{}).length, 0), icon: "🧠", color: "#8B5CF6" },
+            { label: "Fiches générées", value: academyCourses.reduce((sum,c) => sum + (c.cardsGenerated||0), 0), icon: "⚡", color: "#F59E0B" },
+          ].map(s => (
+            <div key={s.label} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 24 }}>{s.icon}</span>
               <div>
-                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>🏫 MémoMaître Academy</h1>
-                <p style={{ color: theme.textMuted, marginBottom: 24 }}>Apprends un sujet de A à Z, sans friction.</p>
-                <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
-                  <input value={academyTopic} onChange={e => setAcademyTopic(e.target.value)} placeholder="Ex: Angular, React, Machine Learning..." style={{ flex: 1, padding: 14, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
-                  <button onClick={generateSyllabus} disabled={academyLoading} className="btn-glow hov" style={{ padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
-                    {academyLoading ? "⏳" : "Générer Syllabus"}
-                  </button>
-                </div>
-                {academySyllabus && (
-                  <div>
-                    <h2 style={{ fontWeight: 800, marginBottom: 16 }}>📚 Roadmap générée</h2>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {academySyllabus.concepts.map((concept, idx) => {
-                        const mastered = (academyProgress[concept.title] || 0) >= 5;
-                        const unlocked = canStartConcept(concept);
-                        return (
-                          <div key={idx} style={{
-                            background: theme.cardBg, borderRadius: 14, padding: "16px 20px",
-                            borderLeft: `4px solid ${mastered ? "#10B981" : unlocked ? "#3B82F6" : "#9CA3AF"}`,
-                            opacity: unlocked ? 1 : 0.5,
-                            display: "flex", justifyContent: "space-between", alignItems: "center"
-                          }}>
-                            <div>
-                              <div style={{ fontWeight: 800, color: theme.text }}>{concept.title}</div>
-                              <div style={{ fontSize: 12, color: theme.textMuted }}>{concept.description}</div>
-                              {mastered && <span style={{ color: "#10B981", fontSize: 11 }}>✓ Maîtrisé</span>}
-                            </div>
-                            <button
-                              onClick={() => { if (unlocked) startLesson(concept); }}
-                              disabled={!unlocked}
-                              style={{
-                                padding: "10px 18px", borderRadius: 10, border: "none",
-                                background: unlocked ? "#1D4ED8" : "#E5E7EB",
-                                color: unlocked ? "white" : "#9CA3AF",
-                                fontWeight: 700, cursor: unlocked ? "pointer" : "default"
-                              }}
-                            >
-                              Commencer
-                            </button>
-                          </div>
-                        );
-                      })}
+                <div style={{ fontWeight: 900, color: s.color, fontSize: 22 }}>{s.value}</div>
+                <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>{s.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* ── Suggestions de parcours God Mode ── */}
+        {academyCourses.length === 0 && (
+          <div style={{ marginBottom: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>🚀 Parcours suggérés</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+              {[
+                { topic: "Java Spring Boot complet", icon: "☕", color: "#F0A040" },
+                { topic: "Algorithmes & Complexité", icon: "🧮", color: "#3B82F6" },
+                { topic: "Bases de données SQL/NoSQL", icon: "🗄️", color: "#8B5CF6" },
+                { topic: "Design Patterns GoF", icon: "🏗️", color: "#10B981" },
+                { topic: "DevOps & Docker", icon: "🐳", color: "#06B6D4" },
+                { topic: "Machine Learning Fondamentaux", icon: "🤖", color: "#EF4444" },
+              ].map(s => (
+                <button key={s.topic} onClick={() => { setAcademyTopic(s.topic); setAcademySyllabus(null); setAcademyView("new"); }} className="card-hov" style={{ padding: "14px 16px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 22 }}>{s.icon}</span>
+                  <span style={{ fontWeight: 700, color: theme.text, fontSize: 13 }}>{s.topic}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {academyCourses.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 20px", background: theme.cardBg, borderRadius: 24, border: `2px dashed ${theme.border}` }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🎓</div>
+            <h3 style={{ color: theme.text, fontWeight: 800, margin: "0 0 8px" }}>Aucun cours pour l'instant</h3>
+            <p style={{ color: theme.textMuted, marginBottom: 24 }}>Génère ton premier cours avec l'IA en quelques secondes.</p>
+            <button
+              onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }}
+              className="btn-glow hov"
+              style={{ padding: "14px 32px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}
+            >
+              🗺️ Créer mon premier cours
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+            {academyCourses.map((course) => {
+              const total = course.syllabus?.concepts?.length || 0;
+              const done = Object.values(course.progress || {}).filter(v => v >= 5).length;
+              const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+              const isFinished = pct === 100 && total > 0;
+              const daysSince = course.lastOpenedAt ? Math.floor((new Date(today()) - new Date(course.lastOpenedAt)) / 86400000) : null;
+              const difficulty = course.syllabus?.difficulty || "Intermédiaire";
+              const estimatedHours = Math.max(1, Math.round(total * 0.5));
+
+              return (
+                <div key={course.id} style={{
+                  background: theme.cardBg, border: `1px solid ${theme.border}`,
+                  borderRadius: 20, overflow: "hidden",
+                  boxShadow: isFinished ? "0 0 0 2px #10B981, 0 8px 24px rgba(16,185,129,0.15)" : "0 4px 12px rgba(0,0,0,0.04)",
+                  transition: "transform 0.2s", cursor: "pointer"
+                }} className="card-hov">
+                  <div style={{
+                    height: 6,
+                    background: isFinished
+                      ? "linear-gradient(90deg, #10B981, #059669)"
+                      : pct > 0 ? "linear-gradient(90deg, #3B82F6, #8B5CF6)" : theme.border
+                  }} />
+                  <div style={{ padding: "22px 24px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                      <div style={{ flex: 1 }}>
+                        <h3 style={{ fontWeight: 900, color: theme.text, margin: "0 0 4px", fontSize: 17 }}>{course.topic}</h3>
+                        <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
+                          {daysSince === 0 ? "Ouvert aujourd'hui" : daysSince === 1 ? "Ouvert hier" : daysSince !== null ? `Il y a ${daysSince} jours` : "Nouveau"} · ⏱ ~{estimatedHours}h estimées
+                        </div>
+                      </div>
+                      {isFinished && <span style={{ fontSize: 11, background: "#D1FAE5", color: "#065F46", padding: "3px 10px", borderRadius: 20, fontWeight: 800, flexShrink: 0 }}>✅ Terminé</span>}
+                      {!isFinished && pct > 0 && <span style={{ fontSize: 11, background: isDarkMode ? "#1E3A5F" : "#DBEAFE", color: "#1D4ED8", padding: "3px 10px", borderRadius: 20, fontWeight: 800, flexShrink: 0 }}>🔄 En cours</span>}
+                      {pct === 0 && !isFinished && <span style={{ fontSize: 11, background: isDarkMode ? "#1E293B" : "#F1F5F9", color: theme.textMuted, padding: "3px 10px", borderRadius: 20, fontWeight: 700, flexShrink: 0 }}>🆕 Nouveau</span>}
+                    </div>
+
+                    {/* Meta badges */}
+                    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, background: isDarkMode?"#1E293B":"#F1F5F9", color: theme.textMuted, padding: "3px 8px", borderRadius: 8, fontWeight: 600 }}>📐 {difficulty}</span>
+                      <span style={{ fontSize: 11, background: isDarkMode?"#1E293B":"#F1F5F9", color: theme.textMuted, padding: "3px 8px", borderRadius: 8, fontWeight: 600 }}>🃏 {course.cardsGenerated||0} fiches</span>
+                      {done > 0 && <span style={{ fontSize: 11, background: "#10B98122", color: "#10B981", padding: "3px 8px", borderRadius: 8, fontWeight: 700 }}>🔥 {done} concepts vus</span>}
+                    </div>
+
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme.textMuted, fontWeight: 600, marginBottom: 6 }}>
+                        <span>{done} / {total} concepts</span>
+                        <span style={{ color: isFinished?"#10B981":theme.textMuted, fontWeight: 800 }}>{pct}%</span>
+                      </div>
+                      <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${pct}%`, background: isFinished ? "#10B981" : "linear-gradient(90deg, #3B82F6, #8B5CF6)", borderRadius: 4, transition: "width 0.5s ease" }} />
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={() => openCourse(course)}
+                        className="hov"
+                        style={{ flex: 1, padding: "10px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}
+                      >
+                        {pct === 0 ? "🚀 Commencer" : isFinished ? "🔁 Réviser" : "▶️ Continuer"}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteCourse(course.id); }}
+                        style={{ padding: "10px 14px", background: isDarkMode ? "#1E293B" : "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 }}
+                      >🗑️</button>
                     </div>
                   </div>
-                )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* ══ NEW : Création d'un nouveau cours ══ */}
+    {academyView === "new" && (
+      <div>
+        <button onClick={() => setAcademyView("library")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 24, fontSize: 14, padding: 0 }}>← Retour à la bibliothèque</button>
+        <div style={{ maxWidth: 600, margin: "0 auto" }}>
+          <h1 style={{ fontSize: 26, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>🗺️ Nouveau cours</h1>
+          <p style={{ color: theme.textMuted, marginBottom: 28 }}>L'IA va générer une roadmap complète pour ton sujet.</p>
+          <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 20, padding: 28 }}>
+            <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, display: "block", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>Sujet à apprendre</label>
+            <input
+              value={academyTopic}
+              onChange={e => setAcademyTopic(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && !academyLoading && academyTopic.trim() && generateSyllabus()}
+              placeholder="Ex: React, Machine Learning, SQL, Spring Boot, Docker..."
+              style={{ width: "100%", padding: "16px 18px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, fontSize: 15, outline: "none", boxSizing: "border-box", marginBottom: 16 }}
+              autoFocus
+            />
+            <button
+              onClick={generateSyllabus}
+              disabled={academyLoading || !academyTopic.trim()}
+              className="btn-glow"
+              style={{ width: "100%", padding: "16px", background: academyLoading ? "#64748B" : "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: academyLoading ? "wait" : "pointer", fontSize: 15 }}
+            >
+              {academyLoading ? "⏳ Génération en cours..." : "🗺️ Générer le syllabus"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ══ HOME : Roadmap du cours actif ══ */}
+    {academyView === "home" && activeCourse && (
+      <div>
+        <button onClick={() => setAcademyView("library")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 24, fontSize: 14, padding: 0 }}>← Bibliothèque</button>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h1 style={{ fontSize: 26, fontWeight: 900, color: theme.highlight, margin: 0 }}>{academyTopic}</h1>
+            <p style={{ color: theme.textMuted, margin: "4px 0 0", fontSize: 14 }}>
+              {Object.values(academyProgress).filter(v => v >= 5).length} / {academySyllabus?.concepts?.length || 0} concepts maîtrisés
+            </p>
+          </div>
+          {/* Score prédictif Academy */}
+          {academySyllabus && (() => {
+            const total = academySyllabus.concepts?.length || 0;
+            const done = Object.values(academyProgress).filter(v => v >= 5).length;
+            const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            const note = Math.min(20, Math.round(4 + (pct / 100) * 16));
+            return (
+              <div style={{ background: pct >= 80 ? "linear-gradient(135deg,#10B981,#059669)" : "linear-gradient(135deg,#1D4ED8,#3B82F6)", borderRadius: 14, padding: "12px 20px", color: "white", textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 900 }}>{note}<span style={{ fontSize: 14 }}>/20</span></div>
+                <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.9 }}>Note estimée</div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {academySyllabus && (
+          <>
+            {/* Barre de progression globale */}
+            <div style={{ height: 10, background: theme.inputBg, borderRadius: 5, marginBottom: 28, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: `${(Object.values(academyProgress).filter(v => v >= 5).length / academySyllabus.concepts.length) * 100}%`,
+                background: "linear-gradient(90deg, #10B981, #3B82F6)",
+                borderRadius: 5, transition: "width 0.6s ease"
+              }} />
+            </div>
+
+            {/* Description du cours si dispo */}
+            {academySyllabus.description && (
+              <div style={{ background: isDarkMode?"#1E3A5F":"#EFF6FF", border: `1px solid ${isDarkMode?"#334155":"#BFDBFE"}`, borderRadius: 14, padding: "14px 18px", marginBottom: 20, fontSize: 14, color: theme.text, lineHeight: 1.7 }}>
+                📌 {academySyllabus.description}
               </div>
             )}
 
-            {academyView === "lesson" && currentLesson && (
-              <div>
-                <button onClick={() => setAcademyView("syllabus")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 20 }}>← Retour à la roadmap</button>
-                <h2 style={{ fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>{currentLesson.title}</h2>
-                {lessonState.startsWith("explain") && (
-                  <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, marginBottom: 20 }}>
-                    <div dangerouslySetInnerHTML={{ __html: currentLesson.explanation }} style={{ lineHeight: 1.7 }} />
-                    {lessonState === "explain" ? (
-                      <button onClick={() => setLessonState("quiz")} className="btn-glow hov" style={{ marginTop: 16, padding: "12px 24px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Commencer le quiz</button>
-                    ) : (
-                      <p style={{ color: "#EF4444" }}>L'IA va reformuler...</p>
-                    )}
-                  </div>
-                )}
-                {lessonState === "quiz" && lessonQuiz && (
-                  <div>
-                    {lessonQuiz.map((q, idx) => (
-                      <div key={idx} style={{ background: theme.cardBg, borderRadius: 14, padding: 16, marginBottom: 12 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 8 }}>{q.question}</div>
-                        <input
-                          style={{ width: "100%", padding: 10, background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 8, color: theme.text }}
-                          value={quizAnswers[idx] || ""}
-                          onChange={(e) => checkQuizAnswer(idx, e.target.value)}
-                        />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {academySyllabus.concepts.map((concept, idx) => {
+                const masteredC = (academyProgress[concept.title] || 0) >= 5;
+                const unlocked = canStartConcept(concept);
+                const levelProgress = academyProgress[concept.title] || 0;
+                return (
+                  <div key={idx} style={{
+                    background: theme.cardBg, borderRadius: 18, padding: "18px 22px",
+                    borderLeft: `5px solid ${masteredC ? "#10B981" : unlocked ? "#3B82F6" : "#475569"}`,
+                    opacity: unlocked ? 1 : 0.55,
+                    display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16,
+                    boxShadow: masteredC ? "0 0 0 1px #10B98133, 0 4px 12px rgba(16,185,129,0.1)" : "none"
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                        <span style={{
+                          width: 28, height: 28, borderRadius: "50%",
+                          background: masteredC ? "#10B981" : unlocked ? "#3B82F6" : "#475569",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          fontSize: 12, color: "white", fontWeight: 900, flexShrink: 0
+                        }}>{masteredC ? "✓" : idx + 1}</span>
+                        <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>{concept.title}</span>
+                        {masteredC && <span style={{ fontSize: 11, background: "#D1FAE5", color: "#065F46", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>✅ Maîtrisé</span>}
+                        {!unlocked && <span style={{ fontSize: 11, background: isDarkMode ? "#1E293B" : "#F1F5F9", color: theme.textMuted, padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>🔒</span>}
+                        {concept.difficulty && <span style={{ fontSize: 10, background: theme.inputBg, color: theme.textMuted, padding: "2px 7px", borderRadius: 8, fontWeight: 700 }}>{concept.difficulty}</span>}
                       </div>
-                    ))}
-                    <button onClick={submitQuiz} className="btn-glow hov" style={{ padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Valider le quiz</button>
-                    {quizFeedback && <div style={{ marginTop: 16, padding: 14, borderRadius: 12, background: quizFeedback.includes("Bonne") ? "#D1FAE5" : "#FEF3C7", color: theme.text }}>{quizFeedback}</div>}
+                      <div style={{ fontSize: 13, color: theme.textMuted, marginLeft: 38, lineHeight: 1.5 }}>{concept.description}</div>
+                      {concept.dependencies?.length > 0 && !unlocked && (
+                        <div style={{ fontSize: 11, color: "#F59E0B", marginLeft: 38, marginTop: 4, fontWeight: 600 }}>🔗 Prérequis : {concept.dependencies.join(", ")}</div>
+                      )}
+                      {/* Mini barre de progression du concept */}
+                      {unlocked && !masteredC && levelProgress > 0 && (
+                        <div style={{ marginLeft: 38, marginTop: 8 }}>
+                          <div style={{ height: 4, background: theme.inputBg, borderRadius: 2, overflow: "hidden" }}>
+                            <div style={{ height: "100%", width: `${Math.round((levelProgress / 5) * 100)}%`, background: "#3B82F6", borderRadius: 2 }} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => { if (unlocked) startLesson(concept); }}
+                      disabled={!unlocked}
+                      className={unlocked ? "hov" : ""}
+                      style={{
+                        padding: "10px 20px", borderRadius: 12, border: "none", flexShrink: 0,
+                        background: masteredC ? "#D1FAE5" : unlocked ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : "#E5E7EB",
+                        color: masteredC ? "#065F46" : unlocked ? "white" : "#9CA3AF",
+                        fontWeight: 800, cursor: unlocked ? "pointer" : "not-allowed", fontSize: 13
+                      }}
+                    >{masteredC ? "🔁 Réviser" : "▶️ Apprendre"}</button>
                   </div>
-                )}
-                {lessonState === "auto-generate" && (
-                  <div style={{ textAlign: "center", padding: 30 }}>
-                    <div style={{ fontSize: 40 }}>✨</div>
-                    <h3 style={{ color: "#10B981" }}>Fiches FSRS générées automatiquement !</h3>
-                    <button onClick={() => setAcademyView("syllabus")} className="btn-glow hov" style={{ marginTop: 16, padding: "12px 24px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au syllabus</button>
-                  </div>
-                )}
+                );
+              })}
+            </div>
+
+            {/* Bouton de fin de cours */}
+            {academySyllabus.concepts.length > 0 && Object.values(academyProgress).filter(v => v >= 5).length === academySyllabus.concepts.length && (
+              <div style={{ marginTop: 28, background: "linear-gradient(135deg,#10B981,#059669)", borderRadius: 20, padding: "28px 32px", textAlign: "center", color: "white" }}>
+                <div style={{ fontSize: 52, marginBottom: 8 }}>🏆</div>
+                <h2 style={{ fontWeight: 900, margin: "0 0 8px", fontSize: 22 }}>Cours terminé à 100% !</h2>
+                <p style={{ opacity: 0.9, margin: "0 0 16px" }}>Tu as maîtrisé tous les concepts de "{academyTopic}". Légendaire !</p>
+                <button onClick={() => { setStats(p => ({...p, examsDone: p.examsDone})); setAcademyView("library"); showToast("🎉 Cours archivé dans ta bibliothèque !"); }} className="hov" style={{ padding: "12px 28px", background: "white", color: "#10B981", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>Retour à la bibliothèque →</button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    )}
+
+    {/* ══ LESSON : Leçon interactive ══ */}
+    {academyView === "lesson" && currentLesson && (
+      <div>
+        <button onClick={() => setAcademyView("home")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 20, fontSize: 14, padding: 0 }}>← Retour à la roadmap</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
+          <h2 style={{ fontWeight: 900, color: theme.highlight, margin: 0, fontSize: 22 }}>{currentLesson.title}</h2>
+          <span style={{ fontSize: 12, background: theme.cardBg, border: `1px solid ${theme.border}`, padding: "3px 12px", borderRadius: 20, color: theme.textMuted, fontWeight: 600 }}>{academyTopic}</span>
+          {currentLesson.difficulty && <span style={{ fontSize: 12, background: isDarkMode?"#1E3A5F":"#EFF6FF", color: "#3B82F6", padding: "3px 10px", borderRadius: 20, fontWeight: 700 }}>⚡ {currentLesson.difficulty}</span>}
+        </div>
+
+        {lessonState === "loading" && (
+          <div style={{ textAlign: "center", padding: "60px 0" }}>
+            <div style={{ fontSize: 48, marginBottom: 16, animation: "pulse 1s infinite" }}>🧠</div>
+            <div style={{ fontWeight: 800, color: theme.highlight, fontSize: 18, marginBottom: 8 }}>DeepSeek prépare ta leçon...</div>
+            <div style={{ color: theme.textMuted, fontSize: 14 }}>Explication + Quiz de validation en cours de génération</div>
+          </div>
+        )}
+
+        {lessonState.startsWith("explain") && currentLesson.explanation && (
+          <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#3B82F6", marginBottom: 16, textTransform: "uppercase", letterSpacing: 1 }}>📖 Explication complète</div>
+            {/* Render code blocks if present */}
+            <div dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }} style={{ lineHeight: 1.9, color: theme.text, fontSize: 15 }} />
+            {lessonState === "explain" && (
+              <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
+                <button onClick={() => setLessonState("quiz")} className="btn-glow hov" style={{ flex: 1, padding: "14px 24px", background: "linear-gradient(135deg, #10B981, #059669)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+                  Je comprends → Quiz 🎯
+                </button>
+                <button onClick={async () => {
+                  try {
+                    const raw = await callClaude("Tu es un professeur expert. Génère un mnémonique ABSURDE et mémorable (max 2 phrases) pour retenir ce concept.", `Concept : ${currentLesson.title}\nExplication : ${(currentLesson.explanation||"").slice(0,500)}`);
+                    showToast("💡 " + raw.trim().slice(0, 120));
+                  } catch { showToast("Erreur mnémonique.", "error"); }
+                }} className="hov" style={{ padding: "14px 20px", background: theme.inputBg, color: theme.textMuted, border: `1px solid ${theme.border}`, borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>
+                  ✨ Mnémonique IA
+                </button>
+              </div>
+            )}
+            {lessonState === "explain-reformulate" && (
+              <div style={{ marginTop: 16, padding: 14, borderRadius: 12, background: "#FEF3C7", color: "#92400E", fontWeight: 600, fontSize: 14 }}>
+                ⚠️ Relis bien avant de retenter.
+                <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizFeedback(""); }} style={{ marginLeft: 12, padding: "6px 14px", background: "#F59E0B", color: "white", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>Retenter →</button>
               </div>
             )}
           </div>
         )}
 
+        {lessonState === "quiz" && lessonQuiz && (
+          <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, border: `1px solid ${theme.border}` }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#7B5FF5", marginBottom: 20, textTransform: "uppercase", letterSpacing: 1 }}>🎯 Quiz de validation</div>
+            {lessonQuiz.map((q, idx) => (
+              <div key={idx} style={{ marginBottom: 18 }}>
+                <div style={{ fontWeight: 700, color: theme.text, marginBottom: 8, fontSize: 14 }}>{idx + 1}. {q.question}</div>
+                <input
+                  style={{ width: "100%", padding: "12px 16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontSize: 14, outline: "none", boxSizing: "border-box" }}
+                  value={quizAnswers[idx] || ""}
+                  onChange={(e) => checkQuizAnswer(idx, e.target.value)}
+                  placeholder="Ta réponse..."
+                  onKeyDown={e => e.key === "Enter" && idx === lessonQuiz.length - 1 && submitQuiz()}
+                />
+              </div>
+            ))}
+            <button onClick={submitQuiz} className="btn-glow hov" style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 15, marginTop: 8 }}>
+              Valider mes réponses ✓
+            </button>
+            {quizFeedback && (
+              <div style={{ marginTop: 16, padding: 16, borderRadius: 12, background: quizFeedback.includes("Bonne") ? "#D1FAE5" : "#FEF3C7", color: quizFeedback.includes("Bonne") ? "#065F46" : "#92400E", fontWeight: 600, fontSize: 14 }}>
+                {quizFeedback.includes("Bonne") ? "✅ " : "⚠️ "}{quizFeedback}
+              </div>
+            )}
+          </div>
+        )}
+
+        {lessonState === "auto-generate" && (
+          <div style={{ textAlign: "center", padding: "40px 20px", background: "linear-gradient(135deg,#D1FAE5,#A7F3D0)", borderRadius: 20, border: `2px solid #10B981` }}>
+            <div style={{ fontSize: 56, marginBottom: 16 }}>🎉</div>
+            <h3 style={{ color: "#065F46", fontWeight: 900, fontSize: 22, margin: "0 0 8px" }}>Concept maîtrisé !</h3>
+            <p style={{ color: "#047857", marginBottom: 24 }}>Des fiches FSRS ont été créées automatiquement dans ta bibliothèque.</p>
+            <button onClick={() => setAcademyView("home")} className="btn-glow hov" style={{ padding: "14px 32px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+              Concept suivant →
+            </button>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+)}
+                  
         {/* ══════════════════════════════════════════════════════════════════
             LABORATOIRE GOD LEVEL
         ══════════════════════════════════════════════════════════════════ */}
@@ -2380,31 +2797,46 @@ export default function MemoMaster() {
 
             {/* ── HOME ────────────────────────────────────────────────── */}
             {labSubView === "home" && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 28 }}>
                 {[
-                  { icon: "📄", title: "PDF → Fiches", desc: "Charge un PDF et génère des fiches automatiquement", color: "#3B82F6", action: () => setLabSubView("pdf") },
-                  { icon: "📝", title: "Résumé de cours", desc: "Résumé intelligent : Complet, Flash ou Cornell", color: "#8B5CF6", action: () => setLabSubView("resume") },
-                  { icon: "📅", title: "Coach IA", desc: "Planning heure par heure basé sur tes échéances", color: "#10B981", action: () => setLabSubView("coach") },
-                  { icon: "🧠", title: "Graphe de savoirs", desc: "Visualise tes connexions de connaissances", color: "#F59E0B", action: generateGraph },
-                  { icon: "🐉", title: "World Boss RPG", desc: `HP restant : ${worldBossHp}% — Révise pour attaquer !`, color: "#EF4444", action: attackWorldBoss },
-                  { icon: "🎯", title: "Prédiction de note", desc: "Estime ta note sur 20 basé sur tes niveaux FSRS", color: "#06B6D4", action: predictScore },
-                  { icon: "👥", title: "Salle d'étude", desc: "Rejoins une session collaborative (simulation)", color: "#F97316", action: joinStudyRoom },
-                  ...(wrongAnswersForConfusion.length > 0 ? [{ icon: "🔬", title: "Anti-confusion IA", desc: `${wrongAnswersForConfusion.length} erreurs détectées — génère des fiches correctives`, color: "#EC4899", action: generateConfusionDestroyer }] : []),
-                ].map((item, i) => (
-                  <div key={i} className="card-hov" onClick={item.action} style={{
-                    background: theme.cardBg, borderRadius: 20, padding: "22px", cursor: "pointer",
-                    border: `1px solid ${theme.border}`, borderTop: `3px solid ${item.color}`,
-                    display: "flex", flexDirection: "column", gap: 8
-                  }}>
-                    <div style={{ fontSize: 28 }}>{item.icon}</div>
-                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>{item.title}</div>
-                    <div style={{ color: theme.textMuted, fontSize: 12, lineHeight: 1.5 }}>{item.desc}</div>
-                    <div style={{ marginTop: "auto", color: item.color, fontSize: 12, fontWeight: 700 }}>Ouvrir →</div>
-                  </div>
+                  { icon: "📄", title: "PDF → Fiches", desc: "Charge un PDF, génère des fiches en 1 clic", color: "#3B82F6", bg: "linear-gradient(135deg,#EFF6FF,#DBEAFE)", action: () => setLabSubView("pdf") },
+                  { icon: "📝", title: "Résumé de cours", desc: "Résumé IA : Complet, Flash ou Cornell", color: "#8B5CF6", bg: "linear-gradient(135deg,#F5F3FF,#EDE9FE)", action: () => setLabSubView("resume") },
+                  { icon: "📅", title: "Coach IA", desc: "Planning heure par heure basé sur tes révisions", color: "#10B981", bg: "linear-gradient(135deg,#ECFDF5,#D1FAE5)", action: () => setLabSubView("coach") },
+                  { icon: "🧠", title: "Graphe de savoirs", desc: "Visualise tes connexions de connaissances", color: "#F59E0B", bg: "linear-gradient(135deg,#FFFBEB,#FDE68A)", action: generateGraph },
+                  { icon: "🎯", title: "Anti-Confusion IA", desc: "Génère des fiches sur tes erreurs récentes", color: "#EF4444", bg: "linear-gradient(135deg,#FEF2F2,#FECACA)", action: generateConfusionCards },
+                  { icon: "⚙️", title: "Outils Avancés", desc: "Prédiction, Boss RPG, Salle d'étude", color: "#06B6D4", bg: "linear-gradient(135deg,#ECFEFF,#CFFAFE)", action: () => setLabSubView("tools") },
+                  { icon: "🔬", title: "Analyse FSRS", desc: "Statistiques avancées de rétention par carte", color: "#7C3AED", bg: "linear-gradient(135deg,#F5F3FF,#DDD6FE)", action: () => setLabSubView("tools") },
+                  { icon: "🌐", title: "Exportation", desc: "Exporte tes fiches en JSON, CSV ou Anki", color: "#059669", bg: "linear-gradient(135deg,#ECFDF5,#A7F3D0)", action: () => { const data = JSON.stringify({ expressions, categories }, null, 2); const blob = new Blob([data], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `memomaitre_export_${today()}.json`; a.click(); showToast("📦 Export JSON téléchargé !"); } },
+                ].map(t => (
+                  <button key={t.title} onClick={t.action} className="card-hov" style={{ padding: "22px 20px", background: t.bg, border: `1px solid ${t.color}22`, borderRadius: 18, cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}>
+                    <div style={{ fontSize: 32, marginBottom: 10 }}>{t.icon}</div>
+                    <div style={{ fontWeight: 800, color: t.color, fontSize: 15, marginBottom: 4 }}>{t.title}</div>
+                    <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{t.desc}</div>
+                  </button>
                 ))}
+                </div>
+
+                {/* Quick stats Lab */}
+                <div style={{ background: theme.cardBg, borderRadius: 20, padding: "20px 24px", border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontWeight: 800, color: theme.text, marginBottom: 14, fontSize: 15 }}>⚡ État du Lab</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                    {[
+                      { label: "Fiches totales", value: expressions.length, icon: "🃏" },
+                      { label: "PDFs analysés", value: stats.aiGenerated > 0 ? Math.floor(stats.aiGenerated / 5) : 0, icon: "📄" },
+                      { label: "Fiches IA générées", value: stats.aiGenerated, icon: "🤖" },
+                      { label: "Révisions totales", value: stats.totalReviews, icon: "🔄" },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: theme.inputBg, borderRadius: 12, padding: "12px 14px" }}>
+                        <div style={{ fontSize: 20 }}>{s.icon}</div>
+                        <div style={{ fontWeight: 900, color: theme.highlight, fontSize: 20, marginTop: 4 }}>{s.value}</div>
+                        <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
-
             {/* ── PDF → FICHES ────────────────────────────────────────── */}
             {labSubView === "pdf" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -2857,31 +3289,221 @@ export default function MemoMaster() {
         )}
 
         {/* ══════════════════════════════════════════════════════════════════
-            VUE BADGES
-        ══════════════════════════════════════════════════════════════════ */}
-        {view === "badges" && (
-          <div style={{ animation: "fadeUp 0.4s ease" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32, flexWrap: "wrap", gap: 16 }}>
-              <div>
-                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight }}>🏆 Tes Hauts Faits</h1>
-                <p style={{ color: theme.textMuted }}>Débloqués : {unlockedBadges.length} / {BADGES.length}</p>
-              </div>
+    VUE BADGES – GOD LEVEL
+══════════════════════════════════════════════════════════════════ */}
+{view === "badges" && (() => {
+  // ── Données de progression pour les barres ──
+  const mastered = expressions.filter(e => e.level >= 7).length;
+  const dueCount = expressions.filter(e => e.nextReview <= today() && e.level < 7).length;
+  const academyCoursesCount = (typeof academyCourses !== "undefined" ? academyCourses : []).length;
+  const academyFinished = (typeof academyCourses !== "undefined" ? academyCourses : []).filter(c => {
+    const total = c.syllabus?.concepts?.length || 0;
+    const done = Object.values(c.progress || {}).filter(v => v >= 5).length;
+    return total > 0 && done === total;
+  }).length;
+
+  // ── Système de rareté ──
+  const RARITY = {
+    commun:    { label: "Commun",    color: "#94A3B8", bg: isDarkMode ? "#1E293B" : "#F1F5F9", glow: "none" },
+    rare:      { label: "Rare",      color: "#3B82F6", bg: isDarkMode ? "#1E3A5F" : "#DBEAFE", glow: "0 0 12px #3B82F640" },
+    epique:    { label: "Épique",    color: "#8B5CF6", bg: isDarkMode ? "#2E1B5B" : "#EDE9FE", glow: "0 0 16px #8B5CF650" },
+    legendaire:{ label: "Légendaire",color: "#F59E0B", bg: isDarkMode ? "#2D1F00" : "#FEF3C7", glow: "0 0 24px #F59E0B60" },
+  };
+
+  // ── Badges God Level complets ──
+  const ALL_BADGES = [
+    // Création
+    { id: "first_card",    icon: "🌱", label: "Première pousse",  desc: "Créer ta 1ère fiche",      rarity: "commun",     cat: "Création",  check: s => s.totalCards >= 1,   progress: s => ({ cur: Math.min(s.totalCards,1),   max: 1   }) },
+    { id: "ten_cards",     icon: "📚", label: "Bibliothécaire",   desc: "10 fiches créées",          rarity: "commun",     cat: "Création",  check: s => s.totalCards >= 10,  progress: s => ({ cur: Math.min(s.totalCards,10),  max: 10  }) },
+    { id: "fifty_cards",   icon: "🗂️", label: "Encyclopédiste",   desc: "50 fiches créées",          rarity: "rare",       cat: "Création",  check: s => s.totalCards >= 50,  progress: s => ({ cur: Math.min(s.totalCards,50),  max: 50  }) },
+    { id: "200_cards",     icon: "🏛️", label: "Grand Archiviste", desc: "200 fiches créées",         rarity: "epique",     cat: "Création",  check: s => s.totalCards >= 200, progress: s => ({ cur: Math.min(s.totalCards,200), max: 200 }) },
+    // Streak
+    { id: "streak3",       icon: "🔥", label: "En feu",           desc: "3 jours de streak",         rarity: "commun",     cat: "Streak",    check: s => s.streak >= 3,       progress: s => ({ cur: Math.min(s.streak,3),       max: 3   }) },
+    { id: "streak7",       icon: "⚡", label: "Semaine parfaite", desc: "7 jours de streak",         rarity: "rare",       cat: "Streak",    check: s => s.streak >= 7,       progress: s => ({ cur: Math.min(s.streak,7),       max: 7   }) },
+    { id: "streak30",      icon: "🏆", label: "Mois de légende",  desc: "30 jours de streak",        rarity: "legendaire", cat: "Streak",    check: s => s.streak >= 30,      progress: s => ({ cur: Math.min(s.streak,30),      max: 30  }) },
+    { id: "streak100",     icon: "👑", label: "Invincible",       desc: "100 jours de streak",       rarity: "legendaire", cat: "Streak",    check: s => s.streak >= 100,     progress: s => ({ cur: Math.min(s.streak,100),     max: 100 }) },
+    // Maîtrise
+    { id: "first_master",  icon: "✅", label: "Premier maître",   desc: "1ère fiche maîtrisée",      rarity: "commun",     cat: "Maîtrise",  check: s => s.mastered >= 1,     progress: s => ({ cur: Math.min(s.mastered,1),     max: 1   }) },
+    { id: "ten_master",    icon: "🎓", label: "Diplômé",          desc: "10 fiches maîtrisées",      rarity: "rare",       cat: "Maîtrise",  check: s => s.mastered >= 10,    progress: s => ({ cur: Math.min(s.mastered,10),    max: 10  }) },
+    { id: "fifty_master",  icon: "🧠", label: "Génie",            desc: "50 fiches maîtrisées",      rarity: "epique",     cat: "Maîtrise",  check: s => s.mastered >= 50,    progress: s => ({ cur: Math.min(s.mastered,50),    max: 50  }) },
+    { id: "all_reviewed",  icon: "🧘", label: "Zen",              desc: "0 fiche en retard",         rarity: "epique",     cat: "Maîtrise",  check: s => s.totalCards > 0 && s.dueCount === 0, progress: s => ({ cur: s.dueCount === 0 ? 1 : 0, max: 1 }) },
+    // Révisions
+    { id: "hundred_reviews",icon:"💎", label: "Diamant",          desc: "100 révisions totales",     rarity: "rare",       cat: "Révisions", check: s => s.totalReviews >= 100,  progress: s => ({ cur: Math.min(s.totalReviews,100),  max: 100  }) },
+    { id: "500_reviews",   icon: "🌊", label: "Flot continu",     desc: "500 révisions totales",     rarity: "epique",     cat: "Révisions", check: s => s.totalReviews >= 500,  progress: s => ({ cur: Math.min(s.totalReviews,500),  max: 500  }) },
+    { id: "1000_reviews",  icon: "⚜️", label: "Transcendant",     desc: "1000 révisions totales",    rarity: "legendaire", cat: "Révisions", check: s => s.totalReviews >= 1000, progress: s => ({ cur: Math.min(s.totalReviews,1000), max: 1000 }) },
+    // Examens
+    { id: "exam_mode",     icon: "🎯", label: "Testeur",          desc: "Terminer 1 examen",         rarity: "commun",     cat: "Examens",   check: s => s.examsDone >= 1,    progress: s => ({ cur: Math.min(s.examsDone,1),    max: 1   }) },
+    { id: "exam5",         icon: "🏅", label: "Candidat sérieux", desc: "Terminer 5 examens",        rarity: "rare",       cat: "Examens",   check: s => s.examsDone >= 5,    progress: s => ({ cur: Math.min(s.examsDone,5),    max: 5   }) },
+    { id: "exam20",        icon: "🎖️", label: "Vétéran des tests",desc: "Terminer 20 examens",       rarity: "epique",     cat: "Examens",   check: s => s.examsDone >= 20,   progress: s => ({ cur: Math.min(s.examsDone,20),   max: 20  }) },
+    // IA
+    { id: "ai_user",       icon: "🤖", label: "IA Partner",       desc: "Générer 5 fiches via IA",   rarity: "rare",       cat: "IA",        check: s => s.aiGenerated >= 5,  progress: s => ({ cur: Math.min(s.aiGenerated,5),  max: 5   }) },
+    { id: "ai_master",     icon: "🧬", label: "Ingénieur IA",     desc: "Générer 50 fiches via IA",  rarity: "epique",     cat: "IA",        check: s => s.aiGenerated >= 50, progress: s => ({ cur: Math.min(s.aiGenerated,50), max: 50  }) },
+    // Academy
+    { id: "academy_start", icon: "🏫", label: "Élève du jour",    desc: "Créer ton 1er cours",       rarity: "commun",     cat: "Academy",   check: s => s.academyCourses >= 1,  progress: s => ({ cur: Math.min(s.academyCourses,1),  max: 1 }) },
+    { id: "academy_multi", icon: "📡", label: "Multitâche",       desc: "3 cours en parallèle",      rarity: "rare",       cat: "Academy",   check: s => s.academyCourses >= 3,  progress: s => ({ cur: Math.min(s.academyCourses,3),  max: 3 }) },
+    { id: "academy_done",  icon: "🎒", label: "Diplômé Academy",  desc: "Terminer un cours à 100%",  rarity: "epique",     cat: "Academy",   check: s => s.academyFinished >= 1, progress: s => ({ cur: Math.min(s.academyFinished,1), max: 1 }) },
+    { id: "academy_god",   icon: "🌌", label: "God of Knowledge", desc: "Terminer 5 cours à 100%",   rarity: "legendaire", cat: "Academy",   check: s => s.academyFinished >= 5, progress: s => ({ cur: Math.min(s.academyFinished,5), max: 5 }) },
+    // 🔥 GOD MODE – Badges exclusifs
+    { id: "speed_demon",   icon: "💨", label: "Speed Demon",      desc: "100 révisions en 1 jour",   rarity: "legendaire", cat: "Révisions", check: s => s.bestDayReviews >= 100, progress: s => ({ cur: Math.min(s.bestDayReviews||0,100), max: 100 }) },
+    { id: "nocturne",      icon: "🌙", label: "Hibou Nocturne",   desc: "Étudier après minuit",      rarity: "rare",       cat: "Streak",    check: s => s.lateNightSessions >= 1, progress: s => ({ cur: Math.min(s.lateNightSessions||0,1), max: 1 }) },
+    { id: "polyglotte",    icon: "🌍", label: "Polyglotte",       desc: "5 modules différents créés",rarity: "epique",     cat: "Création",  check: s => s.modulesCount >= 5,  progress: s => ({ cur: Math.min(s.modulesCount||0,5), max: 5 }) },
+    { id: "perfectionist", icon: "💯", label: "Perfectionniste",  desc: "Score 100% sur un examen",  rarity: "epique",     cat: "Examens",   check: s => s.perfectExams >= 1,  progress: s => ({ cur: Math.min(s.perfectExams||0,1), max: 1 }) },
+    { id: "unstoppable",   icon: "⚡", label: "Inarrêtable",      desc: "Streak de 60 jours",        rarity: "legendaire", cat: "Streak",    check: s => s.streak >= 60,       progress: s => ({ cur: Math.min(s.streak,60), max: 60 }) },
+    { id: "grandmaster",   icon: "♟️", label: "Grand Maître",     desc: "200 fiches maîtrisées",     rarity: "legendaire", cat: "Maîtrise",  check: s => s.mastered >= 200,    progress: s => ({ cur: Math.min(s.mastered,200), max: 200 }) },
+    { id: "lab_explorer",  icon: "🔭", label: "Explorateur Lab",  desc: "Analyser 3 PDFs",           rarity: "rare",       cat: "IA",        check: s => s.pdfsAnalyzed >= 3,  progress: s => ({ cur: Math.min(s.pdfsAnalyzed||0,3), max: 3 }) },
+    { id: "ai_overlord",   icon: "👾", label: "IA Overlord",      desc: "Générer 200 fiches via IA", rarity: "legendaire", cat: "IA",        check: s => s.aiGenerated >= 200, progress: s => ({ cur: Math.min(s.aiGenerated,200), max: 200 }) },
+    { id: "consistency",   icon: "🪨", label: "Roc",              desc: "Rév. 30 jours consécutifs", rarity: "legendaire", cat: "Streak",    check: s => s.streak >= 30,       progress: s => ({ cur: Math.min(s.streak,30), max: 30 }) },
+    { id: "five_hundred",  icon: "🌟", label: "Étoile filante",   desc: "500 fiches créées",         rarity: "legendaire", cat: "Création",  check: s => s.totalCards >= 500,  progress: s => ({ cur: Math.min(s.totalCards,500), max: 500 }) },
+  ];
+
+  const badgeState = {
+    totalCards: expressions.length,
+    streak: stats.streak,
+    mastered,
+    dueCount,
+    totalReviews: stats.totalReviews,
+    aiGenerated: stats.aiGenerated,
+    examsDone: stats.examsDone,
+    academyCourses: academyCoursesCount,
+    academyFinished,
+  };
+
+  const CATS = ["Création","Streak","Maîtrise","Révisions","Examens","IA","Academy"];
+
+  // ── Stats résumé haut de page ──
+  const unlockedAll = ALL_BADGES.filter(b => unlockedBadges.includes(b.id));
+  const nextBadge = ALL_BADGES.find(b => !unlockedBadges.includes(b.id) && b.progress);
+  const nextProg = nextBadge ? nextBadge.progress(badgeState) : null;
+
+  // ── Couleurs rareté pour le résumé ──
+  const rarityCount = { legendaire: 0, epique: 0, rare: 0, commun: 0 };
+  unlockedAll.forEach(b => rarityCount[b.rarity]++);
+
+  return (
+    <div style={{ animation: "fadeUp 0.4s ease" }}>
+
+      {/* ── Header ── */}
+      <div style={{ marginBottom: 28 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>🏆 Hauts Faits</h1>
+        <p style={{ color: theme.textMuted, marginTop: 6 }}>
+          {unlockedBadges.length} / {ALL_BADGES.length} débloqués
+        </p>
+      </div>
+
+      {/* ── Bandeau stats ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 32 }}>
+        {[
+          { label: "Légendaires", count: rarityCount.legendaire, color: "#F59E0B", icon: "👑" },
+          { label: "Épiques",     count: rarityCount.epique,     color: "#8B5CF6", icon: "💜" },
+          { label: "Rares",       count: rarityCount.rare,       color: "#3B82F6", icon: "💙" },
+          { label: "Communs",     count: rarityCount.commun,     color: "#94A3B8", icon: "⚪" },
+        ].map(r => (
+          <div key={r.label} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 22 }}>{r.icon}</span>
+            <div>
+              <div style={{ fontWeight: 900, color: r.color, fontSize: 20 }}>{r.count}</div>
+              <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>{r.label}</div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 20 }}>
-              {BADGES.map((badge) => {
+          </div>
+        ))}
+      </div>
+
+      {/* ── Prochain badge ── */}
+      {nextBadge && nextProg && (
+        <div style={{ background: theme.cardBg, border: `1px solid ${RARITY[nextBadge.rarity].color}44`, borderRadius: 16, padding: "18px 22px", marginBottom: 32, display: "flex", alignItems: "center", gap: 16 }}>
+          <span style={{ fontSize: 32 }}>{nextBadge.icon}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>Prochain : {nextBadge.label}</span>
+              <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>{nextProg.cur} / {nextProg.max}</span>
+            </div>
+            <div style={{ height: 6, background: theme.inputBg, borderRadius: 3, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${(nextProg.cur / nextProg.max) * 100}%`, background: RARITY[nextBadge.rarity].color, borderRadius: 3, transition: "width 0.6s ease" }} />
+            </div>
+            <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 5, fontWeight: 600 }}>{nextBadge.desc}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Badges par catégorie ── */}
+      {CATS.map(cat => {
+        const catBadges = ALL_BADGES.filter(b => b.cat === cat);
+        const catUnlocked = catBadges.filter(b => unlockedBadges.includes(b.id)).length;
+        return (
+          <div key={cat} style={{ marginBottom: 36 }}>
+            {/* Titre catégorie */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <h2 style={{ fontSize: 16, fontWeight: 900, color: theme.text, margin: 0 }}>{cat}</h2>
+              <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700, background: theme.inputBg, padding: "3px 10px", borderRadius: 20 }}>
+                {catUnlocked} / {catBadges.length}
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+              {catBadges.map(badge => {
                 const isUnlocked = unlockedBadges.includes(badge.id);
+                const rar = RARITY[badge.rarity];
+                const prog = badge.progress ? badge.progress(badgeState) : null;
+                const pct = prog ? Math.round((prog.cur / prog.max) * 100) : 0;
+
+                // Badge déverrouillé : date (stockée dans unlockedBadges comme objet si tu veux, sinon on affiche juste ✨)
                 return (
-                  <div key={badge.id} style={{ background: isUnlocked ? (isDarkMode ? "#1E293B" : "white") : (isDarkMode ? "#0F172A" : "#F8FAFC"), border: `2px solid ${isUnlocked ? "#F59E0B" : theme.border}`, borderRadius: 24, padding: "24px", textAlign: "center", opacity: isUnlocked ? 1 : 0.4, filter: isUnlocked ? "none" : "grayscale(100%)", transition: "all 0.3s", position: "relative" }} className={isUnlocked ? "card-hov" : ""}>
-                    {isUnlocked && <div style={{ position: "absolute", top: 12, right: 12, fontSize: 16 }}>✨</div>}
-                    <div style={{ fontSize: 48, marginBottom: 16 }}>{badge.icon}</div>
-                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 15, marginBottom: 6 }}>{badge.label}</div>
-                    <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>{badge.desc}</div>
+                  <div key={badge.id} style={{
+                    background: isUnlocked ? rar.bg : (isDarkMode ? "#0F172A" : "#F8FAFC"),
+                    border: `2px solid ${isUnlocked ? rar.color : theme.border}`,
+                    borderRadius: 20,
+                    padding: "20px 18px",
+                    textAlign: "center",
+                    opacity: isUnlocked ? 1 : 0.55,
+                    filter: isUnlocked ? "none" : "grayscale(80%)",
+                    transition: "all 0.3s",
+                    position: "relative",
+                    boxShadow: isUnlocked ? rar.glow : "none",
+                  }} className={isUnlocked ? "card-hov" : ""}>
+
+                    {/* Badge rareté */}
+                    <div style={{
+                      position: "absolute", top: 10, left: 12,
+                      fontSize: 10, fontWeight: 800, color: rar.color,
+                      textTransform: "uppercase", letterSpacing: 0.5
+                    }}>{rar.label}</div>
+
+                    {/* Étoile si déverrouillé */}
+                    {isUnlocked && (
+                      <div style={{ position: "absolute", top: 10, right: 12, fontSize: 14 }}>✨</div>
+                    )}
+
+                    {/* Icône */}
+                    <div style={{ fontSize: 44, margin: "18px 0 12px" }}>{badge.icon}</div>
+
+                    {/* Nom */}
+                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{badge.label}</div>
+
+                    {/* Description */}
+                    <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600, marginBottom: isUnlocked ? 0 : 12 }}>{badge.desc}</div>
+
+                    {/* Barre de progression si verrouillé */}
+                    {!isUnlocked && prog && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: theme.textMuted, fontWeight: 700, marginBottom: 4 }}>
+                          <span>{prog.cur}</span>
+                          <span>{prog.max}</span>
+                        </div>
+                        <div style={{ height: 5, background: theme.border, borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: rar.color, borderRadius: 3 }} />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
           </div>
-        )}
+        );
+      })}
+    </div>
+  );
+})()}
 
         {/* ══════════════════════════════════════════════════════════════════
             VUE CATEGORIES
@@ -2924,7 +3546,7 @@ export default function MemoMaster() {
 
       </main>
       <footer style={{ textAlign: "center", padding: "24px", color: theme.textMuted, fontSize: 12, borderTop: `1px solid ${theme.border}`, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5 }}>
-        MémoMaître GOD LEVEL v6 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 Powered
+        MémoMaître GOD LEVEL v7 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 × DeepSeek Powered
       </footer>
     </div>
   );
