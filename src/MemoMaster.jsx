@@ -297,6 +297,79 @@ const useMermaid = () => {
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
+// COMPOSANT CARTE (extrait du map pour respecter les règles des Hooks)
+// ══════════════════════════════════════════════════════════════════════════════
+function CardItem({ exp, lvl, lvlColor, catColor, tag, isFortress, theme, isDarkMode, cardsTags, cardsVariants, highlightCode, formatDate, startEdit, deleteExp, addToPlaylist, toggleFortress, startDuel, generateVariants, setAiPrompt }) {
+  const cardTouchStart = useRef(0);
+  const cardSwipeOffset = useRef(0);
+  return (
+    <div
+      style={{
+        background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden",
+        transition: "transform 0.2s ease",
+        touchAction: 'pan-y',
+      }}
+      className="card-hov"
+      onTouchStart={(e) => { cardTouchStart.current = e.touches[0].clientX; }}
+      onTouchMove={(e) => { cardSwipeOffset.current = e.touches[0].clientX - cardTouchStart.current; }}
+      onTouchEnd={(e) => {
+        const dx = e.changedTouches[0].clientX - cardTouchStart.current;
+        if (dx > 70) startEdit(exp);
+        else if (dx < -70) deleteExp(exp.id);
+        cardSwipeOffset.current = 0;
+      }}
+    >
+      <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ background: tag.color + "22", color: tag.color, padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: lvlColor }} /><span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>N{lvl}</span>
+        </div>
+      </div>
+      <div style={{ padding: "0 24px", flex: 1 }}>
+        <div style={{ fontSize: 20, fontWeight: 800, color: theme.highlight, marginBottom: 12, lineHeight: 1.3 }}>{exp.front}</div>
+        {exp.imageUrl && <div style={{ fontSize: 11, background: "#4D6BFE22", color: "#4D6BFE", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
+        <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.6, marginBottom: 16 }} dangerouslySetInnerHTML={{ __html: highlightCode(exp.back) }} />
+        {exp.example && <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #4D6BFE", marginBottom: 16 }}><span style={{ color: "#4D6BFE", fontSize: 10 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(exp.example) }} /></div>}
+        {cardsTags[exp.id] && cardsTags[exp.id].length > 0 && (
+          <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:10 }}>
+            {cardsTags[exp.id].map((t, i) => (
+              <span key={i} style={{ background:isDarkMode?"#3D2000":"#E0E7FF", color:isDarkMode?"#C7D2FE":"#4338CA", borderRadius:10, padding:"2px 8px", fontSize:10, fontWeight:600 }}>{t}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div style={{ padding: "12px 24px", background: theme.inputBg, borderTop: `1px solid ${theme.border}`, display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>
+          <div>{lvl >= 7 ? "✅ Maîtrisée" : `📅 Rév: ${formatDate(exp.nextReview)}`}</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#7B93FF", fontSize:14 }} title="Améliorer">✨</button>
+          <button onClick={() => startEdit(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Éditer">✏️</button>
+          <button onClick={() => deleteExp(exp.id)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FEF2F2", color: "#EF4444", fontSize:14 }} title="Supprimer">🗑️</button>
+          <button onClick={() => addToPlaylist(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Écouter">🔊</button>
+          <button onClick={() => toggleFortress(exp.id)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: isFortress ? "#E8EEFF" : theme.inputBg, color: isFortress ? "#4D6BFE" : theme.textMuted, fontSize:14 }} title={isFortress ? "Protégé" : "Protéger"}>🛡️</button>
+          <button onClick={() => startDuel(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFF7ED", color: "#4D6BFE", fontSize:14 }} title="Duel">⚔️</button>
+          <button onClick={() => generateVariants(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Variantes">⚗️</button>
+        </div>
+      </div>
+      {cardsVariants[exp.id] && (
+        <div style={{ padding: "0 24px 16px", marginTop:8 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:theme.highlight, marginBottom:8 }}>⚗️ Variantes</div>
+          {cardsVariants[exp.id].map((v, i) => (
+            <div key={i} style={{ background:theme.inputBg, borderRadius:10, padding:"8px 12px", marginBottom:6, borderLeft:`3px solid ${v.type==='definition'?'#4D6BFE':v.type==='analogy'?'#7B93FF':v.type==='example'?'#4D6BFE':v.type==='contre-exemple'?'#EF4444':'#6B82F5'}` }}>
+              <div style={{ fontWeight:700, fontSize:12 }}>{v.front}</div>
+              <div style={{ fontSize:11, color:theme.textMuted }}>{v.back}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
 export default function MemoMaster() {
@@ -6040,38 +6113,28 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       const catColor = categories.find((c) => c.name === exp.category)?.color || "#4D6BFE";
                       const tag = cognitiveTag(exp);
                       const isFortress = cardsFortressActive[exp.id];
-                      const cardTouchStart = useRef(0);
-                      const cardSwipeOffset = useRef(0);
                       return (
-                        <div
+                        <CardItem
   key={exp.id}
-  style={{
-    background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column",
-    boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden",
-    transition: "transform 0.2s ease",
-    transform: `translateX(${cardSwipeOffset.current}px)`,
-    touchAction: 'pan-y',
-  }}
-  className="card-hov"
-  onTouchStart={(e) => {
-    cardTouchStart.current = e.touches[0].clientX;
-  }}
-  onTouchMove={(e) => {
-    const dx = e.touches[0].clientX - cardTouchStart.current;
-    cardSwipeOffset.current = dx;
-    // force re-render? Pas idéal car c'est une ref. On va plutôt utiliser un état local par carte via data attributes? Trop complexe.
-    // Alternative simple : ne pas faire de glissement visuel mais détecter le swipe final.
-  }}
-  onTouchEnd={(e) => {
-    const dx = e.changedTouches[0].clientX - cardTouchStart.current;
-    if (dx > 70) {
-      // Swipe droite -> éditer
-      startEdit(exp);
-    } else if (dx < -70) {
-      // Swipe gauche -> supprimer
-      deleteExp(exp.id);
-    }
-  }}
+  exp={exp}
+  lvl={lvl}
+  lvlColor={lvlColor}
+  catColor={catColor}
+  tag={tag}
+  isFortress={isFortress}
+  theme={theme}
+  isDarkMode={isDarkMode}
+  cardsTags={cardsTags}
+  cardsVariants={cardsVariants}
+  highlightCode={highlightCode}
+  formatDate={formatDate}
+  startEdit={startEdit}
+  deleteExp={deleteExp}
+  addToPlaylist={addToPlaylist}
+  toggleFortress={toggleFortress}
+  startDuel={startDuel}
+  generateVariants={generateVariants}
+  setAiPrompt={setAiPrompt}
 >
                           <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
@@ -6109,19 +6172,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                               <button onClick={() => generateVariants(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Variantes">⚗️</button>
                             </div>
                           </div>
-                          {/* Variantes (si générées) */}
-                          {cardsVariants[exp.id] && (
-                            <div style={{ padding: "0 24px 16px", marginTop:8 }}>
-                              <div style={{ fontSize:12, fontWeight:700, color:theme.highlight, marginBottom:8 }}>⚗️ Variantes</div>
-                              {cardsVariants[exp.id].map((v, i) => (
-                                <div key={i} style={{ background:theme.inputBg, borderRadius:10, padding:"8px 12px", marginBottom:6, borderLeft:`3px solid ${v.type==='definition'?'#4D6BFE':v.type==='analogy'?'#7B93FF':v.type==='example'?'#4D6BFE':v.type==='contre-exemple'?'#EF4444':'#6B82F5'}` }}>
-                                  <div style={{ fontWeight:700, fontSize:12 }}>{v.front}</div>
-                                  <div style={{ fontSize:11, color:theme.textMuted }}>{v.back}</div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        </CardItem>
                       );
                     })}
                   </div>
