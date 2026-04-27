@@ -2581,7 +2581,7 @@ export default function MemoMaster() {
       formData.append("language", "en");
       const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
-        headers: { "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}` },
+        headers: { "Authorization": `Bearer ${_DS}` },
         body: formData,
       });
       const data = await res.json();
@@ -3273,7 +3273,7 @@ export default function MemoMaster() {
         const audioBlob = new Blob(practiceAudioChunksRef.current, { type: 'audio/webm' });
         const formData = new FormData(); formData.append("file", audioBlob, "audio.webm"); formData.append("model", "whisper-large-v3"); formData.append("language", "en");
         try {
-          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${import.meta.env.VITE_GROQ_API_KEY}` }, body: formData });
+          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${_DS}` }, body: formData });
           const data = await res.json();
           if (data.text) { setPracticeInput(""); sendPracticeMessage(data.text.trim()); } else { setPracticeInput(""); }
         } catch (err) { setPracticeInput(""); showToast("Erreur Whisper.", "error"); } 
@@ -3314,6 +3314,9 @@ Pour le sujet : "${academyTopic}". Ordonne logiquement du plus basique au plus a
     if (!syllabus.concepts || !Array.isArray(syllabus.concepts)) throw new Error("Format JSON invalide");
 
     // Crée un nouveau cours et l'ajoute à la bibliothèque
+    // APRÈS
+    const CODING_KEYWORDS = ["python","java","javascript","typescript","react","sql","c++","c#","rust","go","kotlin","swift","php","spring","node","html","css","algorithme","algorithmique","programmation","code","développement","dev","backend","frontend","api","git","linux","bash","shell"];
+    const isCodingCourse = CODING_KEYWORDS.some(kw => academyTopic.toLowerCase().includes(kw));
     const newCourse = {
       id: Date.now().toString(),
       topic: academyTopic,
@@ -3321,6 +3324,7 @@ Pour le sujet : "${academyTopic}". Ordonne logiquement du plus basique au plus a
       progress: {},
       createdAt: today(),
       lastOpenedAt: today(),
+      type: isCodingCourse ? "code" : "theory", // ← NOUVEAU
     };
     setAcademyCourses(prev => [newCourse, ...prev]);
     setActiveCourse(newCourse);
@@ -5830,89 +5834,239 @@ ${langInstr}`,
               </div>
             )}
 
-            {/* ── LESSON / ÉDITEUR ── */}
+            {/* ── LESSON GOD LEVEL ── */}
             {academyView === "lesson" && currentLesson && (
-              <div>
-                <button onClick={() => setAcademyView("home")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, marginBottom: 24 }}>← Retour</button>
-                <h2 style={{ fontWeight: 900, color: theme.highlight }}>{currentLesson.title}</h2>
-                {currentLesson.explanation && (
-                  <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                    <div style={{ fontWeight: 800, color: "#3B82F6", marginBottom: 12 }}>📖 Explication</div>
-                    <div dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }} />
+              <div style={{ animation: "fadeUp 0.4s ease" }}>
+
+                {/* Header navigation */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                  <button onClick={() => setAcademyView("home")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, fontSize: 14 }}>← Retour au cours</button>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {quizTimerActive && quizTimer !== null && (
+                      <div style={{ background: quizTimer <= 10 ? "#EF4444" : "#F59E0B", color: "white", borderRadius: 20, padding: "4px 14px", fontWeight: 900, fontSize: 15 }}>⏱ {quizTimer}s</div>
+                    )}
+                    <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 700, color: theme.textMuted }}>
+                      {lessonState === "explain" ? "📖 Lecture" : lessonState === "quiz" ? "🎯 Quiz" : lessonState === "results" ? "🏆 Résultats" : "⏳"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Titre de la leçon */}
+                <h2 style={{ fontWeight: 900, color: theme.highlight, marginBottom: 4, fontSize: 22 }}>{currentLesson.title}</h2>
+                <div style={{ color: theme.textMuted, fontSize: 13, marginBottom: 20 }}>
+                  {activeCourse?.topic} • {activeCourse?.type === "code" ? "🖥️ Cours pratique" : "📚 Cours théorique"}
+                </div>
+
+                {/* ─── ÉTAT : CHARGEMENT ─── */}
+                {lessonState === "loading" && (
+                  <div style={{ textAlign: "center", padding: "60px 20px", background: theme.cardBg, borderRadius: 24, border: `1px solid ${theme.border}` }}>
+                    <div style={{ fontSize: 44, marginBottom: 16 }}>🧠</div>
+                    <p style={{ color: theme.textMuted, fontWeight: 600 }}>L'IA prépare ta leçon...</p>
                   </div>
                 )}
-                {/* Éditeur de code intégré */}
-                <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, border: `1px solid ${theme.border}`, marginBottom: 20 }}>
-                  <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 8 }}>💻 Éditeur de code</div>
-                  <textarea
-                    value={academyEditorCode}
-                    onChange={e => setAcademyEditorCode(e.target.value)}
-                    rows={8}
-                    style={{ width: "100%", padding: 14, background: isDarkMode ? "#1E293B" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13, resize: "vertical" }}
-                    placeholder="Écris ton code ici..."
-                  />
-                  <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    <button onClick={() => submitCode(currentLesson.title)} disabled={academyCorrectionLoading} style={{ padding: "12px 24px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
-                      {academyCorrectionLoading ? "🧠 Analyse..." : "✅ Soumettre pour correction"}
-                    </button>
-                    <button onClick={runCode} style={{ padding: "12px 24px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>▶️ Exécuter</button>
-                    <button onClick={getPairSuggestion} disabled={academyPairProgramming} style={{ padding: "12px 24px", background: "#8B5CF6", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🤝 Pair AI</button>
+
+                {/* ─── ÉTAT : EXPLICATION ─── */}
+                {lessonState === "explain" && currentLesson.explanation && (
+                  <div>
+                    {/* Bloc explication */}
+                    <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                      <div style={{ fontWeight: 800, color: "#3B82F6", marginBottom: 16, fontSize: 16 }}>📖 Explication</div>
+                      <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}
+                        dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }}
+                      />
+                    </div>
+
+                    {/* ─── ÉDITEUR DE CODE : uniquement pour les cours de code ─── */}
+                    {activeCourse?.type === "code" && (
+                      <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, border: `1px solid ${theme.border}`, marginBottom: 20 }}>
+                        <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 8, fontSize: 15 }}>💻 Éditeur de code</div>
+                        <textarea
+                          value={academyEditorCode}
+                          onChange={e => setAcademyEditorCode(e.target.value)}
+                          rows={8}
+                          style={{ width: "100%", padding: 14, background: isDarkMode ? "#1E293B" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
+                          placeholder="Écris ton code ici..."
+                        />
+                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                          <button onClick={() => submitCode(currentLesson.title)} disabled={academyCorrectionLoading} style={{ padding: "12px 22px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+                            {academyCorrectionLoading ? "🧠 Analyse..." : "✅ Soumettre pour correction"}
+                          </button>
+                          <button onClick={runCode} style={{ padding: "12px 22px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>▶️ Exécuter</button>
+                          <button onClick={getPairSuggestion} disabled={academyPairProgramming} style={{ padding: "12px 22px", background: "#8B5CF6", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🤝 Pair AI</button>
+                        </div>
+                        {academyPairSuggestion && (
+                          <div style={{ marginTop: 12, background: isDarkMode ? "#334155" : "#F5F3FF", borderRadius: 10, padding: 14 }}>
+                            <strong>🤖 Suggestion IA :</strong><br/>
+                            <span style={{ color: theme.text }}>{academyPairSuggestion}</span>
+                          </div>
+                        )}
+                        {academyEditorOutput && (
+                          <div style={{ marginTop: 12, background: isDarkMode ? "#0F172A" : "#F0FFF4", borderRadius: 10, padding: 14, border: `1px solid ${theme.border}` }}>
+                            <strong>📤 Sortie :</strong>
+                            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", color: theme.text, margin: "6px 0 0" }}>{academyEditorOutput}</pre>
+                          </div>
+                        )}
+                        {academyCorrection && (
+                          <div style={{ marginTop: 16, background: academyCorrection.correct ? "#D1FAE5" : "#FEF2F2", borderRadius: 16, padding: 20, border: `1px solid ${academyCorrection.correct ? "#10B981" : "#EF4444"}` }}>
+                            <div style={{ fontWeight: 800, fontSize: 17, color: academyCorrection.correct ? "#065F46" : "#991B1B" }}>
+                              {academyCorrection.correct ? "✅ Correct !" : "❌ À revoir"} — Score : {academyCorrection.score}/100
+                            </div>
+                            <p style={{ whiteSpace: "pre-wrap", color: theme.text }}>{academyCorrection.feedback}</p>
+                            {academyCorrection.optimizedCode && (
+                              <div style={{ marginTop: 12 }}>
+                                <strong>💡 Code optimisé :</strong>
+                                <pre style={{ background: isDarkMode ? "#1E293B" : "#F8FAFC", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace" }}>{academyCorrection.optimizedCode}</pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {academySubmissionHistory[currentLesson.title]?.length > 0 && (
+                          <details style={{ marginTop: 16 }}>
+                            <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.textMuted }}>📚 Historique ({academySubmissionHistory[currentLesson.title].length})</summary>
+                            {academySubmissionHistory[currentLesson.title].slice(-3).map((sub, i) => (
+                              <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginTop: 8 }}>
+                                <div style={{ fontSize: 12, color: theme.textMuted }}>{new Date(sub.date).toLocaleString()}</div>
+                                <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{sub.code}</pre>
+                              </div>
+                            ))}
+                          </details>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ─── ACTIVITÉS THÉORIQUES : pour les cours non-code ─── */}
+                    {activeCourse?.type !== "code" && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
+                        {/* Carte : Points clés */}
+                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
+                          <div style={{ fontWeight: 800, color: "#3B82F6", marginBottom: 10, fontSize: 14 }}>🔑 Points clés à retenir</div>
+                          <div style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.7 }}>
+                            {currentLesson.explanation?.split(". ").filter(Boolean).slice(0, 3).map((pt, i) => (
+                              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                                <span style={{ color: "#3B82F6", fontWeight: 900, flexShrink: 0 }}>›</span>
+                                <span>{pt.trim()}.</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {/* Carte : Générer des fiches */}
+                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
+                          <div style={{ fontWeight: 800, color: "#10B981", marginBottom: 10, fontSize: 14 }}>🃏 Convertir en fiches</div>
+                          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Génère des fiches FSRS à partir de cette leçon pour la révision spaced.</p>
+                          <button onClick={() => generateCardsFromLesson(currentLesson)} style={{ width: "100%", padding: "10px 16px", background: "#10B981", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                            ✨ Générer les fiches
+                          </button>
+                        </div>
+                        {/* Carte : Expliquer simplement */}
+                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
+                          <div style={{ fontWeight: 800, color: "#F59E0B", marginBottom: 10, fontSize: 14 }}>🧒 Expliquer simplement</div>
+                          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Reformuler le concept comme si tu avais 10 ans.</p>
+                          <button onClick={() => explainLike5(currentLesson.explanation)} style={{ width: "100%", padding: "10px 16px", background: "#F59E0B", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                            🧸 Simplifier
+                          </button>
+                          {labExplainLike5 && (
+                            <div style={{ marginTop: 10, padding: 12, background: isDarkMode ? "#1E293B" : "#FFFBEB", borderRadius: 10, fontSize: 13, color: theme.text }}>
+                              {labExplainLike5}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Prévisualisation des fiches générées */}
+                    {showCardsPreview && generatedCards.length > 0 && (
+                      <div style={{ background: theme.cardBg, border: `1px solid #10B981`, borderRadius: 20, padding: 20, marginBottom: 20 }}>
+                        <div style={{ fontWeight: 800, color: "#10B981", marginBottom: 12 }}>🃏 {generatedCards.length} fiches prêtes</div>
+                        {generatedCards.slice(0, 3).map((c, i) => (
+                          <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginBottom: 8 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13 }}>Q: {c.front}</div>
+                            <div style={{ color: theme.textMuted, fontSize: 12, marginTop: 4 }}>R: {c.back}</div>
+                          </div>
+                        ))}
+                        {generatedCards.length > 3 && <div style={{ color: theme.textMuted, fontSize: 12, textAlign: "center" }}>+{generatedCards.length - 3} autres fiches...</div>}
+                        <button onClick={confirmBatch} style={{ marginTop: 12, width: "100%", padding: "10px 16px", background: "#10B981", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
+                          ✅ Sauvegarder les fiches
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Bouton passer au quiz */}
+                    <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#7B5FF5,#A78BFA)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>
+                        🎯 Passer au quiz →
+                      </button>
+                    </div>
                   </div>
-                  {academyPairSuggestion && (
-                    <div style={{ marginTop: 12, background: isDarkMode ? "#334155" : "#F5F3FF", borderRadius: 10, padding: 14 }}>
-                      <strong>🤖 Suggestion IA :</strong><br/>
-                      <span style={{ color: theme.text }}>{academyPairSuggestion}</span>
-                    </div>
-                  )}
-                  {academyEditorOutput && (
-                    <div style={{ marginTop: 12, background: isDarkMode ? "#0F172A" : "#F0FFF4", borderRadius: 10, padding: 14, border: `1px solid ${theme.border}` }}>
-                      <strong>📤 Sortie :</strong>
-                      <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", color: theme.text }}>{academyEditorOutput}</pre>
-                    </div>
-                  )}
-                  {academyCorrection && (
-                    <div style={{ marginTop: 16, background: academyCorrection.correct ? "#D1FAE5" : "#FEF2F2", borderRadius: 16, padding: 20, border: `1px solid ${academyCorrection.correct ? "#10B981" : "#EF4444"}` }}>
-                      <div style={{ fontWeight: 800, fontSize: 18, color: academyCorrection.correct ? "#065F46" : "#991B1B" }}>{academyCorrection.correct ? "✅ Correction" : "❌ À revoir"} — Score : {academyCorrection.score}/100</div>
-                      <p style={{ whiteSpace: "pre-wrap", color: theme.text }}>{academyCorrection.feedback}</p>
-                      {academyCorrection.optimizedCode && (
-                        <div style={{ marginTop: 12 }}>
-                          <strong>💡 Code optimisé :</strong>
-                          <pre style={{ background: isDarkMode ? "#1E293B" : "#F8FAFC", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace" }}>{academyCorrection.optimizedCode}</pre>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {/* Historique des soumissions */}
-                  {academySubmissionHistory[currentLesson.title]?.length > 0 && (
-                    <details style={{ marginTop: 16 }}>
-                      <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.textMuted }}>📚 Historique ({academySubmissionHistory[currentLesson.title].length})</summary>
-                      {academySubmissionHistory[currentLesson.title].slice(-3).map((sub, i) => (
-                        <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginTop: 8 }}>
-                          <div style={{ fontSize: 12, color: theme.textMuted }}>{new Date(sub.date).toLocaleString()}</div>
-                          <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{sub.code}</pre>
-                        </div>
-                      ))}
-                    </details>
-                  )}
-                </div>
-                {/* Quiz (existant) */}
+                )}
+
+                {/* ─── ÉTAT : QUIZ ─── */}
                 {lessonState === "quiz" && lessonQuiz && (
                   <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, border: `1px solid ${theme.border}` }}>
-                    <div style={{ fontWeight: 800, color: "#7B5FF5", marginBottom: 16 }}>🎯 Quiz</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                      <div style={{ fontWeight: 800, color: "#7B5FF5", fontSize: 16 }}>🎯 Quiz — {currentLesson.title}</div>
+                      <div style={{ fontSize: 12, color: theme.textMuted }}>{lessonQuiz.length} questions</div>
+                    </div>
                     {lessonQuiz.map((q, idx) => (
-                      <div key={idx} style={{ marginBottom: 20 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 8 }}>{idx+1}. {q.question}</div>
-                        <input style={{ width: "100%", padding: 12, background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text }} value={quizAnswers[idx] || ""} onChange={e => checkQuizAnswer(idx, e.target.value)} />
+                      <div key={idx} style={{ marginBottom: 22 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 10, color: theme.text, fontSize: 14 }}>{idx + 1}. {q.question}</div>
+                        <input
+                          style={{ width: "100%", padding: "12px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontSize: 14, boxSizing: "border-box" }}
+                          value={quizAnswers[idx] || ""}
+                          onChange={e => checkQuizAnswer(idx, e.target.value)}
+                          placeholder="Ta réponse..."
+                        />
                       </div>
                     ))}
-                    <button onClick={submitQuiz} style={{ width: "100%", padding: 14, background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800 }}>Valider</button>
+                    <button onClick={submitQuiz} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
+                      ✅ Valider le quiz
+                    </button>
+                    <button onClick={() => setLessonState("explain")} style={{ width: "100%", marginTop: 8, padding: 12, background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.textMuted, fontWeight: 700, cursor: "pointer" }}>
+                      ← Relire l'explication
+                    </button>
                   </div>
                 )}
-                {/* etc... Le reste des sous-états de leçon (loading, results) est conservé tel quel de l'ancien code, on ne le modifie pas ici pour ne pas alourdir. */}
+
+                {/* ─── ÉTAT : RÉSULTATS QUIZ ─── */}
+                {lessonState === "results" && quizResults && (
+                  <div>
+                    {/* Score global */}
+                    <div style={{ background: quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "linear-gradient(135deg,#10B981,#059669)" : "linear-gradient(135deg,#F59E0B,#D97706)", borderRadius: 24, padding: 28, textAlign: "center", color: "white", marginBottom: 20 }}>
+                      <div style={{ fontSize: 48 }}>{quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "🏆" : "💪"}</div>
+                      <div style={{ fontSize: 32, fontWeight: 900, margin: "8px 0" }}>
+                        {quizResults.filter(r => r.isCorrect).length} / {quizResults.length}
+                      </div>
+                      <div style={{ fontSize: 15, opacity: 0.9 }}>
+                        {quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "Leçon maîtrisée ! 🎉" : "Continue à pratiquer !"}
+                      </div>
+                    </div>
+                    {/* Détail par question */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
+                      {quizResults.map((r, i) => (
+                        <div key={i} style={{ background: theme.cardBg, borderRadius: 14, padding: 16, border: `1px solid ${r.isCorrect ? "#10B981" : "#EF4444"}` }}>
+                          <div style={{ fontWeight: 700, color: theme.text, marginBottom: 6, fontSize: 14 }}>{i + 1}. {r.question}</div>
+                          <div style={{ fontSize: 13, color: r.isCorrect ? "#10B981" : "#EF4444" }}>Ta réponse : {r.userAnswer || "(vide)"}</div>
+                          {!r.isCorrect && <div style={{ fontSize: 13, color: "#10B981", marginTop: 4 }}>✅ Bonne réponse : {r.correctAnswer}</div>}
+                        </div>
+                      ))}
+                    </div>
+                    {/* Actions */}
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      <button onClick={() => { setLessonState("explain"); setQuizAnswers({}); setQuizResults(null); }} style={{ flex: 1, padding: "14px 20px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 14, color: theme.text, fontWeight: 800, cursor: "pointer" }}>
+                        🔄 Relire la leçon
+                      </button>
+                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "14px 20px", background: "#7B5FF5", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                        🔁 Refaire le quiz
+                      </button>
+                      <button onClick={() => setAcademyView("home")} style={{ flex: 1, padding: "14px 20px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                        📚 Concept suivant →
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* ── MODE SANDBOX LIBRE ── */}
+                        {/* ── MODE SANDBOX LIBRE ── */}
             {academySandbox && (
               <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <div style={{ background: theme.cardBg, borderRadius: 24, padding: 32, maxWidth: 800, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
