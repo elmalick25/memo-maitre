@@ -8,12 +8,12 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 // FIREBASE – CONFIG (memo-maitre)
 // ══════════════════════════════════════════════════════════════════════════════
 const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDKV8PbTisinWWfSL4g6BwzmQdt1yAgA-U",
-  authDomain: "memo-maitre.firebaseapp.com",
-  projectId: "memo-maitre",
-  storageBucket: "memo-maitre.firebasestorage.app",
-  messagingSenderId: "320016571088",
-  appId: "1:320016571088:web:b4f2417a995a1b6d6d9cd5"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 const FB_USER = "el_hadji_malick";
 
@@ -309,6 +309,7 @@ export default function MemoMaster() {
   const [unlockedBadges, setUnlockedBadges] = useState([]);
   const [videos, setVideos] = useState([]);
   const [loaded, setLoaded] = useState(false);
+  const [oneHanded, setOneHanded] = useState(false);
 
   const [powerLevel, setPowerLevel] = useState(0);
   const [devLogs, setDevLogs] = useState([]);
@@ -349,6 +350,8 @@ export default function MemoMaster() {
   const [examTimer, setExamTimer] = useState(0);
   const [examRevealed, setExamRevealed] = useState(false);
   const examTimerRef = useRef(null);
+  const [swipeX, setSwipeX] = useState(0); // position horizontale du swipe
+  const touchStartX = useRef(0);
   const [qcmChoices, setQcmChoices] = useState([]);
   const [qcmSelected, setQcmSelected] = useState(null);
   const [qcmLoading, setQcmLoading] = useState(false);
@@ -435,6 +438,9 @@ export default function MemoMaster() {
   
   // Lab (PDF, Résumés, Coach)
   const [labSubView, setLabSubView] = useState("home"); 
+  const [labDiagrams, setLabDiagrams] = useState([]);
+  const [godModeLoading, setGodModeLoading] = useState(false);
+  const [godModeResult, setGodModeResult] = useState(null);
   const [pdfParsing, setPdfParsing] = useState(false);
   const [pdfExtractedText, setPdfExtractedText] = useState("");
   const [pdfFileName, setPdfFileName] = useState("");
@@ -547,14 +553,18 @@ export default function MemoMaster() {
   const [practiceTopic, setPracticeTopic] = useState("Free conversation");
   const [practiceLevel, setPracticeLevel] = useState("intermediate");
   const [practiceSpeaking, setPracticeSpeaking] = useState(false);
+  const [ttsVoice, setTtsVoice] = useState("Samantha"); // voix par défaut
+const [ttsRate, setTtsRate] = useState(0.92);
     // ── GOD LEVEL ENGLISH v9 — Nouveaux états ────────────────────────────
   const [practiceSubView, setPracticeSubView] = useState("chat"); // chat | debate | roleplay | dictation | daily | stats
   const [practiceDebateTopic, setPracticeDebateTopic] = useState("");
   const [practiceDebateHistory, setPracticeDebateHistory] = useState([]);
   const [practiceDebateSide, setPracticeDebateSide] = useState("for"); // for/against
+  const [debateListening, setDebateListening] = useState(false); // ← état micro débat
   const [practiceRoleplayScenario, setPracticeRoleplayScenario] = useState("");
   const [practiceRoleplayHistory, setPracticeRoleplayHistory] = useState([]);
   const [practiceRoleplayCharacter, setPracticeRoleplayCharacter] = useState("interviewer");
+  const [roleplayListening, setRoleplayListening] = useState(false);
   const [practiceDictationText, setPracticeDictationText] = useState("");
   const [practiceDictationUserInput, setPracticeDictationUserInput] = useState("");
   const [practiceDictationScore, setPracticeDictationScore] = useState(null);
@@ -729,6 +739,9 @@ export default function MemoMaster() {
   // ── MOBILE DETECTION ───────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const touchMainStartX = useRef(0);
+  const touchMainStartY = useRef(0);
+  const mainViewOrder = ["dashboard", "list", "add", "exam", "projects", "practice", "academy"];
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", handleResize);
@@ -2112,6 +2125,46 @@ export default function MemoMaster() {
     } catch (e) { showToast("Erreur lancement débat", "error"); }
   };
 
+  const sendDebateVoiceMessage = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    const chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      setDebateListening(false);
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("file", blob, "audio.webm");
+      formData.append("model", "whisper-large-v3");
+      formData.append("language", "en");
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${_DS}` },
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.text?.trim()) {
+          await sendDebateMessage(data.text.trim());
+        }
+      } catch (e) {
+        showToast("Erreur transcription", "error");
+      }
+      stream.getTracks().forEach((t) => t.stop());
+    };
+    mediaRecorder.start();
+    setDebateListening(true);
+    showToast("🎤 Parle maintenant...");
+    // arrêt automatique après 8 secondes de silence (prévoir un timeout)
+    setTimeout(() => {
+      if (mediaRecorder.state === "recording") mediaRecorder.stop();
+    }, 8000);
+  } catch (e) {
+    showToast("Micro refusé", "error");
+  }
+};
+
   const sendDebateMessage = async (text) => {
     if (!text.trim()) return;
     setPracticeDebateHistory(prev => [...prev, { role: "user", text }]);
@@ -2121,6 +2174,7 @@ export default function MemoMaster() {
         text
       );
       setPracticeDebateHistory(prev => [...prev, { role: "assistant", text: raw.trim() }]);
+      speakText(raw.trim()); // ← L’IA parle automatiquement
     } catch (e) { showToast("Erreur débat", "error"); }
   };
 
@@ -2138,9 +2192,49 @@ export default function MemoMaster() {
     } catch (e) { showToast("Erreur jeu de rôle", "error"); }
   };
 
+  const sendRoleplayVoiceMessage = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mediaRecorder = new MediaRecorder(stream);
+    const chunks = [];
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      setRoleplayListening(false);
+      const blob = new Blob(chunks, { type: "audio/webm" });
+      const formData = new FormData();
+      formData.append("file", blob, "audio.webm");
+      formData.append("model", "whisper-large-v3");
+      formData.append("language", "en");
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${_DS}` },
+          body: formData,
+        });
+        const data = await res.json();
+        if (data.text?.trim()) {
+          await sendRoleplayMessage(data.text.trim());
+        }
+      } catch (e) {
+        showToast("Erreur transcription", "error");
+      }
+      stream.getTracks().forEach((t) => t.stop());
+    };
+    mediaRecorder.start();
+    setRoleplayListening(true);
+    showToast("🎭 Parle maintenant...");
+    setTimeout(() => {
+      if (mediaRecorder.state === "recording") mediaRecorder.stop();
+    }, 8000);
+  } catch (e) {
+    showToast("Micro refusé", "error");
+  }
+};
+
   const sendRoleplayMessage = async (text) => {
     if (!text.trim()) return;
-    setPracticeRoleplayHistory(prev => [...prev, { role: "user", text }]);
+    setPracticeRoleplayHistory(prev => [...prev, { role: "user", text:raw.trim() }]);
+    speakText(raw.trim());
     try {
       const raw = await callClaude(
         `Tu es un partenaire de jeu de rôle en anglais. Scénario: "${practiceRoleplayScenario}". Réponds naturellement à ce que dit l'étudiant.`,
@@ -3311,59 +3405,176 @@ export default function MemoMaster() {
     // Correction automatique
     await correctMessage(text.trim());
     try {
-      const personaInst = practicePersona === "MMA" ? "Act like an aggressive MMA Fighter." : practicePersona === "Recruteur" ? "Act like a strict Tech Recruiter." : "Act as a friendly coach.";
-      const systemPrompt = `You are an English coach for El Hadji Malick, a CS student in Dakar. Speak ONLY in English. Level: ${practiceLevel}. Topic: ${practiceTopic}. ${personaInst} Keep it conversational (2-4 sentences).`;
-      const groqHistory = practiceMsgRef.current.slice(-10).map(m => ({ role: m.role, content: m.text }));
-      groqHistory.push({ role: "user", content: text.trim() });
-      const res = await fetch(DEEPSEEK_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_DS}` },
-        body: JSON.stringify({ model: DEEPSEEK_MODEL, max_tokens: 400, temperature: 0.85, messages: [{ role: "system", content: systemPrompt }, ...groqHistory] }),
-      });
-      if (!res.ok) throw new Error("API Error");
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || "I didn't catch that.";
-      setPracticeMessages(prev => [...prev, { role: "assistant", text: reply }]);
-      speakText(reply);
-      // Stats
-      saveStats({ ...practiceStats, totalMessages: practiceStats.totalMessages + 2 }); // user + assistant
-    } catch (err) {
-      setPracticeMessages(prev => [...prev, { role: "assistant", text: "Connection error. Please try again! 🔄" }]);
-    } finally {
-      setPracticeLoading(false);
-    }
+  const personaInst = practicePersona === "MMA" ? "Act like an aggressive MMA Fighter." : practicePersona === "Recruteur" ? "Act like a strict Tech Recruiter." : "Act as a friendly coach.";
+  const systemPrompt = `You are an English coach for El Hadji Malick, a CS student in Dakar. Speak ONLY in English. Level: ${practiceLevel}. Topic: ${practiceTopic}. ${personaInst} Keep it conversational (2-4 sentences).`;
+  const groqHistory = practiceMsgRef.current.slice(-10).map(m => ({ role: m.role, content: m.text }));
+  groqHistory.push({ role: "user", content: text.trim() });
+  
+  const res = await fetch(DEEPSEEK_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${_DS}` },
+    body: JSON.stringify({ model: DEEPSEEK_MODEL, max_tokens: 400, temperature: 0.85, messages: [{ role: "system", content: systemPrompt }, ...groqHistory] }),
+  });
+
+  if (!res.ok) {
+    const errorBody = await res.text();
+    console.error("Chat API error:", res.status, errorBody);
+    let errorMsg = "Erreur API. Réessaie plus tard.";
+    if (res.status === 429) errorMsg = "⏳ Trop de requêtes, patiente un instant.";
+    else if (res.status === 401) errorMsg = "🔑 Clé API invalide. Vérifie ton .env.";
+    setPracticeMessages(prev => [...prev, { role: "assistant", text: errorMsg }]);
+    return;
+  }
+
+  const data = await res.json();
+  const reply = data.choices?.[0]?.message?.content || "I didn't catch that.";
+  setPracticeMessages(prev => [...prev, { role: "assistant", text: reply }]);
+  
+  // ⚠️ On retire l’appel automatique au TTS pour éviter blocage mobile, on garde le bouton "🔊 Listen"
+  // speakText(reply); // commenté
+  saveStats({ ...practiceStats, totalMessages: practiceStats.totalMessages + 2 });
+} catch (err) {
+  console.error("Chat error:", err);
+  setPracticeMessages(prev => [...prev, { role: "assistant", text: "Erreur réseau. Vérifie ta connexion. 🔄" }]);
+}
   };
 
   const speakText = (text) => {
-    if (!("speechSynthesis" in window)) return;
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text); utt.lang = "en-US"; utt.rate = 0.92;
-    setPracticeSpeaking(true);
-    utt.onend = () => setPracticeSpeaking(false); utt.onerror = () => setPracticeSpeaking(false);
-    window.speechSynthesis.speak(utt);
-  };
+  if (!window.speechSynthesis) {
+    showToast("🔇 Synthèse vocale non supportée.", "warning");
+    return;
+  }
+  window.speechSynthesis.cancel(); // annule toute lecture en cours
+  
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = "en-US";
+  utter.rate = 0.92;
 
-  const togglePracticeMic = async () => {
-    if (practiceListening) { if (practiceMediaRecorderRef.current) practiceMediaRecorderRef.current.stop(); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      practiceMediaRecorderRef.current = mediaRecorder; practiceAudioChunksRef.current = [];
-      mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) practiceAudioChunksRef.current.push(event.data); };
-      mediaRecorder.onstop = async () => {
-        setPracticeListening(false); setPracticeInput("⏳ Transcription Whisper...");
-        const audioBlob = new Blob(practiceAudioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData(); formData.append("file", audioBlob, "audio.webm"); formData.append("model", "whisper-large-v3"); formData.append("language", "en");
-        try {
-          const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { "Authorization": `Bearer ${_DS}` }, body: formData });
-          const data = await res.json();
-          if (data.text) { setPracticeInput(""); sendPracticeMessage(data.text.trim()); } else { setPracticeInput(""); }
-        } catch (err) { setPracticeInput(""); showToast("Erreur Whisper.", "error"); } 
-        finally { stream.getTracks().forEach(track => track.stop()); }
-      };
-      mediaRecorder.start(); setPracticeListening(true);
-    } catch (err) { showToast("Micro refusé.", "error"); }
+  // Charger les voix disponibles
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length) {
+    const preferred = voices.find(v => v.name.includes("Samantha")) || voices.find(v => v.lang.startsWith("en"));
+    if (preferred) utter.voice = preferred;
+  }
+  
+  utter.onstart = () => setPracticeSpeaking(true);
+  utter.onend = () => setPracticeSpeaking(false);
+  utter.onerror = (e) => {
+    console.error("TTS error:", e);
+    setPracticeSpeaking(false);
+    showToast("🔇 Erreur de lecture vocale.", "warning");
   };
+  
+  // Important : sur mobile, il faut déclencher la synthèse dans un gestionnaire d'événement utilisateur.
+  // Si cette fonction est appelée après un clic (bouton "Listen"), c'est déjà le cas.
+  window.speechSynthesis.speak(utter);
+};
+
+ const togglePracticeMic = async () => {
+  // Si déjà en cours, on arrête
+  if (practiceListening) {
+    if (practiceMediaRecorderRef.current && practiceMediaRecorderRef.current.state === 'recording') {
+      practiceMediaRecorderRef.current.stop();
+    }
+    return;
+  }
+
+  // Vérifier la disponibilité de l'API
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast("🎤 Micro non supporté sur ce navigateur.", "error");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Détection du codec supporté
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+      ? 'audio/webm;codecs=opus' 
+      : 'audio/webm';
+    
+    const mediaRecorder = new MediaRecorder(stream, { mimeType });
+    practiceMediaRecorderRef.current = mediaRecorder;
+    practiceAudioChunksRef.current = [];
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        practiceAudioChunksRef.current.push(event.data);
+      }
+    };
+
+    mediaRecorder.onstop = async () => {
+      setPracticeListening(false);
+      // Si aucun chunk, on quitte
+      if (practiceAudioChunksRef.current.length === 0) {
+        stream.getTracks().forEach(track => track.stop());
+        showToast("⚠️ Aucun son détecté.", "warning");
+        return;
+      }
+
+      setPracticeInput("⏳ Transcription en cours...");
+      const audioBlob = new Blob(practiceAudioChunksRef.current, { type: mimeType });
+
+      // Préparer l'envoi à Whisper
+      const formData = new FormData();
+      formData.append("file", audioBlob, "recording.webm");
+      formData.append("model", "whisper-large-v3");
+      formData.append("language", "en");
+
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${_DS}`
+          },
+          body: formData
+        });
+
+        if (!res.ok) {
+          // Essayer d'obtenir le détail de l'erreur
+          const errorText = await res.text();
+          console.error("Whisper error:", res.status, errorText);
+          throw new Error(`Erreur ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (data.text?.trim()) {
+          setPracticeInput("");
+          await sendPracticeMessage(data.text.trim());
+        } else {
+          setPracticeInput("");
+          showToast("🤷 Aucune parole détectée dans l'audio.", "warning");
+        }
+      } catch (err) {
+        setPracticeInput("");
+        if (err.message.includes("429")) {
+          showToast("⏳ Limite de requêtes atteinte, attends un peu.", "error");
+        } else if (err.message.includes("401")) {
+          showToast("🔑 Clé API invalide. Vérifie ton .env", "error");
+        } else {
+          showToast("Erreur transcription : " + err.message, "error");
+        }
+      } finally {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+
+    mediaRecorder.onerror = () => {
+      showToast("🎤 Erreur d'enregistrement.", "error");
+      stream.getTracks().forEach(track => track.stop());
+      setPracticeListening(false);
+    };
+
+    mediaRecorder.start();
+    setPracticeListening(true);
+  } catch (err) {
+    setPracticeListening(false);
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      showToast("🚫 Accès micro refusé. Autorise-le dans les paramètres.", "error");
+    } else {
+      showToast("🎤 Erreur micro : " + err.message, "error");
+    }
+  }
+};
 
   const resetPracticeChat = () => { window.speechSynthesis?.cancel(); setPracticeSpeaking(false); setPracticeMessages([{ role: "assistant", text: `Great! Let's talk about "${practiceTopic}". I'm ready whenever you are! 🎤` }]); };
   // ══════════════════════════════════════════════════════════════════════════
@@ -3385,35 +3596,50 @@ const generateSyllabus = async () => {
   setAcademyLoading(true);
   try {
     const raw = await callClaude(
-      `Tu es un expert en création de plans d'apprentissage pour développeurs. Génère un syllabus en JSON STRICT (sans markdown, sans texte avant/après) avec ce format exact :
-{"concepts":[{"title":"Nom du concept","dependencies":[],"description":"Description courte en 1 phrase"}]}
-Pour le sujet : "${academyTopic}". Ordonne logiquement du plus basique au plus avancé. Limite à 10 concepts maximum.`,
-      `Génère le syllabus pour : ${academyTopic}`
+      `Tu es un expert en création de plans d'apprentissage complets et détaillés pour développeurs. Génère un syllabus EXTREMEMENT RICHE en JSON STRICT (sans markdown, sans texte avant/après) avec ce format exact :
+{
+  "concepts": [
+    {
+      "title": "Nom du concept",
+      "description": "Description détaillée (2-3 phrases) de ce que l'étudiant va apprendre",
+      "dependencies": ["concept_title"],
+      "difficulty": 1-5 (1=débutant, 5=expert),
+      "estimatedMinutes": 30,
+      "tags": ["tag1", "tag2"],
+      "resources": [
+        {"type": "article", "title": "Titre suggéré", "url": ""},
+        {"type": "video", "title": "Titre suggéré", "url": ""}
+      ],
+      "projectIdea": "Idée de mini-projet pour mettre en pratique (optionnel)"
+    }
+  ]
+}
+Pour le sujet : "${academyTopic}". Couvre tous les aspects essentiels et avancés. Ordonne logiquement du plus basique au plus avancé. Inclus entre 7 et 15 concepts selon la complexité du sujet. Sois exhaustif, pas de limitation arbitraire.`,
+      `Génère le syllabus complet pour : ${academyTopic}`
     );
+
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Réponse IA invalide");
     const syllabus = JSON.parse(jsonMatch[0]);
     if (!syllabus.concepts || !Array.isArray(syllabus.concepts)) throw new Error("Format JSON invalide");
 
-    // Crée un nouveau cours et l'ajoute à la bibliothèque
-    // APRÈS
     const CODING_KEYWORDS = ["python","java","javascript","typescript","react","sql","c++","c#","rust","go","kotlin","swift","php","spring","node","html","css","algorithme","algorithmique","programmation","code","développement","dev","backend","frontend","api","git","linux","bash","shell"];
     const isCodingCourse = CODING_KEYWORDS.some(kw => academyTopic.toLowerCase().includes(kw));
     const newCourse = {
       id: Date.now().toString(),
       topic: academyTopic,
       syllabus,
-      progress: {},
+      progress: {}, // score 0-100 par concept
       createdAt: today(),
       lastOpenedAt: today(),
-      type: isCodingCourse ? "code" : "theory", // ← NOUVEAU
+      type: isCodingCourse ? "code" : "theory",
     };
     setAcademyCourses(prev => [newCourse, ...prev]);
     setActiveCourse(newCourse);
     setAcademySyllabus(syllabus);
     setAcademyProgress({});
     setAcademyView("home");
-    showToast("📚 Cours créé et sauvegardé !");
+    showToast("📚 Cours riche créé et sauvegardé !");
   } catch (err) {
     showToast("Erreur : " + err.message, "error");
   } finally {
@@ -3439,7 +3665,7 @@ const deleteCourse = (courseId) => {
 const canStartConcept = (concept) => {
   if (!academySyllabus) return true;
   const deps = concept.dependencies || [];
-  return deps.every(dep => (academyProgress[dep] || 0) >= 4);
+  return deps.every(dep => (academyProgress[dep] || 0) >= 60);
 };
 
 // ── ACADEMY GOD LEVEL v8 – Fonctions améliorées ──────────────────────────────
@@ -3453,37 +3679,47 @@ const startLesson = async (concept) => {
   setShowCardsPreview(false);
   setAcademyView("lesson");
 
-  // ✅ AMÉLIORATION 2 : Cache du cours — on ne régénère plus si déjà chargé
   const cacheKey = `${activeCourse?.id}_${concept.title}`;
   if (lessonCache[cacheKey]) {
-    const cached = lessonCache[cacheKey];
-    setCurrentLesson({ ...concept, explanation: cached.explanation });
-    setLessonQuiz(cached.quiz);
+    setCurrentLesson({ ...concept, content: lessonCache[cacheKey] });
+    setLessonQuiz(lessonCache[cacheKey].exercises || null);
     setLessonState("explain");
-    showToast("📖 Cours chargé depuis le cache !");
+    showToast("📖 Leçon chargée du cache !");
     return;
   }
 
   setLessonState("loading");
   try {
+    const langInstr = activeCourse?.type === "code" ? "Inclus des exemples de code fonctionnels, des exercices de programmation, et un mini-projet guidé." : "Inclus des analogies, des schémas textuels, et des questions de réflexion.";
     const raw = await callClaude(
-      `Tu es un tuteur interactif pour "${academyTopic}". Explique le concept "${concept.title}" de manière concise (3-5 min de lecture). Utilise une analogie concrète et un exemple de code si pertinent. Format JSON STRICT (sans markdown, sans backticks) :
-{"explanation":"Explication en texte simple. Utilise des tirets - pour les listes. Evite les guillemets dans le texte.","quiz":[{"question":"Question 1 ?","answer":"Reponse courte"},{"question":"Question 2 ?","answer":"Reponse courte"},{"question":"Question 3 ?","answer":"Reponse courte"}]}`,
+      `Tu es un tuteur expert en "${academyTopic}". Crée une leçon EXTRÊMEMENT COMPLÈTE pour le concept "${concept.title}" (difficulté: ${concept.difficulty || 3}/5). La leçon doit être auto-suffisante pour que l'étudiant maîtrise parfaitement le concept. Réponds UNIQUEMENT en JSON STRICT avec ce format :
+{
+  "introduction": "Introduction motivante",
+  "sections": [
+    {"title": "Titre de section", "content": "Contenu détaillé avec explications, exemples, code si pertinent. Utilise des sauts de ligne pour lisibilité."}
+  ],
+  "summary": "Résumé des points clés",
+  "analogy": "Une analogie mémorable",
+  "commonMistakes": ["Erreur fréquente 1", "Erreur fréquente 2"],
+  "exercises": {
+    "multipleChoice": [{"question": "...", "options": ["A","B","C","D"], "correct": "A"}],
+    "openQuestions": [{"question": "...", "expectedAnswer": "..."}],
+    "codingChallenges": [{"prompt": "...", "solution": "..."}]
+  },
+  "miniProject": {"title": "...", "description": "...", "steps": ["étape 1", "étape 2"]}
+}
+${langInstr} Assure-toi que le contenu est riche (au moins 4-5 sections), que les exercices sont variés et pertinents.`,
       concept.title
     );
+
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Pas de JSON dans la réponse");
-    const cleaned = jsonMatch[0].replace(/[\u0000-\u001F\u007F]/g, (char) => {
-      const escapes = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
-      return escapes[char] || '';
-    });
-    const lessonData = JSON.parse(cleaned);
-    const quiz = lessonData.quiz || [];
-    setCurrentLesson({ ...concept, explanation: lessonData.explanation });
-    setLessonQuiz(quiz);
+    if (!jsonMatch) throw new Error("Pas de JSON valide");
+    const lessonContent = JSON.parse(jsonMatch[0]);
+    setCurrentLesson({ ...concept, content: lessonContent });
+    setLessonCache(prev => ({ ...prev, [cacheKey]: lessonContent }));
+    setLessonQuiz(lessonContent.exercises || null);
     setLessonState("explain");
-    // ✅ Mise en cache immédiate
-    setLessonCache(prev => ({ ...prev, [cacheKey]: { explanation: lessonData.explanation, quiz } }));
+    showToast("📚 Leçon riche chargée !");
   } catch (err) {
     showToast("Erreur chargement leçon: " + err.message, "error");
     setAcademyView("home");
@@ -3522,42 +3758,46 @@ const stopQuizTimer = () => {
 // ✅ AMÉLIORATION 1 & 3 : submitQuiz avec feedback détaillé par question + score
 const submitQuiz = () => {
   if (!lessonQuiz) return;
-  stopQuizTimer();
-  let correct = 0;
-  const results = lessonQuiz.map((q, idx) => {
-    const userAns = quizAnswers[idx]?.toLowerCase().trim() || "";
-    const correctAns = q.answer.toLowerCase().trim();
-    // Tolérance partielle : l'utilisateur contient le mot-clé ou vice-versa
-    const isCorrect = userAns === correctAns || userAns.includes(correctAns) || correctAns.includes(userAns) && userAns.length >= 3;
-    if (isCorrect) correct++;
-    return { question: q.question, userAnswer: quizAnswers[idx] || "(vide)", correctAnswer: q.answer, isCorrect };
-  });
-  setQuizResults(results);
-  const score = correct;
-  const total = lessonQuiz.length;
-  const passed = score >= total * 0.6;
+  let totalScore = 0;
+  let maxScore = 0;
 
-  // ✅ AMÉLIORATION 8 : Historique des tentatives
-  const conceptKey = currentLesson?.title || "";
-  setQuizAttempts(prev => {
-    const existing = prev[conceptKey] || [];
-    return { ...prev, [conceptKey]: [...existing, { score, total, date: today() }] };
-  });
+  if (lessonQuiz.multipleChoice) {
+    lessonQuiz.multipleChoice.forEach((q, idx) => {
+      maxScore += 20;
+      if (quizAnswers[`mc_${idx}`] === q.correct) totalScore += 20;
+    });
+  }
+  if (lessonQuiz.openQuestions) {
+    lessonQuiz.openQuestions.forEach((q, idx) => {
+      maxScore += 30;
+      const ans = (quizAnswers[`open_${idx}`] || "").toLowerCase().trim();
+      const exp = q.expectedAnswer.toLowerCase().trim();
+      if (ans.includes(exp) || exp.includes(ans)) totalScore += 30;
+      else if (ans.length > 20) totalScore += 10;
+    });
+  }
+  if (lessonQuiz.codingChallenges) {
+    lessonQuiz.codingChallenges.forEach((challenge, idx) => {
+      maxScore += 50;
+      if ((quizAnswers[`code_${idx}`] || "").trim().length > 0) totalScore += 30;
+    });
+  }
+
+  const masteryPercent = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
+  const passed = masteryPercent >= 60;
 
   setQuizFeedback(passed
-    ? `🎉 ${score}/${total} — Excellent ! Concept validé.`
-    : `⚠️ ${score}/${total} — Relis le cours et retente !`
+    ? `🎉 Score : ${masteryPercent}% — Concept validé !`
+    : `⚠️ Score : ${masteryPercent}% — Continue à étudier.`
   );
 
   if (passed) {
-    generateCardsFromConcept(currentLesson);
-    const newProgress = { ...academyProgress, [currentLesson.title]: 5 };
+    const newProgress = { ...academyProgress, [currentLesson.title]: masteryPercent };
     setAcademyProgress(newProgress);
     saveProgressToCourse(newProgress);
-    setLessonState("results");
-  } else {
-    setLessonState("results");
+    generateCardsFromConcept(currentLesson);
   }
+  setLessonState("results");
 };
 
 const generateCardsFromConcept = async (concept) => {
@@ -3775,6 +4015,7 @@ ${langInstr}`,
     } catch (err) {
       showToast("Erreur analyse : " + err.message, "error");
     }
+      if (parsed.diagrams) setLabDiagrams(parsed.diagrams);
     setPdfAnalysisLoading(false);
   };
 
@@ -4014,6 +4255,62 @@ ${langInstr}`,
     }
     setResumeLoading(false);
   };
+
+  const generateGodMode = async () => {
+  if (!resumeText.trim()) { showToast("Colle ou charge un cours d'abord.", "error"); return; }
+  setGodModeLoading(true);
+  setLabSubView("godmode");
+  setGodModeResult(null);
+  try {
+    const textSlice = resumeText.substring(0, 10000);
+    const hasArabic = /[\u0600-\u06FF]/.test(textSlice);
+    const langNote = hasArabic ? "Génère tout en arabe, avec les termes techniques en français entre parenthèses." : "Génère tout en français.";
+    
+    // Appels parallèles pour plus de rapidité
+    const [resume, mindmap, diagrams, flashcards, quiz] = await Promise.all([
+      callClaude(
+        `Résume ce cours de façon ultra‑complète en JSON : {"intro":"...","sections":[{"title":"...","content":"..."}],"conclusion":"..."}. ${langNote} Réponds UNIQUEMENT en JSON valide.`,
+        textSlice
+      ),
+      callClaude(
+        `Génère une carte mentale au format JSON : {"center":"Sujet","nodes":[{"id":"n1","label":"Sous‑thème","children":[]}]}. ${langNote} Réponds UNIQUEMENT en JSON valide.`,
+        textSlice
+      ),
+      callClaude(
+        `Génère 2 diagrammes Mermaid (format code) qui expliquent visuellement les concepts clés de ce cours. Format JSON : {"diagrams":["graph TD; ...","sequenceDiagram; ..."]}. ${langNote} Réponds UNIQUEMENT en JSON valide.`,
+        textSlice
+      ),
+      callClaude(
+        `Génère 10 fiches de révision (front/back/example) depuis ce cours. Format JSON : {"cards":[{"front":"...","back":"...","example":"..."}]}. ${langNote} Réponds UNIQUEMENT en JSON valide.`,
+        textSlice
+      ),
+      callClaude(
+        `Génère un quiz de 8 questions (QCM) avec 4 options. Format JSON : {"quiz":[{"question":"...","options":["A","B","C","D"],"correct":"A"}]}. ${langNote} Réponds UNIQUEMENT en JSON valide.`,
+        textSlice
+      )
+    ]);
+
+    // Nettoie chaque réponse JSON
+    const cleanJSON = (str) => {
+      try {
+        const match = str.replace(/```json|```/g, '').trim();
+        return JSON.parse(match);
+      } catch { return null; }
+    };
+
+    setGodModeResult({
+      resume: cleanJSON(resume) || { intro: "Erreur de génération", sections: [], conclusion: "" },
+      mindmap: cleanJSON(mindmap),
+      diagrams: cleanJSON(diagrams)?.diagrams || [],
+      flashcards: (cleanJSON(flashcards)?.cards || []).slice(0, 10),
+      quiz: (cleanJSON(quiz)?.quiz || []).slice(0, 8),
+    });
+    showToast("🧬 Résumé God Mode prêt !");
+  } catch (err) {
+    showToast("Erreur God Mode : " + err.message, "error");
+  }
+  setGodModeLoading(false);
+};
 
   const joinStudyRoom = () => {
     setStudyRoomUsers(["El Hadji Malick", "Ami(e) 1", "Ami(e) 2"]);
@@ -4571,15 +4868,49 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             { id: "more",      icon: "☰",  label: "Plus",    badge: null },
           ];
           return (
-            <nav className="mobile-bottom-nav" style={{
-              position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
-              background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)",
-              borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(255,255,255,0.2)"}`,
-              backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
-              display: "flex", alignItems: "center", justifyContent: "space-around",
-              padding: "0 4px", paddingBottom: "env(safe-area-inset-bottom)",
-              height: 60,
-            }}>
+            <nav
+                  className="mobile-bottom-nav"
+                  style={{
+                    position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
+                    background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)",
+                    borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(255,255,255,0.2)"}`,
+                    backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+                    display: "flex", alignItems: "center", justifyContent: "space-around",
+                    padding: "0 4px", paddingBottom: "env(safe-area-inset-bottom)",
+                    height: 60,
+                  }}
+                  onTouchStart={(e) => {
+                    if (!isMobile) return;
+                    touchMainStartY.current = e.touches[0].clientY; // on réutilise cette ref
+                  }}
+                  onTouchEnd={(e) => {
+                    if (!isMobile) return;
+                    const dy = e.changedTouches[0].clientY - touchMainStartY.current;
+                    if (dy < -30 && !mobileDrawerOpen) {
+                      setMobileDrawerOpen(true);
+                      if (window.navigator?.vibrate) window.navigator.vibrate(15);
+                    } else if (dy > 30 && mobileDrawerOpen) {
+                      setMobileDrawerOpen(false);
+                    }
+                    <button
+                            onClick={() => setOneHanded(!oneHanded)}
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: "white",
+                              fontSize: 18,
+                              padding: "4px 8px",
+                              position: "absolute",
+                              right: 4,
+                              top: -16,
+                              cursor: "pointer",
+                            }}
+                            title="Mode une main"
+                          >
+                            {oneHanded ? "⚡" : "⚪"}
+                          </button>
+                  }}
+                >
               {BOTTOM_TABS.map(tab => {
                 const isActive = tab.id === "more" ? mobileDrawerOpen : (view === tab.id && !mobileDrawerOpen);
                 return (
@@ -4647,6 +4978,22 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               <div style={{ width: 36, height: 4, background: "rgba(255,255,255,0.3)", borderRadius: 2, margin: "0 auto 20px" }} />
 
               {/* Section Apprentissage */}
+              {/* Recherche rapide depuis le drawer */}
+<div style={{ marginBottom: 16, position: "relative" }}>
+  <input
+    type="text"
+    placeholder="🔍 Recherche rapide..."
+    style={{
+      width: "100%", padding: "12px 16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontSize: 14, outline: "none",
+    }}
+    value={searchQuery}
+    onChange={(e) => { setSearchQuery(e.target.value); setView("list"); setMobileDrawerOpen(false); }}
+    onKeyDown={(e) => { if (e.key === "Enter") { setView("list"); setMobileDrawerOpen(false); }}}
+  />
+  {searchQuery && (
+    <span onClick={() => setSearchQuery("")} style={{ position: "absolute", right: 12, top: 12, color: "white", cursor: "pointer", fontSize: 16 }}>✕</span>
+  )}
+</div>
               <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10, paddingLeft: 4 }}>Apprentissage</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
                 {[
@@ -4721,8 +5068,34 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           </>
         )}
 
-      <main className="main-content" style={{ flex: 1, width: 0, minWidth: 0, padding: "32px 36px 80px", paddingBottom: isMobile ? "80px" : "80px", position: "relative", zIndex: 1 }}>
-
+          <main
+              className="main-content"
+              style={{
+                flex: 1, width: 0, minWidth: 0, marginTop: oneHanded ? '45vh' : 0,transition: 'margin-top 0.3s ease', padding: "32px 36px 80px", paddingBottom: isMobile ? "80px" : "80px", position: "relative", zIndex: 1,
+                touchAction: 'pan-y pinch-zoom', // permet le scroll vertical, on intercepte l'horizontal
+              }}
+              onTouchStart={(e) => {
+                if (!isMobile) return;
+                touchMainStartX.current = e.touches[0].clientX;
+                touchMainStartY.current = e.touches[0].clientY;
+              }}
+              onTouchEnd={(e) => {
+                if (!isMobile) return;
+                const dx = e.changedTouches[0].clientX - touchMainStartX.current;
+                const dy = e.changedTouches[0].clientY - touchMainStartY.current;
+                if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 60) {
+                  // swipe horizontal
+                  const currentIndex = mainViewOrder.indexOf(view);
+                  if (dx < -50 && currentIndex < mainViewOrder.length - 1) {
+                    setView(mainViewOrder[currentIndex + 1]);
+                    if (window.navigator?.vibrate) window.navigator.vibrate(10);
+                  } else if (dx > 50 && currentIndex > 0) {
+                    setView(mainViewOrder[currentIndex - 1]);
+                    if (window.navigator?.vibrate) window.navigator.vibrate(10);
+                  }
+                }
+              }}
+            >
                 {view === "dashboard" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
             {/* Bandeau du haut avec citation et indice de forme */}
@@ -4963,13 +5336,134 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               <div style={{ height: "100%", background: "linear-gradient(90deg, #3451D1, #4D6BFE)", borderRadius: 4, transition: "width 0.4s ease", width: `${(reviewIndex / reviewQueue.length) * 100}%` }} />
             </div>
             {currentCard && (() => {
-              const tag = cognitiveTag(currentCard);
-              return (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-                  <span style={{ background: tag.color + "22", color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
+  const tag = cognitiveTag(currentCard);
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <span style={{ background: tag.color + "22", color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
+      </div>
+
+      <div
+        className="card-hov"
+        style={{
+          background: theme.cardBg,
+          border: `1px solid ${theme.border}`,
+          borderRadius: 26,
+          padding: "32px",
+          boxShadow: "0 10px 40px rgba(0,0,0,0.08)",
+          maxWidth: 700,
+          margin: "0 auto",
+          transform: `translateX(${swipeX}px)`,
+          transition: swipeX === 0 ? 'transform 0.2s ease' : 'none',
+          touchAction: 'none',
+        }}
+        onTouchStart={(e) => {
+          if (!revealed) return; // seulement quand la réponse est visible
+          touchStartX.current = e.touches[0].clientX;
+        }}
+        onTouchMove={(e) => {
+          if (!revealed) return;
+          const currentX = e.touches[0].clientX;
+          const dx = currentX - touchStartX.current;
+          setSwipeX(dx);
+        }}
+        onTouchEnd={(e) => {
+          if (!revealed) return;
+          const dx = swipeX;
+          setSwipeX(0);
+          const threshold = 80; // pixels pour déclencher une action
+          if (dx > threshold) {
+            // Swipe droite -> facile
+            handleAnswer(5);
+            if (window.navigator?.vibrate) window.navigator.vibrate(10);
+          } else if (dx < -threshold) {
+            // Swipe gauche -> oublié
+            handleAnswer(0);
+            if (window.navigator?.vibrate) window.navigator.vibrate([30, 30, 30]);
+          } else if (Math.abs(dx) > 30 && Math.abs(dx) < threshold) {
+            // Petit swipe -> hésité
+            handleAnswer(3);
+            if (window.navigator?.vibrate) window.navigator.vibrate(15);
+          }
+        }}
+      >
+        {/* Contenu de la carte (inchangé) */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{currentCard.category}</span>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ background: "#FFFFFF", color: "#3451D1", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>{currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}</span>
+            <span style={{ background: "#4D6BFE22", color: "#4D6BFE", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>N{currentCard.level}</span>
+          </div>
+        </div>
+
+        <div style={{ background: isDarkMode?"#0F1A3A":"#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
+          <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>QUESTION</div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{currentCard.front}</div>
+          {currentCard.imageUrl && (
+            <img src={currentCard.imageUrl} alt="support visuel" className={!revealed ? "occlusion-img" : ""} style={{ width: "100%", borderRadius: 16, border: `2px solid ${theme.border}` }} title={!revealed ? "Survole l'image pour l'apercevoir" : ""} />
+          )}
+        </div>
+
+        {!revealed ? (
+          <div style={{ marginTop: 24 }}>
+            {voiceReviewActive ? (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <div style={{ fontSize: 40, animation: "pulse 1s infinite", marginBottom: 16 }}>🎤</div>
+                <p style={{ fontWeight: 700, color: theme.highlight }}>Parle ta réponse... (reconnaissance active)</p>
+                <button className="hov btn-glow" onClick={handleRevealAndStopVoice} style={{ padding: "12px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 800, marginTop: 12 }}>Arrêter et voir la réponse</button>
+              </div>
+            ) : (
+              <>
+                <textarea style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 80, marginBottom: 12 }} placeholder="Tape ta réponse..." value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} />
+                {socraticHint && <div style={{ background: "#EFF3FF", borderLeft: "4px solid #6B82F5", padding: 12, borderRadius: 4, marginBottom: 16, color: "#1E3A8A", fontSize: 14 }}><strong style={{ display: "block", marginBottom: 4 }}>🧙‍♂️ Tuteur IA :</strong> {socraticHint}</div>}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <button onClick={handleSemanticEval} disabled={evalLoading || !userAnswer.trim()} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{evalLoading ? "🧠 Analyse..." : "🧠 IA Socratique"}</button>
+                  <button onClick={handleReveal} style={{ flex: "0 0 auto", padding: "18px", background: "transparent", color: theme.textMuted, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>Passer / Voir</button>
                 </div>
-              );
-            })()}
+              </>
+            )}
+          </div>
+        ) : (
+          <div style={{ animation: "slideIn 0.3s ease" }}>
+            <div style={{ background: isDarkMode?"#2A1400":"#FFFFFF", border: `2px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
+              <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.back) }} style={{ fontSize: 18, fontWeight: 600, color: theme.text, lineHeight: 1.6 }} />
+              {currentCard.example && (
+                <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #4D6BFE" }}>
+                  <span style={{ color: "#4D6BFE", fontSize: 11, fontFamily: "JetBrains Mono" }}>// exemple</span><br />
+                  <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.example) }} />
+                </div>
+              )}
+            </div>
+            <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ display: "block", width: "100%", padding: "12px", background: "linear-gradient(135deg, #FFFFFF, #EEF2FF)", color: "#4D6BFE", border: "1px solid #C7D2FE", borderRadius: 12, fontWeight: 800, marginBottom: 20, cursor: "pointer" }}>
+              {mnemonicLoading ? "⏳ Création..." : "✨ Générer un Mnémonique"}
+            </button>
+            {mnemonicText && (
+              <div style={{ background: "#FFFFFF", borderLeft: "4px solid #4D6BFE", padding: "16px", borderRadius: 12, color: "#4C1D95", marginBottom: 20, fontSize: 14, fontStyle: "italic" }}>{mnemonicText}</div>
+            )}
+            {/* Boutons classiques toujours présents en fallback, mais on ajoute une instruction de swipe */}
+            {isMobile && (
+              <div style={{ textAlign: "center", color: theme.textMuted, fontSize: 12, marginBottom: 10, opacity: 0.8 }}>
+                💡 Glisse la carte → Facile | ← Oublié | Petit geste = Hésité
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+              <button className="hov" onClick={() => handleAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>😓 Oublié <span style={{ fontSize: 11, opacity: 0.8 }}>1</span></button>
+              <button className="hov" onClick={() => handleAnswer(3)} style={{ padding: "16px 8px", background: "#E8EEFF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🤔 Hésité <span style={{ fontSize: 11, opacity: 0.8 }}>2</span></button>
+              <button className="hov" onClick={() => handleAnswer(5)} style={{ padding: "16px 8px", background: "#EEF2FF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⚡ Facile <span style={{ fontSize: 11, opacity: 0.8 }}>3</span></button>
+            </div>
+          </div>
+        )}
+      </div>
+      {(currentCard.reviewHistory?.length || 0) > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 20, justifyContent: "center" }}>
+          <span style={{ color: theme.textMuted, fontSize: 12, fontFamily: "JetBrains Mono" }}>Historique: </span>
+          {currentCard.reviewHistory.slice(-7).map((h, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: h.q === 0 ? "#F04040" : h.q === 3 ? "#7B93FF" : "#4D6BFE" }} title={`${h.date} — ${h.q === 0 ? "Oublié" : h.q === 3 ? "Hésité" : "Facile"}`} />)}
+        </div>
+      )}
+    </>
+  );
+})()}
             <div className="card-hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.08)", maxWidth: 700, margin: "0 auto" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                 <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{currentCard.category}</span>
@@ -5546,8 +6040,39 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       const catColor = categories.find((c) => c.name === exp.category)?.color || "#4D6BFE";
                       const tag = cognitiveTag(exp);
                       const isFortress = cardsFortressActive[exp.id];
+                      const cardTouchStart = useRef(0);
+                      const cardSwipeOffset = useRef(0);
                       return (
-                        <div key={exp.id} style={{ background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column", boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden", opacity: isFortress ? 0.75 : 1 }} className="card-hov">
+                        <div
+  key={exp.id}
+  style={{
+    background: theme.cardBg, borderRadius: 24, display: "flex", flexDirection: "column",
+    boxShadow: "0 4px 20px rgba(0,0,0,0.04)", border: `1px solid ${theme.border}`, borderTop: `4px solid ${catColor}`, overflow: "hidden",
+    transition: "transform 0.2s ease",
+    transform: `translateX(${cardSwipeOffset.current}px)`,
+    touchAction: 'pan-y',
+  }}
+  className="card-hov"
+  onTouchStart={(e) => {
+    cardTouchStart.current = e.touches[0].clientX;
+  }}
+  onTouchMove={(e) => {
+    const dx = e.touches[0].clientX - cardTouchStart.current;
+    cardSwipeOffset.current = dx;
+    // force re-render? Pas idéal car c'est une ref. On va plutôt utiliser un état local par carte via data attributes? Trop complexe.
+    // Alternative simple : ne pas faire de glissement visuel mais détecter le swipe final.
+  }}
+  onTouchEnd={(e) => {
+    const dx = e.changedTouches[0].clientX - cardTouchStart.current;
+    if (dx > 70) {
+      // Swipe droite -> éditer
+      startEdit(exp);
+    } else if (dx < -70) {
+      // Swipe gauche -> supprimer
+      deleteExp(exp.id);
+    }
+  }}
+>
                           <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -6246,6 +6771,30 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>TOPIC</span><select value={practiceTopic} onChange={e => setPracticeTopic(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 160 }}>{["Free conversation", "Job interview", "Technology & AI", "Daily life in Senegal", "Programming & coding"].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>LEVEL</span><select value={practiceLevel} onChange={e => setPracticeLevel(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="beginner">🟢 Beginner</option><option value="intermediate">🟡 Intermediate</option><option value="advanced">🔴 Advanced</option></select></div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>PERSONA</span><select value={practicePersona} onChange={e => setPracticePersona(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="Standard">👨‍🏫 Standard</option><option value="MMA">🥊 MMA Fighter</option><option value="Recruteur">💼 Tech Recruiter</option></select></div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+  <span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>VOICE</span>
+  <select
+    value={ttsVoice}
+    onChange={(e) => setTtsVoice(e.target.value)}
+    style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 130 }}
+  >
+    <option value="Samantha">👩 Samantha (US)</option>
+    <option value="Daniel">👨 Daniel (UK)</option>
+    <option value="Karen">👩 Karen (AU)</option>
+    <option value="Google US English">👩 Google US</option>
+    <option value="Google UK English Female">👩 Google UK Female</option>
+    <option value="Google UK English Male">👨 Google UK Male</option>
+  </select>
+</div>
+<div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+  <span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>SPEED</span>
+  <input
+    type="range" min="0.7" max="1.3" step="0.05" value={ttsRate}
+    onChange={(e) => setTtsRate(parseFloat(e.target.value))}
+    style={{ width: 100, accentColor: "#4D6BFE" }}
+  />
+  <span style={{ fontSize: 10, color: "white" }}>{ttsRate.toFixed(2)}x</span>
+</div>
                   <button onClick={resetPracticeChat} className="hov" style={{ padding: "10px 18px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}>🔄 New Session</button>
                 </div>
               )}
@@ -6429,9 +6978,52 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       ))}
                     </div>
                     <div style={{ padding: "14px 20px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
-                      <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && practiceInput.trim()) { sendDebateMessage(practiceInput); setPracticeInput(""); } }} placeholder="Argue your point in English…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} />
-                      <button onClick={() => { sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim()} style={{ padding: "12px 20px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>➤</button>
-                    </div>
+  <button
+    onClick={debateListening ? () => {} : sendDebateVoiceMessage}
+    style={{
+      width: 50, height: 50, borderRadius: 14, flexShrink: 0,
+      background: debateListening ? "#EF4444" : "linear-gradient(135deg, #3451D1, #4D6BFE)",
+      border: "none", cursor: "pointer", fontSize: 24,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      animation: debateListening ? "pulse 1s infinite" : "none",
+    }}
+    title="Parler"
+  >
+    {debateListening ? "⏹️" : "🎤"}
+  </button>
+  <input
+    value={practiceInput}
+    onChange={(e) => setPracticeInput(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" && practiceInput.trim()) {
+        sendDebateMessage(practiceInput);
+        setPracticeInput("");
+      }
+    }}
+    placeholder="Ou tape ta réponse…"
+    style={{
+      flex: 1, padding: "14px 18px", borderRadius: 12,
+      border: `1.5px solid ${theme.border}`, background: theme.inputBg,
+      color: theme.text, fontSize: 14,
+    }}
+    disabled={debateListening}
+  />
+  <button
+    onClick={() => {
+      sendDebateMessage(practiceInput);
+      setPracticeInput("");
+    }}
+    disabled={!practiceInput.trim() || debateListening}
+    style={{
+      padding: "12px 20px", borderRadius: 12,
+      background: practiceInput.trim() ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.inputBg,
+      color: practiceInput.trim() ? "white" : theme.textMuted,
+      border: "none", fontWeight: 800, cursor: "pointer",
+    }}
+  >
+    ➤
+  </button>
+</div>
                   </>
                 )}
               </div>
@@ -6489,9 +7081,52 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       ))}
                     </div>
                     <div style={{ padding: "14px 20px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
-                      <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && practiceInput.trim()) { sendRoleplayMessage(practiceInput); setPracticeInput(""); } }} placeholder="Play your role in English…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} />
-                      <button onClick={() => { sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim()} style={{ padding: "12px 20px", background: "linear-gradient(135deg,#4A0080,#7B2FBE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>➤</button>
-                    </div>
+  <button
+    onClick={roleplayListening ? () => {} : sendRoleplayVoiceMessage}
+    style={{
+      width: 50, height: 50, borderRadius: 14, flexShrink: 0,
+      background: roleplayListening ? "#EF4444" : "linear-gradient(135deg, #4A0080, #7B2FBE)",
+      border: "none", cursor: "pointer", fontSize: 24,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      animation: roleplayListening ? "pulse 1s infinite" : "none",
+    }}
+    title="Parler"
+  >
+    {roleplayListening ? "⏹️" : "🎤"}
+  </button>
+  <input
+    value={practiceInput}
+    onChange={(e) => setPracticeInput(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter" && practiceInput.trim()) {
+        sendRoleplayMessage(practiceInput);
+        setPracticeInput("");
+      }
+    }}
+    placeholder="Ou tape ta réponse…"
+    style={{
+      flex: 1, padding: "14px 18px", borderRadius: 12,
+      border: `1.5px solid ${theme.border}`, background: theme.inputBg,
+      color: theme.text, fontSize: 14,
+    }}
+    disabled={roleplayListening}
+  />
+  <button
+    onClick={() => {
+      sendRoleplayMessage(practiceInput);
+      setPracticeInput("");
+    }}
+    disabled={!practiceInput.trim() || roleplayListening}
+    style={{
+      padding: "12px 20px", borderRadius: 12,
+      background: practiceInput.trim() ? "linear-gradient(135deg,#4A0080,#7B2FBE)" : theme.inputBg,
+      color: practiceInput.trim() ? "white" : theme.textMuted,
+      border: "none", fontWeight: 800, cursor: "pointer",
+    }}
+  >
+    ➤
+  </button>
+</div>
                   </>
                 )}
               </div>
@@ -6688,16 +7323,68 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {/* Liste concepts (identique à l'ancien code, avec bouton "▶️ Apprendre" qui appelle startLesson */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {academySyllabus?.concepts?.map((concept, idx) => {
-                    const mastered = (academyProgress[concept.title] || 0) >= 5;
+                    const progressScore = academyProgress[concept.title] || 0; // 0-100
+                    const isFullyMastered = progressScore >= 60;
                     const unlocked = canStartConcept(concept);
+                    const difficultyStars = "⭐".repeat(concept.difficulty || 1);
                     return (
-                      <div key={idx} style={{ background: theme.cardBg, borderRadius: 18, padding: "18px 22px", borderLeft: `5px solid ${mastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569"}`, opacity: unlocked ? 1 : 0.55 }}>
+                      <div key={idx} style={{
+                        background: theme.cardBg,
+                        borderRadius: 18,
+                        padding: "18px 22px",
+                        borderLeft: `5px solid ${isFullyMastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569"}`,
+                        opacity: unlocked ? 1 : 0.55,
+                        marginBottom: 12,
+                      }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                          <span style={{ width: 28, height: 28, borderRadius: "50%", background: mastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white", fontWeight: 900, flexShrink: 0 }}>{mastered ? "✓" : idx + 1}</span>
-                          <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>{concept.title}</span>
-                          {mastered && <span style={{ fontSize: 11, background: "#EEF2FF", color: "#1E3A8A", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>✅ Maîtrisé</span>}
+                          <span style={{
+                            width: 30, height: 30, borderRadius: "50%",
+                            background: isFullyMastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 14, color: "white", fontWeight: 900, flexShrink: 0,
+                          }}>
+                            {isFullyMastered ? "✓" : idx + 1}
+                          </span>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>{concept.title}</span>
+                              {concept.difficulty && <span style={{ fontSize: 12, color: "#EAB308" }}>{difficultyStars}</span>}
+                              {concept.estimatedMinutes && <span style={{ fontSize: 11, color: theme.textMuted, display: "flex", alignItems: "center", gap: 3 }}>⏱ {concept.estimatedMinutes}m</span>}
+                            </div>
+                            {concept.description && <p style={{ margin: "4px 0 0", fontSize: 12, color: theme.textMuted, lineHeight: 1.4 }}>{concept.description}</p>}
+                            {concept.tags && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                                {concept.tags.map(tag => (
+                                  <span key={tag} style={{ background: theme.inputBg, borderRadius: 20, padding: "2px 8px", fontSize: 10, color: theme.textMuted, fontWeight: 600 }}>{tag}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {isFullyMastered && <span style={{ fontSize: 11, background: "#EEF2FF", color: "#1E3A8A", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>✅ Maîtrisé</span>}
                         </div>
-                        <button onClick={() => { if (unlocked) startLesson(concept); }} disabled={!unlocked} style={{ padding: "10px 20px", borderRadius: 12, border: "none", background: unlocked ? "linear-gradient(135deg, #3451D1, #4D6BFE)" : "#E5E7EB", color: unlocked ? "white" : "#9CA3AF", fontWeight: 800, cursor: unlocked ? "pointer" : "not-allowed", marginTop: 8 }}>▶️ Apprendre</button>
+                        {!isFullyMastered && (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: theme.textMuted, marginBottom: 3 }}>
+                              <span>Progression</span><span>{progressScore}%</span>
+                            </div>
+                            <div style={{ height: 4, background: theme.inputBg, borderRadius: 2, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${Math.min(100, progressScore)}%`, background: "#4D6BFE", borderRadius: 2 }} />
+                            </div>
+                          </div>
+                        )}
+                        {!unlocked && <div style={{ fontSize: 11, color: "#EF4444", marginTop: 6 }}>🔒 Débloque d'abord les concepts précédents</div>}
+                        <button
+                          onClick={() => { if (unlocked) startLesson(concept); }}
+                          disabled={!unlocked}
+                          style={{
+                            padding: "10px 20px", borderRadius: 12, border: "none",
+                            background: unlocked ? "linear-gradient(135deg, #3451D1, #4D6BFE)" : "#E5E7EB",
+                            color: unlocked ? "white" : "#9CA3AF", fontWeight: 800,
+                            cursor: unlocked ? "pointer" : "not-allowed", marginTop: 10,
+                          }}
+                        >
+                          {isFullyMastered ? "🔄 Revoir" : "▶️ Apprendre"}
+                        </button>
                       </div>
                     );
                   })}
@@ -6752,165 +7439,163 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 )}
 
                 {/* ─── ÉTAT : EXPLICATION ─── */}
-                {lessonState === "explain" && currentLesson.explanation && (
+                {lessonState === "explain" && (currentLesson.content || currentLesson.explanation) && (
                   <div>
-                    {/* Bloc explication */}
-                    <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                      <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 16, fontSize: 16 }}>📖 Explication</div>
-                      <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}
-                        dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }}
-                      />
-                    </div>
-
-                    {/* ─── ÉDITEUR DE CODE : uniquement pour les cours de code ─── */}
-                    {activeCourse?.type === "code" && (
-                      <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, border: `1px solid ${theme.border}`, marginBottom: 20 }}>
-                        <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 8, fontSize: 15 }}>💻 Éditeur de code</div>
-                        <textarea
-                          value={academyEditorCode}
-                          onChange={e => setAcademyEditorCode(e.target.value)}
-                          rows={8}
-                          style={{ width: "100%", padding: 14, background: isDarkMode ? "#2A1400" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
-                          placeholder="Écris ton code ici..."
-                        />
-                        <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                          <button onClick={() => submitCode(currentLesson.title)} disabled={academyCorrectionLoading} style={{ padding: "12px 22px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
-                            {academyCorrectionLoading ? "🧠 Analyse..." : "✅ Soumettre pour correction"}
-                          </button>
-                          <button onClick={runCode} style={{ padding: "12px 22px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>▶️ Exécuter</button>
-                          <button onClick={getPairSuggestion} disabled={academyPairProgramming} style={{ padding: "12px 22px", background: "#7B93FF", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🤝 Pair AI</button>
-                        </div>
-                        {academyPairSuggestion && (
-                          <div style={{ marginTop: 12, background: isDarkMode ? "#3D2000" : "#FFFFFF", borderRadius: 10, padding: 14 }}>
-                            <strong>🤖 Suggestion IA :</strong><br/>
-                            <span style={{ color: theme.text }}>{academyPairSuggestion}</span>
+                    {currentLesson.content ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        {currentLesson.content.introduction && (
+                          <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
+                            <div style={{ fontWeight: 800, color: "#4D6BFE", fontSize: 15, marginBottom: 8 }}>🚀 Introduction</div>
+                            <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}>{currentLesson.content.introduction}</div>
                           </div>
                         )}
-                        {academyEditorOutput && (
-                          <div style={{ marginTop: 12, background: isDarkMode ? "#0F1A3A" : "#F0FFF4", borderRadius: 10, padding: 14, border: `1px solid ${theme.border}` }}>
-                            <strong>📤 Sortie :</strong>
-                            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", color: theme.text, margin: "6px 0 0" }}>{academyEditorOutput}</pre>
+                        {currentLesson.content.sections?.map((section, i) => (
+                          <div key={i} style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
+                            <div style={{ fontWeight: 800, color: theme.highlight, fontSize: 16, marginBottom: 12 }}>📖 {section.title}</div>
+                            <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}
+                              dangerouslySetInnerHTML={{ __html: highlightCode(section.content?.replace(/\n/g, "<br/>") || "") }}
+                            />
+                          </div>
+                        ))}
+                        {currentLesson.content.analogy && (
+                          <div style={{ background: "linear-gradient(135deg, #EFF3FF, #FFFFFF)", borderRadius: 20, padding: 20, border: "1px solid #C7D2FE" }}>
+                            <div style={{ fontWeight: 800, color: "#7B93FF", marginBottom: 6 }}>🧠 Pour mieux retenir</div>
+                            <div style={{ fontStyle: "italic", color: theme.text, fontSize: 15 }}>{currentLesson.content.analogy}</div>
                           </div>
                         )}
-                        {academyCorrection && (
-                          <div style={{ marginTop: 16, background: academyCorrection.correct ? "#EEF2FF" : "#FEF2F2", borderRadius: 16, padding: 20, border: `1px solid ${academyCorrection.correct ? "#4D6BFE" : "#EF4444"}` }}>
-                            <div style={{ fontWeight: 800, fontSize: 17, color: academyCorrection.correct ? "#1E3A8A" : "#991B1B" }}>
-                              {academyCorrection.correct ? "✅ Correct !" : "❌ À revoir"} — Score : {academyCorrection.score}/100
-                            </div>
-                            <p style={{ whiteSpace: "pre-wrap", color: theme.text }}>{academyCorrection.feedback}</p>
-                            {academyCorrection.optimizedCode && (
-                              <div style={{ marginTop: 12 }}>
-                                <strong>💡 Code optimisé :</strong>
-                                <pre style={{ background: isDarkMode ? "#2A1400" : "#F8FAFC", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace" }}>{academyCorrection.optimizedCode}</pre>
-                              </div>
+                        {currentLesson.content.commonMistakes?.length > 0 && (
+                          <div style={{ background: "#FFF7ED", borderRadius: 20, padding: 20, border: "1px solid #FBCFE8" }}>
+                            <div style={{ fontWeight: 800, color: "#EA580C", marginBottom: 8 }}>⚠️ Erreurs fréquentes</div>
+                            <ul style={{ margin: 0, paddingLeft: 20 }}>
+                              {currentLesson.content.commonMistakes.map((mistake, i) => (
+                                <li key={i} style={{ color: theme.text, fontSize: 14, marginBottom: 4 }}>{mistake}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {currentLesson.content.summary && (
+                          <div style={{ background: "#EEF2FF", borderRadius: 20, padding: 20, border: "1px solid #4D6BFE" }}>
+                            <div style={{ fontWeight: 800, color: "#1E3A8A", marginBottom: 6 }}>📌 Résumé</div>
+                            <div style={{ color: theme.text, fontSize: 15 }}>{currentLesson.content.summary}</div>
+                          </div>
+                        )}
+                        {currentLesson.content.miniProject && (
+                          <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: "2px solid #4D6BFE" }}>
+                            <div style={{ fontWeight: 800, color: "#4D6BFE", fontSize: 16, marginBottom: 8 }}>🛠️ Mini-Projet : {currentLesson.content.miniProject.title}</div>
+                            <div style={{ color: theme.text, fontSize: 14, marginBottom: 12 }}>{currentLesson.content.miniProject.description}</div>
+                            {currentLesson.content.miniProject.steps?.length > 0 && (
+                              <ol style={{ paddingLeft: 20 }}>
+                                {currentLesson.content.miniProject.steps.map((step, i) => (
+                                  <li key={i} style={{ marginBottom: 4 }}>{step}</li>
+                                ))}
+                              </ol>
                             )}
                           </div>
                         )}
-                        {academySubmissionHistory[currentLesson.title]?.length > 0 && (
-                          <details style={{ marginTop: 16 }}>
-                            <summary style={{ cursor: "pointer", fontWeight: 700, color: theme.textMuted }}>📚 Historique ({academySubmissionHistory[currentLesson.title].length})</summary>
-                            {academySubmissionHistory[currentLesson.title].slice(-3).map((sub, i) => (
-                              <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginTop: 8 }}>
-                                <div style={{ fontSize: 12, color: theme.textMuted }}>{new Date(sub.date).toLocaleString()}</div>
-                                <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }}>{sub.code}</pre>
-                              </div>
-                            ))}
-                          </details>
-                        )}
-                      </div>
-                    )}
-
-                    {/* ─── ACTIVITÉS THÉORIQUES : pour les cours non-code ─── */}
-                    {activeCourse?.type !== "code" && (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 14, marginBottom: 20 }}>
-                        {/* Carte : Points clés */}
-                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 10, fontSize: 14 }}>🔑 Points clés à retenir</div>
-                          <div style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.7 }}>
-                            {currentLesson.explanation?.split(". ").filter(Boolean).slice(0, 3).map((pt, i) => (
-                              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                                <span style={{ color: "#4D6BFE", fontWeight: 900, flexShrink: 0 }}>›</span>
-                                <span>{pt.trim()}.</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        {/* Carte : Générer des fiches */}
-                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 10, fontSize: 14 }}>🃏 Convertir en fiches</div>
-                          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Génère des fiches FSRS à partir de cette leçon pour la révision spaced.</p>
-                          <button onClick={() => generateCardsFromLesson(currentLesson)} style={{ width: "100%", padding: "10px 16px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
-                            ✨ Générer les fiches
+                        <div style={{ display: "flex", gap: 12, marginTop: 8, flexWrap: "wrap" }}>
+                          <button onClick={() => setLessonState("quiz")} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#4D6BFE,#7B93FF)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
+                            🎯 Passer aux exercices →
+                          </button>
+                          <button onClick={() => generateCardsFromConcept(currentLesson)} style={{ flex: 1, padding: "16px 24px", background: theme.cardBg, border: `2px solid ${theme.border}`, borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                            🃏 Générer fiches FSRS
                           </button>
                         </div>
-                        {/* Carte : Expliquer simplement */}
-                        <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#6B82F5", marginBottom: 10, fontSize: 14 }}>🧒 Expliquer simplement</div>
-                          <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Reformuler le concept comme si tu avais 10 ans.</p>
-                          <button onClick={() => explainLike5(currentLesson.explanation)} style={{ width: "100%", padding: "10px 16px", background: "#6B82F5", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
-                            🧸 Simplifier
+                      </div>
+                    ) : (
+                      /* Fallback ancien format */
+                      <div>
+                        <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                          <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 16, fontSize: 16 }}>📖 Explication</div>
+                          <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}
+                            dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }}
+                          />
+                        </div>
+                        <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                          <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#4D6BFE,#A78BFA)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>
+                            🎯 Passer au quiz →
                           </button>
-                          {labExplainLike5 && (
-                            <div style={{ marginTop: 10, padding: 12, background: isDarkMode ? "#2A1400" : "#EFF3FF", borderRadius: 10, fontSize: 13, color: theme.text }}>
-                              {labExplainLike5}
-                            </div>
-                          )}
                         </div>
                       </div>
                     )}
-
-                    {/* Prévisualisation des fiches générées */}
-                    {showCardsPreview && generatedCards.length > 0 && (
-                      <div style={{ background: theme.cardBg, border: `1px solid #4D6BFE`, borderRadius: 20, padding: 20, marginBottom: 20 }}>
-                        <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 12 }}>🃏 {generatedCards.length} fiches prêtes</div>
-                        {generatedCards.slice(0, 3).map((c, i) => (
-                          <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginBottom: 8 }}>
-                            <div style={{ fontWeight: 700, fontSize: 13 }}>Q: {c.front}</div>
-                            <div style={{ color: theme.textMuted, fontSize: 12, marginTop: 4 }}>R: {c.back}</div>
-                          </div>
-                        ))}
-                        {generatedCards.length > 3 && <div style={{ color: theme.textMuted, fontSize: 12, textAlign: "center" }}>+{generatedCards.length - 3} autres fiches...</div>}
-                        <button onClick={confirmBatch} style={{ marginTop: 12, width: "100%", padding: "10px 16px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
-                          ✅ Sauvegarder les fiches
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Bouton passer au quiz */}
-                    <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#4D6BFE,#A78BFA)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>
-                        🎯 Passer au quiz →
-                      </button>
-                    </div>
                   </div>
                 )}
 
                 {/* ─── ÉTAT : QUIZ ─── */}
                 {lessonState === "quiz" && lessonQuiz && (
-                  <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, border: `1px solid ${theme.border}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                      <div style={{ fontWeight: 800, color: "#4D6BFE", fontSize: 16 }}>🎯 Quiz — {currentLesson.title}</div>
-                      <div style={{ fontSize: 12, color: theme.textMuted }}>{lessonQuiz.length} questions</div>
+  <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, border: `1px solid ${theme.border}` }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ fontWeight: 800, color: "#4D6BFE", fontSize: 16 }}>🎯 Exercices — {currentLesson.title}</div>
+      <button onClick={() => setLessonState("explain")} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 13 }}>← Retour leçon</button>
+    </div>
+
+    {lessonQuiz.multipleChoice?.length > 0 && (
+      <div style={{ marginBottom: 28 }}>
+        <h3 style={{ color: theme.text, marginBottom: 12 }}>📝 QCM</h3>
+        {lessonQuiz.multipleChoice.map((q, idx) => (
+          <div key={idx} style={{ marginBottom: 20 }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>{idx+1}. {q.question}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {q.options.map((opt, oi) => {
+                const selected = quizAnswers[`mc_${idx}`] === opt;
+                const isCorrect = opt === q.correct;
+                return (
+                  <button key={oi} onClick={() => checkQuizAnswer(`mc_${idx}`, opt)}
+                    style={{
+                      padding: "12px 16px", borderRadius: 10,
+                      background: selected ? (isCorrect ? "#D1FAE5" : "#FEE2E2") : theme.inputBg,
+                      border: `2px solid ${selected ? (isCorrect ? "#059669" : "#DC2626") : theme.border}`,
+                      color: theme.text, fontWeight: 600, cursor: "pointer", textAlign: "left",
+                    }}
+                  >{opt}</button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+
+              {lessonQuiz.openQuestions?.length > 0 && (
+                <div style={{ marginBottom: 28 }}>
+                  <h3 style={{ color: theme.text, marginBottom: 12 }}>💬 Questions ouvertes</h3>
+                  {lessonQuiz.openQuestions.map((q, idx) => (
+                    <div key={idx} style={{ marginBottom: 16 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6 }}>{q.question}</div>
+                      <textarea
+                        value={quizAnswers[`open_${idx}`] || ""}
+                        onChange={e => checkQuizAnswer(`open_${idx}`, e.target.value)}
+                        rows={3}
+                        style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text, resize: "vertical" }}
+                        placeholder="Votre réponse..."
+                      />
                     </div>
-                    {lessonQuiz.map((q, idx) => (
-                      <div key={idx} style={{ marginBottom: 22 }}>
-                        <div style={{ fontWeight: 700, marginBottom: 10, color: theme.text, fontSize: 14 }}>{idx + 1}. {q.question}</div>
-                        <input
-                          style={{ width: "100%", padding: "12px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontSize: 14, boxSizing: "border-box" }}
-                          value={quizAnswers[idx] || ""}
-                          onChange={e => checkQuizAnswer(idx, e.target.value)}
-                          placeholder="Ta réponse..."
-                        />
-                      </div>
-                    ))}
-                    <button onClick={submitQuiz} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
-                      ✅ Valider le quiz
-                    </button>
-                    <button onClick={() => setLessonState("explain")} style={{ width: "100%", marginTop: 8, padding: 12, background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.textMuted, fontWeight: 700, cursor: "pointer" }}>
-                      ← Relire l'explication
-                    </button>
-                  </div>
-                )}
+                  ))}
+                </div>
+              )}
+
+              {lessonQuiz.codingChallenges?.length > 0 && (
+                <div style={{ marginBottom: 28 }}>
+                  <h3 style={{ color: theme.text, marginBottom: 12 }}>💻 Défis de code</h3>
+                  {lessonQuiz.codingChallenges.map((challenge, idx) => (
+                    <div key={idx} style={{ marginBottom: 16 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6 }}>{challenge.prompt}</div>
+                      <textarea
+                        value={quizAnswers[`code_${idx}`] || ""}
+                        onChange={e => checkQuizAnswer(`code_${idx}`, e.target.value)}
+                        rows={6}
+                        style={{ width: "100%", padding: 12, borderRadius: 10, border: `1px solid ${theme.border}`, background: isDarkMode ? "#0F1A3A" : "#F8FAFC", color: theme.text, fontFamily: "'JetBrains Mono', monospace", fontSize: 13, resize: "vertical" }}
+                        placeholder="// Votre code ici..."
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={submitQuiz} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
+                ✅ Valider tous les exercices
+              </button>
+            </div>
+          )}
 
                 {/* ─── ÉTAT : RÉSULTATS QUIZ ─── */}
                 {lessonState === "results" && quizResults && (
@@ -7028,13 +7713,14 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 { id: "coach", icon: "📅", label: "Coach IA" },
                 { id: "tools", icon: "⚙️", label: "Outils" },
               ].map(tab => (
-                <button key={tab.id} onClick={() => setLabSubView(tab.id)} style={{
+                <button key="godmode" onClick={() => { setLabSubView("godmode"); if (!godModeResult) generateGodMode(); }} style={{
                   padding: "10px 18px", borderRadius: 12,
-                  background: labSubView === tab.id ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.cardBg,
-                  color: labSubView === tab.id ? "white" : theme.textMuted,
-                  border: `1px solid ${labSubView === tab.id ? "transparent" : theme.border}`,
+                  background: labSubView === "godmode" ? "linear-gradient(135deg,#4D6BFE,#7B93FF)" : theme.cardBg,
+                  color: labSubView === "godmode" ? "white" : theme.textMuted,
+                  border: `1px solid ${labSubView === "godmode" ? "transparent" : theme.border}`,
                   fontWeight: 700, fontSize: 13, cursor: "pointer"
-                }}>{tab.icon} {tab.label}</button>
+                }}>🧬 God Mode</button>
+                
               ))}
             </div>
 
@@ -7080,6 +7766,160 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 </div>
               </div>
             )}
+
+            {labSubView === "godmode" && (
+  <div style={{ animation: "fadeUp 0.4s ease" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <h2 style={{ fontWeight: 900, color: theme.highlight, margin: 0 }}>🧬 Résumé God Mode</h2>
+      <button onClick={generateGodMode} disabled={godModeLoading} className="hov" style={{ padding: "10px 20px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 12, fontWeight: 800 }}>
+        {godModeLoading ? "⏳ Génération..." : "🔄 Régénérer"}
+      </button>
+    </div>
+
+    {!godModeResult && !godModeLoading && (
+      <div style={{ textAlign: "center", padding: 40 }}>
+        <button onClick={generateGodMode} className="btn-glow hov" style={{ padding: "16px 32px", background: "linear-gradient(135deg,#4D6BFE,#7B93FF)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, fontSize: 18 }}>
+          🚀 Lancer la génération God Mode
+        </button>
+      </div>
+    )}
+
+    {godModeLoading && (
+      <div style={{ textAlign: "center", padding: 40 }}>
+        <div style={{ fontSize: 48, animation: "pulse 1s infinite" }}>🧬</div>
+        <p style={{ color: theme.textMuted, fontWeight: 600, marginTop: 16 }}>L'IA génère résumé, schémas, cartes mentales, fiches et quiz... (~15s)</p>
+      </div>
+    )}
+
+    {godModeResult && (
+      <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+        {/* 1. Résumé structuré */}
+        <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
+          <h3 style={{ color: theme.text, margin: "0 0 16px", fontSize: 18 }}>📝 Résumé structuré</h3>
+          {godModeResult.resume.intro && <p style={{ fontSize: 15, lineHeight: 1.7, color: theme.text }}><strong>{godModeResult.resume.intro}</strong></p>}
+          {godModeResult.resume.sections?.map((sec, i) => (
+            <div key={i} style={{ marginTop: 20 }}>
+              <h4 style={{ color: theme.highlight, margin: "0 0 6px" }}>{sec.title}</h4>
+              <p style={{ margin: 0, fontSize: 14, lineHeight: 1.7, color: theme.text, whiteSpace: "pre-wrap" }}>{sec.content}</p>
+            </div>
+          ))}
+          {godModeResult.resume.conclusion && <p style={{ marginTop: 20, fontStyle: "italic", fontSize: 14, color: theme.text }}><strong>Conclusion :</strong> {godModeResult.resume.conclusion}</p>}
+        </div>
+
+        {/* 2. Carte mentale */}
+        {godModeResult.mindmap && (
+          <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.text, margin: "0 0 16px", fontSize: 18 }}>🗺️ Carte mentale</h3>
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              {renderMindMapSVG(godModeResult.mindmap)}
+            </div>
+          </div>
+        )}
+
+        {/* 3. Diagrammes Mermaid */}
+        {godModeResult.diagrams.length > 0 && (
+          <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.text, margin: "0 0 16px", fontSize: 18 }}>📐 Diagrammes explicatifs</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
+              {godModeResult.diagrams.map((code, i) => {
+                // Render Mermaid inline (besoin de window.mermaid)
+                const [svg, setSvg] = useState(null);
+                useEffect(() => {
+                  if (window.mermaid) {
+                    window.mermaid.render(`god-diag-${i}`, code).then(({svg}) => setSvg(svg));
+                  }
+                }, [code, i]);
+                return (
+                  <div key={i} style={{ background: "#fff", borderRadius: 12, padding: 16, border: `1px solid ${theme.border}` }}>
+                    {svg ? <div dangerouslySetInnerHTML={{ __html: svg }} /> : <pre style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{code}</pre>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 4. Fiches de révision */}
+        {godModeResult.flashcards.length > 0 && (
+          <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.text, margin: "0 0 16px", fontSize: 18 }}>🃏 Fiches de révision ({godModeResult.flashcards.length})</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 16 }}>
+              {godModeResult.flashcards.map((card, i) => (
+                <div key={i} style={{ background: theme.inputBg, borderRadius: 14, padding: 16, border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 6 }}>{card.front}</div>
+                  <div style={{ fontSize: 13, color: theme.text }}>{card.back}</div>
+                  {card.example && <div style={{ marginTop: 6, fontSize: 12, color: theme.textMuted, fontStyle: "italic" }}>Ex : {card.example}</div>}
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                const newExps = godModeResult.flashcards.map(card => ({
+                  id: Date.now().toString() + Math.random().toString(36).slice(2),
+                  front: (card.front || "").trim(),
+                  back: (card.back || "").trim(),
+                  example: (card.example || "").trim(),
+                  category: docCategory,
+                  level: 0, nextReview: today(), createdAt: today(),
+                  easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
+                }));
+                setExpressions(prev => [...newExps, ...prev]);
+                setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
+                showToast(`✅ ${newExps.length} fiches sauvegardées !`);
+              }}
+              className="hov btn-glow"
+              style={{ marginTop: 16, padding: "12px 24px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}
+            >
+              💾 Importer toutes les fiches
+            </button>
+          </div>
+        )}
+
+        {/* 5. Quiz */}
+        {godModeResult.quiz.length > 0 && (
+          <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
+            <h3 style={{ color: theme.text, margin: "0 0 16px", fontSize: 18 }}>🧪 Quiz ({godModeResult.quiz.length} questions)</h3>
+            {godModeResult.quiz.map((q, idx) => {
+              const [selected, setSelected] = useState(null);
+              return (
+                <div key={idx} style={{ marginBottom: 20 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>{idx+1}. {q.question}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {q.options.map((opt, oi) => {
+                      const isCorrect = opt === q.correct;
+                      const isSelected = selected === oi;
+                      return (
+                        <button
+                          key={oi}
+                          onClick={() => setSelected(oi)}
+                          disabled={selected !== null}
+                          style={{
+                            padding: "10px 14px",
+                            borderRadius: 10,
+                            background: isSelected ? (isCorrect ? "#D1FAE5" : "#FEE2E2") : theme.inputBg,
+                            border: `2px solid ${isSelected ? (isCorrect ? "#059669" : "#DC2626") : theme.border}`,
+                            color: theme.text,
+                            fontWeight: 600,
+                            cursor: selected !== null ? "default" : "pointer",
+                            textAlign: "left"
+                          }}
+                        >
+                          {opt}
+                          {isSelected && isCorrect ? " ✅" : ""}
+                          {isSelected && !isCorrect ? " ❌" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+)}
 
             {/* ══════════════════════════════════════════════════════════════
                 PDF → FICHES (avec nouvelles fonctionnalités intégrées)
