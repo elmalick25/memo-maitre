@@ -119,9 +119,9 @@ const BADGES = [
 ];
 
 const CATEGORIES_DEFAULT = [
-  { name: "🇬🇧 Anglais", examDate: "", targetScore: 90, priority: "haute", color: "#4F8EF7" },
-  { name: "☕ Java / Spring Boot", examDate: "", targetScore: 85, priority: "haute", color: "#F0A040" },
-  { name: "🖥️ Informatique Générale", examDate: "", targetScore: 80, priority: "normale", color: "#40C080" },
+  { name: "🇬🇧 Anglais", examDate: "", targetScore: 90, priority: "haute", color: "#4D6BFE" },
+  { name: "☕ Java / Spring Boot", examDate: "", targetScore: 85, priority: "haute", color: "#7B93FF" },
+  { name: "🖥️ Informatique Générale", examDate: "", targetScore: 80, priority: "normale", color: "#4D6BFE" },
 ];
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -415,7 +415,7 @@ export default function MemoMaster() {
   const [addZenMode, setAddZenMode] = useState(false);
   const [addAutoInverted, setAddAutoInverted] = useState(true);
 
-  const [newCat, setNewCat] = useState({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4F8EF7" });
+  const [newCat, setNewCat] = useState({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4D6BFE" });
   const [importText, setImportText] = useState("");
     // ── CATEGORIES GOD LEVEL v10 ──
   const [catsViewMode, setCatsViewMode] = useState("cards"); // cards | table | timeline | graph
@@ -720,6 +720,61 @@ export default function MemoMaster() {
   ]); // widgets visibles
   const [wrongAnswersForConfusion, setWrongAnswersForConfusion] = useState([]);
 
+  // ── SIDEBAR GOD LEVEL ──────────────────────────────────────────────────────
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarClock, setSidebarClock] = useState("");
+  const [sidebarHoveredItem, setSidebarHoveredItem] = useState(null);
+  const [sidebarRipple, setSidebarRipple] = useState(null);
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date();
+      setSidebarClock(now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Keyboard shortcuts 1-9 pour naviguer dans la sidebar
+  useEffect(() => {
+    const NAV_IDS = ["dashboard","projects","add","list","categories","exam","practice","academy","stats","badges","lab"];
+    const handleKey = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      if (e.altKey && e.key >= "1" && e.key <= "9") {
+        const idx = parseInt(e.key) - 1;
+        if (NAV_IDS[idx]) {
+          setView(NAV_IDS[idx]);
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
+  // ── PROJECTS GOD MODE ─────────────────────────────────────────────────────
+  const [projects, setProjects] = useState([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectSubView, setProjectSubView] = useState("hub"); // hub | detail | planner | coach | fusion
+  const [activeProject, setActiveProject] = useState(null);
+  const [projectForm, setProjectForm] = useState({
+    title: "", description: "", category: "", dueDate: "", estimatedHours: 8, priority: "haute", color: "#4D6BFE", status: "en_cours"
+  });
+  const [showProjectForm, setShowProjectForm] = useState(false);
+  const [projectDecomposing, setProjectDecomposing] = useState(false);
+  const [projectCoachLoading, setProjectCoachLoading] = useState(false);
+  const [projectCoachMessages, setProjectCoachMessages] = useState([]);
+  const [projectCoachInput, setProjectCoachInput] = useState("");
+  const [projectPlannerData, setProjectPlannerData] = useState(null);
+  const [projectPlannerLoading, setProjectPlannerLoading] = useState(false);
+  const [projectConflicts, setProjectConflicts] = useState([]);
+  const [projectPomodoroActive, setProjectPomodoroActive] = useState(false);
+  const [projectPomodoroTime, setProjectPomodoroTime] = useState(25 * 60);
+  const [projectPomodoroMode, setProjectPomodoroMode] = useState("study"); // study | project | break
+  const [projectPomodoroTask, setProjectPomodoroTask] = useState(null);
+  const pomodoroRef = useRef(null);
+
   // Refs & Effects Initiaux
   const statsRef = useRef(stats);
   useEffect(() => { statsRef.current = stats; }, [stats]);
@@ -750,6 +805,9 @@ export default function MemoMaster() {
         setRoadmap(storedRoadmap);
         const storedCourses = (await storage.get("academyCourses_v1")) || [];
         setAcademyCourses(storedCourses);
+        const storedProjects = (await storage.get("projects_v1")) || [];
+        setProjects(storedProjects);
+        setProjectsLoaded(true);
         setAddForm((f) => ({ ...f, category: cats[0]?.name || "" }));
         setDocCategory(cats[0]?.name || "");
         setLoaded(true);
@@ -773,6 +831,7 @@ export default function MemoMaster() {
   useEffect(() => { if (loaded) storage.set("devLogs_v1", devLogs); }, [devLogs, loaded]);
   useEffect(() => { if (loaded) storage.set("roadmap_v1", roadmap); }, [roadmap, loaded]);
   useEffect(() => { if (loaded) storage.set("academyCourses_v1", academyCourses); }, [academyCourses, loaded]);
+  useEffect(() => { if (projectsLoaded) storage.set("projects_v1", projects); }, [projects, projectsLoaded]);
 
   const checkBadges = useCallback((exps, st, sess, currentBadges) => {
     const mastered = exps.filter((e) => e.level >= 7).length;
@@ -3165,7 +3224,7 @@ export default function MemoMaster() {
   const handleAddCat = () => {
     if (!newCat.name.trim() || categories.find((c) => c.name === newCat.name.trim())) { showToast("Nom invalide ou existant.", "error"); return; }
     setCategories((prev) => [...prev, { ...newCat, name: newCat.name.trim() }]);
-    setNewCat({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4F8EF7" });
+    setNewCat({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#4D6BFE" });
     showToast("Module créé !");
   };
   const deleteCategory = (name) => { setCategories((prev) => prev.filter((c) => c.name !== name)); setExpressions((prev) => prev.filter((e) => e.category !== name)); showToast(`Module supprimé.`, "info"); };
@@ -3202,8 +3261,8 @@ export default function MemoMaster() {
   const cognitiveTag = (card) => {
     const diff = card.difficulty ?? (card.easeFactor ? 5 - (card.easeFactor - 1.5) * 2.5 : 2.5);
     if (diff >= 7) return { icon: "💀", label: "Difficile", color: "#EF4444" };
-    if (diff >= 4) return { icon: "🤔", label: "Moyen", color: "#F59E0B" };
-    return { icon: "🐣", label: "Facile", color: "#10B981" };
+    if (diff >= 4) return { icon: "🤔", label: "Moyen", color: "#6B82F5" };
+    return { icon: "🐣", label: "Facile", color: "#4D6BFE" };
   };
 
   const hour = new Date().getHours();
@@ -3877,11 +3936,11 @@ ${langInstr}`,
     return (
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", borderRadius: 16 }}>
         <defs>
-          <radialGradient id="mgc" cx="50%" cy="50%"><stop offset="0%" stopColor="#3B82F6"/><stop offset="100%" stopColor="#1D4ED8"/></radialGradient>
-          <radialGradient id="mnc" cx="50%" cy="50%"><stop offset="0%" stopColor="#8B5CF6"/><stop offset="100%" stopColor="#7C3AED"/></radialGradient>
+          <radialGradient id="mgc" cx="50%" cy="50%"><stop offset="0%" stopColor="#4D6BFE"/><stop offset="100%" stopColor="#3451D1"/></radialGradient>
+          <radialGradient id="mnc" cx="50%" cy="50%"><stop offset="0%" stopColor="#7B93FF"/><stop offset="100%" stopColor="#3451D1"/></radialGradient>
         </defs>
         {nodes.map((n, i) => (
-          <line key={`l${i}`} x1={cx} y1={cy} x2={n.x} y2={n.y} stroke="#3B82F6" strokeWidth="1.5" strokeOpacity="0.4" strokeDasharray="4,3"/>
+          <line key={`l${i}`} x1={cx} y1={cy} x2={n.x} y2={n.y} stroke="#4D6BFE" strokeWidth="1.5" strokeOpacity="0.4" strokeDasharray="4,3"/>
         ))}
         {nodes.map((n, i) => (
           <g key={`n${i}`}>
@@ -3889,9 +3948,9 @@ ${langInstr}`,
               const cr = 60, ca = (2*Math.PI*j)/(n.children.length||1);
               const chx = n.x + cr*Math.cos(ca), chy = n.y + cr*Math.sin(ca);
               return <g key={`c${j}`}>
-                <line x1={n.x} y1={n.y} x2={chx} y2={chy} stroke="#8B5CF6" strokeWidth="1" strokeOpacity="0.35"/>
-                <ellipse cx={chx} cy={chy} rx={36} ry={14} fill="#8B5CF6" fillOpacity="0.15" stroke="#8B5CF6" strokeWidth="1"/>
-                <text x={chx} y={chy} textAnchor="middle" dominantBaseline="middle" fill="#8B5CF6" fontSize="9" fontWeight="600">{child.label?.substring(0,14)}</text>
+                <line x1={n.x} y1={n.y} x2={chx} y2={chy} stroke="#7B93FF" strokeWidth="1" strokeOpacity="0.35"/>
+                <ellipse cx={chx} cy={chy} rx={36} ry={14} fill="#7B93FF" fillOpacity="0.15" stroke="#7B93FF" strokeWidth="1"/>
+                <text x={chx} y={chy} textAnchor="middle" dominantBaseline="middle" fill="#7B93FF" fontSize="9" fontWeight="600">{child.label?.substring(0,14)}</text>
               </g>;
             })}
             <ellipse cx={n.x} cy={n.y} rx={52} ry={20} fill="url(#mnc)" opacity="0.9"/>
@@ -3951,73 +4010,511 @@ ${langInstr}`,
     }
   }, [revealed, view]);
 
-  const theme = isDarkMode 
-    ? { bg: "#0F172A", text: "#F8FAFC", textMuted: "#94A3B8", cardBg: "#1E293B", border: "#334155", inputBg: "#0F172A", highlight: "#3B82F6", nav: "#0F172A" } 
-    : { bg: "#F0F5FF", text: "#1F2937", textMuted: "#6B7A99", cardBg: "white", border: "#EFF6FF", inputBg: "#F8FAFF", highlight: "#1D4ED8", nav: "linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%)" };
+  // ══════════════════════════════════════════════════════════════════════════
+  // PROJECTS GOD MODE — Fonctions
+  // ══════════════════════════════════════════════════════════════════════════
+
+  const createProject = () => {
+    if (!projectForm.title.trim()) return;
+    const newProject = {
+      id: Date.now().toString(),
+      ...projectForm,
+      tasks: [],
+      createdAt: today(),
+      completedAt: null,
+      pomodorosDone: 0,
+      linkedCards: [],
+    };
+    setProjects(prev => [newProject, ...prev]);
+    setProjectForm({ title: "", description: "", category: "", dueDate: "", estimatedHours: 8, priority: "haute", color: "#4D6BFE", status: "en_cours" });
+    setShowProjectForm(false);
+    showToast("🗂️ Projet créé !");
+  };
+
+  const deleteProject = (id) => {
+    if (!window.confirm("Supprimer ce projet ?")) return;
+    setProjects(prev => prev.filter(p => p.id !== id));
+    if (activeProject?.id === id) { setActiveProject(null); setProjectSubView("hub"); }
+    showToast("Projet supprimé", "error");
+  };
+
+  const updateTask = (projectId, taskId, updates) => {
+    setProjects(prev => prev.map(p => p.id === projectId
+      ? { ...p, tasks: p.tasks.map(t => t.id === taskId ? { ...t, ...updates } : t) }
+      : p
+    ));
+    setActiveProject(prev => prev?.id === projectId
+      ? { ...prev, tasks: prev.tasks.map(t => t.id === taskId ? { ...t, ...updates } : t) }
+      : prev
+    );
+  };
+
+  const toggleTask = (projectId, taskId) => {
+    const project = projects.find(p => p.id === projectId);
+    const task = project?.tasks.find(t => t.id === taskId);
+    if (!task) return;
+    updateTask(projectId, taskId, { done: !task.done, completedAt: !task.done ? today() : null });
+  };
+
+  const getProjectProgress = (project) => {
+    if (!project.tasks.length) return 0;
+    return Math.round((project.tasks.filter(t => t.done).length / project.tasks.length) * 100);
+  };
+
+  const getDaysUntil = (dateStr) => {
+    if (!dateStr) return null;
+    return Math.ceil((new Date(dateStr) - new Date()) / 86400000);
+  };
+
+  // ── AI Project Decomposer ──────────────────────────────────────────────────
+  const decomposeProject = async (project) => {
+    setProjectDecomposing(true);
+    try {
+      const examContext = categories.filter(c => c.examDate).map(c => {
+        const d = getDaysUntil(c.examDate);
+        return d !== null && d > 0 ? `Examen ${c.name} dans J-${d}` : null;
+      }).filter(Boolean).join(", ");
+
+      const raw = await callClaude(
+        `Tu es un expert en gestion de projet académique pour un étudiant en Licence Informatique à Dakar. 
+Génère un plan de projet détaillé en JSON STRICT (sans markdown):
+{"tasks":[{"id":"t1","title":"Titre court de la tâche","description":"Détail actionnable","estimatedHours":2,"phase":"analyse|conception|développement|test|rendu","priority":"haute|normale|basse","dependsOn":[],"suggestedDate":"YYYY-MM-DD","generateCards":true,"cardConcepts":["concept1","concept2"]}],"phases":["analyse","conception","développement","test","rendu"],"keyRisks":["risque1","risque2"],"studyAdvice":"Conseil de révision lié au projet","estimatedTotalHours":20}
+Projet: "${project.title}" — ${project.description || "Projet académique"}
+Date de rendu: ${project.dueDate || "non définie"}
+Heures estimées: ${project.estimatedHours}h
+Contexte examens: ${examContext || "aucun examen proche"}
+Génère 6-10 tâches logiques et ordonnées. Pour les tâches liées à des concepts techniques, indique les concepts à apprendre.`,
+        `Décompose ce projet en tâches.`
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      const tasks = (parsed.tasks || []).map(t => ({
+        ...t,
+        id: Date.now().toString() + Math.random().toString(36).slice(2),
+        done: false,
+        completedAt: null,
+      }));
+      const updatedProject = { ...project, tasks, decomposed: true, decomposedData: parsed };
+      setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
+      setActiveProject(updatedProject);
+      showToast(`✅ ${tasks.length} tâches générées par l'IA !`);
+    } catch (err) {
+      showToast("Erreur décomposition : " + err.message, "error");
+    }
+    setProjectDecomposing(false);
+  };
+
+  // ── Conflict Detector ──────────────────────────────────────────────────────
+  const detectConflicts = useCallback(() => {
+    const conflicts = [];
+    const examDates = categories.filter(c => c.examDate).map(c => ({ name: c.name, date: c.examDate, daysLeft: getDaysUntil(c.examDate) }));
+    projects.filter(p => p.status !== "terminé" && p.dueDate).forEach(proj => {
+      const projDays = getDaysUntil(proj.dueDate);
+      if (projDays === null) return;
+      examDates.forEach(exam => {
+        if (exam.daysLeft === null) return;
+        const diff = Math.abs(projDays - exam.daysLeft);
+        if (diff <= 5 && projDays >= 0 && exam.daysLeft >= 0) {
+          conflicts.push({
+            type: "collision",
+            project: proj.title,
+            exam: exam.name,
+            projectDate: proj.dueDate,
+            examDate: exam.date,
+            severity: diff <= 2 ? "critique" : "avertissement",
+            advice: diff <= 2
+              ? `⚠️ Rendu "${proj.title}" et examen "${exam.name}" sont à ${diff} jour(s) d'écart ! Avance le projet.`
+              : `📅 "${proj.title}" (J-${projDays}) et examen "${exam.name}" (J-${exam.daysLeft}) se chevauchent cette semaine.`
+          });
+        }
+      });
+    });
+    setProjectConflicts(conflicts);
+    return conflicts;
+  }, [projects, categories]);
+
+  useEffect(() => { detectConflicts(); }, [projects, categories, detectConflicts]);
+
+  // ── Planificateur Crunch Mode ──────────────────────────────────────────────
+  const generateCrunchPlan = async () => {
+    setProjectPlannerLoading(true);
+    try {
+      const activeProjects = projects.filter(p => p.status !== "terminé");
+      const examContext = categories.filter(c => c.examDate && getDaysUntil(c.examDate) > 0)
+        .map(c => `${c.name}: J-${getDaysUntil(c.examDate)}`).join(", ");
+      const dueReviews = todayReviews.length;
+      const projectsContext = activeProjects.map(p => {
+        const progress = getProjectProgress(p);
+        const remaining = p.tasks.filter(t => !t.done).length;
+        return `"${p.title}" (${progress}% fait, ${remaining} tâches restantes, rendu: ${p.dueDate || "non défini"})`;
+      }).join("; ");
+
+      const raw = await callClaude(
+        `Tu es un coach de planning expert pour étudiant sénégalais en Licence Informatique. Génère un plan optimisé pour les 7 prochains jours en JSON STRICT:
+{"days":[{"date":"YYYY-MM-DD","dayLabel":"Lun 27","slots":[{"time":"08h00","duration":90,"type":"revision|projet|break","activity":"Description courte","module":"nom module ou projet","priority":"haute|normale"}]}],"weekSummary":"Résumé stratégique","warnings":["avertissement1"],"tip":"Conseil motivant"}
+Données actuelles:
+- Fiches à réviser aujourd'hui: ${dueReviews}
+- Projets en cours: ${projectsContext || "aucun"}
+- Examens à venir: ${examContext || "aucun"}
+- Streak actuel: ${stats.streak} jours
+Règles: max 6h de travail/jour, pauses de 15min toutes les 90min, priorité aux examens J-7 ou moins, intercale révision FSRS le matin et projet l'après-midi.`,
+        `Génère mon planning Crunch Mode.`
+      );
+      const clean = raw.replace(/```json|```/g, "").trim();
+      setProjectPlannerData(JSON.parse(clean));
+      showToast("📅 Planning Crunch Mode généré !");
+    } catch (err) {
+      showToast("Erreur planificateur : " + err.message, "error");
+    }
+    setProjectPlannerLoading(false);
+  };
+
+  // ── AI Project Coach Chat ──────────────────────────────────────────────────
+  const sendProjectCoachMessage = async (msg) => {
+    if (!msg.trim() || projectCoachLoading) return;
+    const userMsg = { role: "user", text: msg.trim() };
+    setProjectCoachMessages(prev => [...prev, userMsg]);
+    setProjectCoachInput("");
+    setProjectCoachLoading(true);
+    try {
+      const projContext = activeProject
+        ? `Projet actif: "${activeProject.title}" (${getProjectProgress(activeProject)}% terminé, rendu: ${activeProject.dueDate || "non défini"})
+Tâches restantes: ${activeProject.tasks.filter(t => !t.done).map(t => t.title).join(", ") || "aucune"}`
+        : `Projets en cours: ${projects.filter(p => p.status !== "terminé").map(p => p.title).join(", ") || "aucun"}`;
+      const cardsContext = `Modules disponibles: ${categories.map(c => c.name).join(", ")}. Fiches totales: ${expressions.length}.`;
+      const history = projectCoachMessages.slice(-6).map(m => `${m.role === "user" ? "Étudiant" : "Coach"}: ${m.text}`).join("\n");
+
+      const raw = await callClaude(
+        `Tu es le Coach Projets IA de MémoMaître, un assistant expert en gestion de projet académique pour El Hadji Malick, étudiant en Licence Informatique à Dakar.
+Tu connais son contexte complet:
+${projContext}
+${cardsContext}
+Réponds en français, sois concis (3-5 phrases max), pratique et motivant. Si on te demande d'expliquer un concept technique lié au projet, explique-le clairement. Si pertinent, propose de générer des fiches de révision sur ce concept.
+${history ? `Historique récent:\n${history}` : ""}`,
+        msg.trim()
+      );
+      const assistantMsg = { role: "assistant", text: raw.trim() };
+      setProjectCoachMessages(prev => [...prev, assistantMsg]);
+
+      // Auto-generate cards if coach mentions a technical concept
+      if (raw.toLowerCase().includes("fiche") || raw.toLowerCase().includes("générer") || raw.toLowerCase().includes("révise")) {
+        showToast("💡 Coach : tu peux me demander de générer des fiches sur ce concept !", "info");
+      }
+    } catch (err) {
+      setProjectCoachMessages(prev => [...prev, { role: "assistant", text: "Erreur de connexion. Réessaie !" }]);
+    }
+    setProjectCoachLoading(false);
+  };
+
+  // ── Pomodoro Fusion ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (projectPomodoroActive) {
+      pomodoroRef.current = setInterval(() => {
+        setProjectPomodoroTime(t => {
+          if (t <= 1) {
+            clearInterval(pomodoroRef.current);
+            setProjectPomodoroActive(false);
+            const nextMode = projectPomodoroMode === "study" ? "project" : projectPomodoroMode === "project" ? "break" : "study";
+            setProjectPomodoroMode(nextMode);
+            setProjectPomodoroTime(nextMode === "break" ? 15 * 60 : 25 * 60);
+            showToast(nextMode === "break" ? "☕ Pause 15min !" : nextMode === "project" ? "🗂️ Passage au projet !" : "📚 Retour aux révisions !");
+            return 0;
+          }
+          return t - 1;
+        });
+      }, 1000);
+    } else {
+      clearInterval(pomodoroRef.current);
+    }
+    return () => clearInterval(pomodoroRef.current);
+  }, [projectPomodoroActive, projectPomodoroMode]);
+
+  const formatPomodoro = (secs) => `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+
+  const theme = isDarkMode
+    ? { bg: "#070D1F", text: "#EEF2FF", textMuted: "#8899DD", cardBg: "#0D1535", border: "rgba(77,107,254,0.22)", inputBg: "#060B18", highlight: "#7B93FF", nav: "rgba(7,13,31,0.97)", gradient: "linear-gradient(135deg, #3451D1, #4D6BFE)" }
+    : { bg: "#FFFFFF", text: "#0F1A3A", textMuted: "#4A5A99", cardBg: "#FFFFFF", border: "#C7D2FE", inputBg: "#EEF2FF", highlight: "#4D6BFE", nav: "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", gradient: "linear-gradient(135deg, #3451D1, #7B93FF)" };
 
   const currentCard = reviewQueue.length > 0 ? reviewQueue[reviewIndex] : null;
 
-  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: theme.bg, color: theme.highlight }}><div style={{ fontSize: 40, animation: "pulse 1s infinite" }}>🧠</div><h2>Initialisation du Second Cerveau...</h2></div>;
+  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#070D1F", color: "#7B93FF", fontFamily: "'Outfit', sans-serif", gap: 16 }}><div style={{ fontSize: 48, animation: "pulse 1s infinite", filter: "drop-shadow(0 0 20px rgba(249,115,22,0.8))" }}>🧠</div><h2 style={{ fontWeight: 800, letterSpacing: "-0.5px", background: "linear-gradient(135deg, #3451D1, #7B93FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Initialisation du Second Cerveau...</h2></div>;
 
   return (
-    <div style={{ minHeight: "100vh", background: theme.bg, color: theme.text, fontFamily: "'Sora', sans-serif", transition: "background 0.3s" }}>
+    <div style={{ minHeight: "100vh", width: "100%", background: theme.bg, color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Fira+Code:wght@400;500;600&display=swap');
+        html, body, #root { margin: 0 !important; padding: 0 !important; width: 100% !important; min-height: 100vh; overflow-x: hidden; }
         *, *::before, *::after { box-sizing: border-box; }
-        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: ${theme.bg}; } ::-webkit-scrollbar-thumb { background: #3B82F6; border-radius: 3px; }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-        @keyframes slideIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes glow { 0%,100% { box-shadow: 0 0 15px rgba(59,130,246,0.4); } 50% { box-shadow: 0 0 30px rgba(59,130,246,0.8); } }
-        .hov:hover { transform: translateY(-2px); transition: all 0.2s; }
-        .card-hov:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(0,0,0,0.1) !important; transition: all 0.25s; }
+        ::-webkit-scrollbar { width: 5px; height: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: linear-gradient(to bottom, #3451D1, #7B93FF); border-radius: 99px; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(22px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes glow { 0%,100% { box-shadow: 0 0 20px rgba(77,107,254,0.45); } 50% { box-shadow: 0 0 45px rgba(77,107,254,0.85); } }
+        @keyframes orb1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(30px,-20px) scale(1.05); } }
+        @keyframes orb2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-20px,25px) scale(1.08); } }
+        @keyframes rippleFade { from { opacity: 0.5; transform: scale(1); } to { opacity: 0; transform: scale(1.5); } }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+        .hov:hover { transform: translateY(-2px); transition: all 0.22s cubic-bezier(0.34,1.56,0.64,1); }
+        .card-hov:hover { transform: translateY(-5px); box-shadow: 0 20px 50px rgba(249,115,22,0.1) !important; transition: all 0.28s cubic-bezier(0.34,1.56,0.64,1); }
         .btn-glow:hover { animation: glow 1.5s infinite; transition: all 0.3s; }
         .occlusion-img { filter: blur(12px); transition: filter 0.3s; cursor: pointer; } .occlusion-img:hover { filter: blur(0px); }
-        input, select, textarea { font-family: 'Sora', sans-serif !important; color: ${theme.text} !important; outline: none; transition: border 0.2s; }
-        input:focus, textarea:focus, select:focus { border-color: #3B82F6 !important; }
-        .tab-active { background: ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.2)"} !important; font-weight: 700 !important; color: ${isDarkMode ? "white" : "white"} !important; }
-        .code-block { background: ${isDarkMode ? "#1E293B" : "#F8FAFF"}; border: 1px solid ${theme.border}; border-radius: 12px; padding: 14px; font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; }
+        input, select, textarea { font-family: 'Outfit', sans-serif !important; color: ${theme.text} !important; outline: none; transition: border 0.2s, box-shadow 0.2s; }
+        input:focus, textarea:focus, select:focus { border-color: #4D6BFE !important; box-shadow: 0 0 0 3px rgba(77,107,254,0.15) !important; }
+        .tab-active { background: rgba(255,255,255,0.22) !important; font-weight: 700 !important; color: white !important; }
+        .code-block { background: ${isDarkMode ? "#060B18" : "#EEF2FF"}; border: 1px solid ${theme.border}; border-radius: 12px; padding: 14px; font-family: 'Fira Code', monospace; white-space: pre-wrap; }
+        ${isDarkMode ? `
+          .app-orb-1 { position: fixed; top: -180px; left: -120px; width: 580px; height: 580px; background: radial-gradient(circle, rgba(77,107,254,0.08) 0%, transparent 65%); border-radius: 50%; pointer-events: none; z-index: 0; animation: orb1 12s ease-in-out infinite; }
+          .app-orb-2 { position: fixed; bottom: -160px; right: -100px; width: 500px; height: 500px; background: radial-gradient(circle, rgba(77,107,254,0.06) 0%, transparent 65%); border-radius: 50%; pointer-events: none; z-index: 0; animation: orb2 15s ease-in-out infinite; }
+        ` : `
+          .app-orb-1 { display: none; } .app-orb-2 { display: none; }
+        `}
       `}</style>
+      {isDarkMode && <><div className="app-orb-1" /><div className="app-orb-2" /></>}
 
       {lofiPlaying && <iframe width="0" height="0" src="https://www.youtube.com/embed/jfKfPfyJRdk?autoplay=1" frameBorder="0" allow="autoplay" title="Lofi"></iframe>}
 
-      {toast && <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, padding: "14px 22px", borderRadius: 14, color: "white", fontWeight: 700, fontSize: 14, background: toast.type === "error" ? "#ef4444" : toast.type === "info" ? "#3B82F6" : "linear-gradient(135deg,#4F8EF7,#7B5FF5)", boxShadow: "0 8px 30px rgba(0,0,0,0.15)", animation: "slideIn 0.3s ease" }}>{toast.msg}</div>}
+      {toast && <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, padding: "14px 22px", borderRadius: 14, color: "white", fontWeight: 700, fontSize: 14, background: toast.type === "error" ? "linear-gradient(135deg,#EF4444,#B91C1C)" : "linear-gradient(135deg,#3451D1,#4D6BFE)", boxShadow: "0 8px 32px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.1)", animation: "slideIn 0.3s ease" }}>{toast.msg}</div>}
 
       {newBadge && (
-        <div style={{ position: "fixed", top: 90, right: 20, zIndex: 9998, display: "flex", gap: 16, alignItems: "center", background: theme.cardBg, border: "2px solid #F59E0B", borderRadius: 18, padding: "18px 24px", boxShadow: "0 12px 40px rgba(245,158,11,0.2)", animation: "slideIn 0.4s ease" }}>
+        <div style={{ position: "fixed", top: 88, right: 20, zIndex: 9998, display: "flex", gap: 16, alignItems: "center", background: isDarkMode ? "rgba(13,21,53,0.97)" : "white", border: "2px solid #4D6BFE", borderRadius: 18, padding: "18px 24px", boxShadow: "0 12px 40px rgba(77,107,254,0.25)", animation: "slideIn 0.4s ease" }}>
           <span style={{ fontSize: 32 }}>{newBadge.icon}</span>
-          <div><div style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Badge débloqué !</div><div style={{ color: "#F0A040", fontWeight: 700 }}>{newBadge.label}</div><div style={{ color: theme.textMuted, fontSize: 12 }}>{newBadge.desc}</div></div>
+          <div><div style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Badge débloqué !</div><div style={{ color: "#4D6BFE", fontWeight: 700 }}>{newBadge.label}</div><div style={{ color: theme.textMuted, fontSize: 12 }}>{newBadge.desc}</div></div>
         </div>
       )}
 
-      <nav style={{ background: theme.nav, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 70, borderBottom: isDarkMode ? `1px solid ${theme.border}` : "none" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 42, height: 42, background: "rgba(255,255,255,0.2)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "white", fontFamily: "'JetBrains Mono', monospace" }}>M²</div>
-          <div><div style={{ fontSize: 20, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "#DBEAFE", fontFamily: "'JetBrains Mono', monospace", letterSpacing: 1 }}>GOD LEVEL v7 × DeepSeek</div></div>
+      <nav style={{ background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 68, width: "100%", borderBottom: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 40, height: 40, background: "rgba(255,255,255,0.22)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900, color: "white", fontFamily: "'Fira Code', monospace", boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>M²</div>
+          <div><div style={{ fontSize: 19, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "rgba(199,210,254,0.85)", fontFamily: "'Fira Code', monospace", letterSpacing: 1.2 }}>GOD LEVEL v8 × AI</div></div>
         </div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-          {[
-            { id: "dashboard", icon: "⚡", label: "Accueil" },
-            { id: "add", icon: "✦", label: editingId ? "Éditer" : "Ajouter" },
-            { id: "list", icon: "◈", label: "Fiches" },
-            { id: "categories", icon: "◉", label: "Modules" },
-            { id: "exam", icon: "🎯", label: "Examen" },
-            { id: "practice", icon: "🗣️", label: "English" },
-            { id: "academy", icon: "🏫", label: "Academy" },
-            { id: "stats", icon: "▣", label: "Stats" },
-            { id: "badges", icon: "🏆", label: "Badges" },
-            { id: "lab", icon: "🧪", label: "Lab" },
-          ].map((n) => (
-            <button key={n.id} onClick={() => { setView(n.id); if (n.id === "exam") setExamSubView("home"); if (n.id === "academy") setAcademyView("library"); }} className={view === n.id ? "tab-active" : "hov"} style={{ padding: "8px 16px", borderRadius: 10, color: view === n.id ? "white" : "rgba(255,255,255,0.8)", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: "transparent", transition: "all 0.2s" }}>
-              {n.icon} {n.label} {n.id === "dashboard" && todayReviews.length > 0 && <span style={{ background: "#F59E0B", color: "white", borderRadius: "50%", padding: "2px 6px", fontSize: 10, fontWeight: 900, marginLeft: 4 }}>{todayReviews.length}</span>}
-            </button>
-          ))}
-          <button onClick={() => setLofiPlaying(!lofiPlaying)} style={{ padding: "8px", borderRadius: 10, background: lofiPlaying ? "#10B981" : "rgba(255,255,255,0.1)", color: "white", border: "none", cursor: "pointer", fontSize: 14, marginLeft: 8 }} title="Focus Audio (Lo-Fi)">🎧</button>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.1)", color: "white", border: "none", cursor: "pointer", fontSize: 14 }} title="Thème">{isDarkMode ? "☀️" : "🌙"}</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900 }}>⚡ {todayReviews.length} fiches</span>}
+          {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900 }}>🚨 {projectConflicts.filter(c => c.severity === "critique").length} conflits</span>}
+          <button onClick={() => setLofiPlaying(!lofiPlaying)} style={{ padding: "8px", borderRadius: 10, background: lofiPlaying ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.15)", color: "white", border: "none", cursor: "pointer", fontSize: 14 }} title="Lo-Fi Focus">🎧</button>
+          <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.15)", color: "white", border: "none", cursor: "pointer", fontSize: 14 }}>{isDarkMode ? "☀️" : "🌙"}</button>
         </div>
       </nav>
 
-      <main style={{ flex: 1, maxWidth: 1000, width: "100%", margin: "0 auto", padding: "32px 20px 80px" }}>
+      {/* ── LAYOUT PRINCIPAL : Sidebar + Content ── */}
+      <div style={{ height: 68 }} />{/* spacer nav fixe */}
+      <div style={{ display: "flex", minHeight: "calc(100vh - 68px)" }}>
+
+        {/* Spacer pour compenser la sidebar fixe */}
+        <div style={{ width: sidebarCollapsed ? 64 : 220, minWidth: sidebarCollapsed ? 64 : 220, flexShrink: 0, transition: "width 0.3s cubic-bezier(0.4,0,0.2,1), min-width 0.3s cubic-bezier(0.4,0,0.2,1)" }} />
+
+        {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) ═══ */}
+        <aside style={{
+          width: sidebarCollapsed ? 64 : 220,
+          minWidth: sidebarCollapsed ? 64 : 220,
+          background: isDarkMode ? "#060B18" : "#3451D1",
+          display: "flex", flexDirection: "column",
+          position: "fixed", top: 68, left: 0, height: "calc(100vh - 68px)",
+          overflowY: "auto", overflowX: "hidden",
+          transition: "width 0.3s cubic-bezier(0.4,0,0.2,1), min-width 0.3s cubic-bezier(0.4,0,0.2,1)",
+          zIndex: 50, flexShrink: 0,
+          borderRight: isDarkMode ? "1px solid rgba(77,107,254,0.15)" : "1px solid rgba(255,255,255,0.2)",
+          boxShadow: "4px 0 24px rgba(0,0,0,0.15)",
+        }}>
+          {/* Collapse toggle */}
+          <button
+            onClick={() => setSidebarCollapsed(c => !c)}
+            style={{
+              margin: "12px auto 8px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: "rgba(255,255,255,0.18)",
+              border: "1px solid rgba(255,255,255,0.25)",
+              color: "white",
+              cursor: "pointer",
+              fontSize: 14,
+              flexShrink: 0,
+              transition: "all 0.2s"
+            }}
+            title={sidebarCollapsed ? "Développer" : "Réduire"}
+          >
+            {sidebarCollapsed ? "›" : "‹"}
+          </button>
+          {/* Nav items */}
+          {(() => {
+            const dueCount = expressions.filter(e => e.nextReview <= today() && e.level < 7).length;
+            const masteredCount = expressions.filter(e => e.level >= 7).length;
+            const totalCards = expressions.length;
+            const masteredPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
+            const NAV_GROUPS = [
+              {
+                items: [
+                  { id: "dashboard", icon: "⚡", label: "Accueil", badge: todayReviews.length > 0 ? todayReviews.length : null, badgeColor: "#6B82F5", shortcut: "1", hint: `${todayReviews.length} fiches à réviser` },
+                  { id: "projects", icon: "🗂️", label: "Projets", badge: projects.filter(p => p.status !== "terminé").length || null, badgeColor: "#4D6BFE", shortcut: "2", hint: `${projects.filter(p => p.status !== "terminé").length} projets actifs` },
+                  { id: "add", icon: "✦", label: editingId ? "Éditer" : "Ajouter", shortcut: "3", hint: "Créer une nouvelle fiche" },
+                  { id: "list", icon: "◈", label: "Fiches", badge: dueCount > 0 ? dueCount : null, badgeColor: "#EF4444", shortcut: "4", hint: `${totalCards} fiches • ${dueCount} en retard` },
+                  { id: "categories", icon: "◉", label: "Modules", shortcut: "5", hint: `${categories.length} modules` },
+                ]
+              },
+              {
+                label: "Apprentissage",
+                items: [
+                  { id: "exam", icon: "🎯", label: "Examen", shortcut: "6", hint: "Modes d'examen avancés" },
+                  { id: "practice", icon: "🗣️", label: "English", shortcut: "7", hint: "Pratique conversationnelle" },
+                  { id: "academy", icon: "🏫", label: "Academy", shortcut: "8", hint: "Cours et vidéos" },
+                ]
+              },
+              {
+                label: "Analyse",
+                items: [
+                  { id: "stats", icon: "▣", label: "Stats", shortcut: "9", hint: "Statistiques FSRS détaillées" },
+                  { id: "badges", icon: "🏆", label: "Badges", badge: unlockedBadges.length > 0 ? unlockedBadges.length : null, badgeColor: "#6B82F5", hint: `${unlockedBadges.length}/${BADGES.length} badges` },
+                  { id: "lab", icon: "🧪", label: "Lab", hint: "PDF, résumés, outils IA" },
+                ]
+              }
+            ];
+            return NAV_GROUPS.map((group, gi) => (
+              <div key={gi} style={{ marginBottom: 4 }}>
+                {group.label && !sidebarCollapsed && (
+                  <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: 1.5, textTransform: "uppercase", padding: "12px 18px 4px" }}>
+                    {group.label}
+                  </div>
+                )}
+                {group.label && sidebarCollapsed && <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "8px 12px" }} />}
+                {group.items.map((n, ni) => {
+                  const isActive = view === n.id;
+                  // Calcul progression par item
+                  let progressPct = null;
+                  if (n.id === "list") progressPct = masteredPct;
+                  if (n.id === "badges") progressPct = BADGES.length > 0 ? Math.round((unlockedBadges.length / BADGES.length) * 100) : 0;
+                  return (
+                    <div key={n.id} style={{ position: "relative" }}
+                      onMouseEnter={() => setSidebarHoveredItem(n.id)}
+                      onMouseLeave={() => setSidebarHoveredItem(null)}
+                    >
+                      <button
+                        onClick={() => {
+                          setView(n.id);
+                          if (n.id === "exam") setExamSubView("home");
+                          if (n.id === "academy") setAcademyView("library");
+                          if (n.id === "projects") setProjectSubView("hub");
+                          // Ripple effect
+                          setSidebarRipple(n.id);
+                          setTimeout(() => setSidebarRipple(null), 400);
+                        }}
+                        title={sidebarCollapsed ? n.label : undefined}
+                        style={{
+                          width: "calc(100% - 16px)", margin: "1px 8px", padding: sidebarCollapsed ? "10px 0" : "10px 12px",
+                          display: "flex", alignItems: "center", gap: 10, borderRadius: 10, border: "none",
+                          cursor: "pointer",
+                          background: isActive ? "rgba(255,255,255,0.22)" : sidebarHoveredItem === n.id ? "rgba(255,255,255,0.1)" : "transparent",
+                          color: isActive ? "#FFFFFF" : "rgba(255,255,255,0.65)",
+                          transition: "all 0.18s cubic-bezier(0.4,0,0.2,1)", textAlign: "left", position: "relative",
+                          borderLeft: isActive ? "3px solid #FFFFFF" : "3px solid transparent",
+                          fontWeight: isActive ? 700 : 400,
+                          overflow: "hidden",
+                        }}
+                      >
+                        {/* Ripple */}
+                        {sidebarRipple === n.id && (
+                          <span style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.25)", borderRadius: 10, animation: "rippleFade 0.4s ease" }} />
+                        )}
+                        <span style={{ fontSize: 16, flexShrink: 0, width: 20, textAlign: "center" }}>{n.icon}</span>
+                        {!sidebarCollapsed && (
+                          <span style={{ fontSize: 13, fontWeight: isActive ? 700 : 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{n.label}</span>
+                        )}
+                        {/* Shortcut hint (non-collapsed) */}
+                        {!sidebarCollapsed && n.shortcut && (
+                          <span style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", fontFamily: "'JetBrains Mono',monospace", marginLeft: "auto", flexShrink: 0 }}>⌥{n.shortcut}</span>
+                        )}
+                        {n.badge && (
+                          <span style={{
+                            marginLeft: sidebarCollapsed ? 0 : 4,
+                            position: sidebarCollapsed ? "absolute" : "static",
+                            top: sidebarCollapsed ? 6 : "auto", right: sidebarCollapsed ? 6 : "auto",
+                            background: n.badgeColor, color: "white", borderRadius: 20,
+                            padding: "1px 6px", fontSize: 9, fontWeight: 900, minWidth: 16, textAlign: "center",
+                          }}>{n.badge}</span>
+                        )}
+                      </button>
+                      {/* Mini progress bar sous l'item (si applicable) */}
+                      {!sidebarCollapsed && progressPct !== null && (
+                        <div style={{ margin: "-2px 16px 4px", height: 2, background: "rgba(255,255,255,0.1)", borderRadius: 2 }}>
+                          <div style={{ height: "100%", width: `${progressPct}%`, background: progressPct >= 80 ? "#93A8FF" : "rgba(255,255,255,0.5)", borderRadius: 2, transition: "width 0.6s ease" }} />
+                        </div>
+                      )}
+                      {/* Tooltip rich au survol */}
+                      {sidebarHoveredItem === n.id && n.hint && !sidebarCollapsed && isActive === false && (
+                        <div style={{
+                          position: "absolute", left: "calc(100% + 8px)", top: "50%", transform: "translateY(-50%)",
+                          background: isDarkMode ? "#0F1A3A" : "#1E3A8A",
+                          color: "white", fontSize: 11, fontWeight: 600, padding: "6px 10px",
+                          borderRadius: 8, whiteSpace: "nowrap", zIndex: 200,
+                          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+                          pointerEvents: "none",
+                          animation: "fadeIn 0.15s ease",
+                        }}>
+                          {n.hint}
+                          <div style={{ position: "absolute", right: "100%", top: "50%", transform: "translateY(-50%)", borderWidth: "5px 5px 5px 0", borderStyle: "solid", borderColor: `transparent ${isDarkMode ? "#0F1A3A" : "#1E3A8A"} transparent transparent` }} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ));
+          })()}
+
+          {/* Spacer + bottom actions */}
+          <div style={{ flex: 1 }} />
+          <div style={{ padding: "12px 8px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+            {/* Pomodoro mini widget */}
+            {projectPomodoroTime < 25 * 60 || projectPomodoroActive ? (
+              <div style={{ background: "rgba(77,107,254,0.15)", borderRadius: 10, padding: "8px 10px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14 }}>{projectPomodoroMode === "study" ? "📚" : projectPomodoroMode === "project" ? "🗂️" : "☕"}</span>
+                {!sidebarCollapsed && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, color: "#C7D2FE", fontWeight: 700 }}>{formatPomodoro(projectPomodoroTime)}</span>}
+                <button onClick={() => setProjectPomodoroActive(a => !a)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#C7D2FE", cursor: "pointer", fontSize: 12 }}>{projectPomodoroActive ? "⏸" : "▶"}</button>
+              </div>
+            ) : null}
+            {/* Conflict alert mini */}
+            {projectConflicts.length > 0 && !sidebarCollapsed && (
+              <div onClick={() => { setView("projects"); setProjectSubView("planner"); }} style={{ background: "rgba(239,68,68,0.15)", borderRadius: 10, padding: "8px 10px", marginBottom: 8, cursor: "pointer" }}>
+                <div style={{ fontSize: 10, color: "#A5B4FC", fontWeight: 700 }}>🚨 {projectConflicts.length} conflit{projectConflicts.length > 1 ? "s" : ""} détecté{projectConflicts.length > 1 ? "s" : ""}</div>
+              </div>
+            )}
+            {/* GOD MODE: Score maîtrise global */}
+            {!sidebarCollapsed && expressions.length > 0 && (
+              <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 10px", marginBottom: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>MAÎTRISE GLOBALE</span>
+                  <span style={{ fontSize: 11, fontWeight: 900, color: "#93A8FF" }}>
+                    {expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0}%
+                  </span>
+                </div>
+                <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2 }}>
+                  <div style={{ height: "100%", width: `${expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 2, transition: "width 0.8s ease" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 9, color: "rgba(255,255,255,0.35)" }}>
+                  <span>{expressions.filter(e => e.level >= 7).length} maîtrisées</span>
+                  <span>{expressions.filter(e => e.nextReview <= today() && e.level < 7).length} en retard</span>
+                </div>
+              </div>
+            )}
+            {/* GOD MODE: Horloge live */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: sidebarCollapsed ? "center" : "space-between", padding: "6px 4px" }}>
+              {!sidebarCollapsed ? (
+                <>
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 600, letterSpacing: 0.5 }}>⌥1-9 navigation</span>
+                  <span style={{ fontSize: 13, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "rgba(255,255,255,0.6)" }}>{sidebarClock}</span>
+                </>
+              ) : (
+                <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>{sidebarClock}</span>
+              )}
+            </div>
+          </div>
+        </aside>
+
+      <main style={{ flex: 1, width: 0, minWidth: 0, padding: "32px 36px 80px", paddingBottom: "80px", position: "relative", zIndex: 1 }}>
 
                 {view === "dashboard" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
@@ -4035,7 +4532,7 @@ ${langInstr}`,
               <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                 {/* Indice de forme */}
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 32, fontWeight: 900, color: dashFormIndex > 70 ? "#10B981" : dashFormIndex > 40 ? "#F59E0B" : "#EF4444" }}>{dashFormIndex}%</div>
+                  <div style={{ fontSize: 32, fontWeight: 900, color: dashFormIndex > 70 ? "#4D6BFE" : dashFormIndex > 40 ? "#6B82F5" : "#EF4444" }}>{dashFormIndex}%</div>
                   <div style={{ fontSize: 11, color: theme.textMuted }}>Forme du jour</div>
                 </div>
                 {/* Prochain examen */}
@@ -4047,7 +4544,7 @@ ${langInstr}`,
                     </div>
                   </div>
                 )}
-                <button onClick={() => setDashFocusMode(!dashFocusMode)} style={{ background: dashFocusMode ? "#1D4ED8" : theme.inputBg, border: "none", borderRadius: 10, padding: "8px 12px", color: dashFocusMode ? "white" : theme.textMuted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                <button onClick={() => setDashFocusMode(!dashFocusMode)} style={{ background: dashFocusMode ? "#3451D1" : theme.inputBg, border: "none", borderRadius: 10, padding: "8px 12px", color: dashFocusMode ? "white" : theme.textMuted, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                   {dashFocusMode ? "🎯 Focus ON" : "Focus"}
                 </button>
               </div>
@@ -4055,7 +4552,7 @@ ${langInstr}`,
 
             {/* Mode Focus : masque tout sauf l'essentiel */}
             {dashFocusMode && (
-              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 32, marginBottom: 24, border: "2px solid #1D4ED8" }}>
+              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 32, marginBottom: 24, border: "2px solid #3451D1" }}>
                 <h2>🎯 Mode Focus</h2>
                 <p style={{ color: theme.textMuted }}>Fiches urgentes uniquement.</p>
                 {dashUrgentCards.map(card => (
@@ -4064,7 +4561,7 @@ ${langInstr}`,
                     <span style={{ color: "#EF4444" }}>{card.nextReview}</span>
                   </div>
                 ))}
-                <button onClick={() => startReview(null, "standard")} className="btn-glow" style={{ marginTop: 16, padding: "14px 28px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer révision urgente</button>
+                <button onClick={() => startReview(null, "standard")} className="btn-glow" style={{ marginTop: 16, padding: "14px 28px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer révision urgente</button>
                 <button onClick={() => setDashFocusMode(false)} style={{ marginLeft: 16, background: "none", border: "none", color: theme.textMuted, cursor: "pointer" }}>Quitter le focus</button>
               </div>
             )}
@@ -4074,29 +4571,29 @@ ${langInstr}`,
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
 
                 {/* Widget 1 – Mission du jour (existant amélioré) */}
-                <div style={{ background: isDarkMode ? "linear-gradient(135deg, #1E293B, #0F172A)" : "linear-gradient(135deg, #ffffff, #F8FAFF)", padding: "28px", borderRadius: 24, border: `2px solid ${theme.border}`, gridColumn: "1 / -1" }} className="card-hov">
+                <div style={{ background: isDarkMode ? "linear-gradient(135deg, #2A1400, #1A0800)" : "linear-gradient(135deg, #ffffff, #F8FAFF)", padding: "28px", borderRadius: 24, border: `2px solid ${theme.border}`, gridColumn: "1 / -1" }} className="card-hov">
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#EF4444", animation: "pulse 1.5s infinite" }}></div>
                     <h2 style={{ fontSize: 20, fontWeight: 900, color: theme.highlight, margin: 0 }}>Mission du jour</h2>
                   </div>
                   <div style={{ display: "flex", gap: 20, marginTop: 24, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
-                      <div style={{ fontSize: 42, fontWeight: 900, color: todayReviews.length > 0 ? theme.text : "#40C080", lineHeight: 1 }}>{todayReviews.length}</div>
+                      <div style={{ fontSize: 42, fontWeight: 900, color: todayReviews.length > 0 ? theme.text : "#4D6BFE", lineHeight: 1 }}>{todayReviews.length}</div>
                       <div style={{ color: theme.textMuted, fontWeight: 600, marginTop: 4 }}>Fiches à réviser (~{Math.ceil(todayReviews.length * 0.5)} min)</div>
                     </div>
-                    <div style={{ background: isDarkMode ? "#312E81" : "#F5F3FF", border: `1px solid ${isDarkMode?"#4338CA":"#E0E7FF"}`, borderRadius: 16, padding: "16px 20px", minWidth: 160, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                      <div style={{ fontSize: 24, fontWeight: 900, color: "#7B5FF5" }}>{newCards.length}</div>
+                    <div style={{ background: isDarkMode ? "#1E3A8A" : "#FFFFFF", border: `1px solid ${isDarkMode?"#4338CA":"#E0E7FF"}`, borderRadius: 16, padding: "16px 20px", minWidth: 160, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <div style={{ fontSize: 24, fontWeight: 900, color: "#4D6BFE" }}>{newCards.length}</div>
                       <div style={{ color: theme.text, fontSize: 13, fontWeight: 700 }}>Dans l'Inbox</div>
                     </div>
                   </div>
                   <div style={{ marginTop: 24, display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <button className="btn-glow hov" onClick={() => startReview(null, "standard")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 18, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
+                    <button className="btn-glow hov" onClick={() => startReview(null, "standard")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 18, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
                       🚀 Standard
                     </button>
                     <button className="hov" onClick={() => startReview(null, "interleaving")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: theme.cardBg, border: `2px solid ${theme.highlight}`, color: theme.highlight, borderRadius: 16, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
                       🔀 Interleaving
                     </button>
-                    <button className="hov" onClick={() => startReview(null, "vocal")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: theme.cardBg, border: `2px solid #10B981`, color: "#10B981", borderRadius: 16, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
+                    <button className="hov" onClick={() => startReview(null, "vocal")} disabled={todayReviews.length === 0} style={{ flex: 1, padding: "18px", background: theme.cardBg, border: `2px solid #4D6BFE`, color: "#4D6BFE", borderRadius: 16, fontWeight: 800, cursor: todayReviews.length===0?"default":"pointer", opacity: todayReviews.length===0?0.5:1 }}>
                       🎤 Vocal
                     </button>
                   </div>
@@ -4113,7 +4610,7 @@ ${langInstr}`,
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {dashDailyPlan.map((slot, i) => (
                         <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", background: theme.inputBg, borderRadius: 10, padding: "8px 12px" }}>
-                          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: "#1D4ED8" }}>{slot.time}</span>
+                          <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: "#3451D1" }}>{slot.time}</span>
                           <span style={{ color: theme.text, fontSize: 13 }}>{slot.activity}</span>
                         </div>
                       ))}
@@ -4130,7 +4627,7 @@ ${langInstr}`,
                   {dashWeeklyRetroLoading ? <p style={{ color: theme.textMuted }}>Chargement...</p> :
                     dashWeeklyRetro ? (
                       <div>
-                        <div style={{ fontSize: 24, fontWeight: 900, color: "#10B981" }}>{dashWeeklyRetro.totalReviews} révisions</div>
+                        <div style={{ fontSize: 24, fontWeight: 900, color: "#4D6BFE" }}>{dashWeeklyRetro.totalReviews} révisions</div>
                         <p style={{ color: theme.textMuted, fontSize: 13, marginTop: 6 }}>{dashWeeklyRetro.summary}</p>
                       </div>
                     ) : <button onClick={loadWeeklyRetro} style={{ background: theme.inputBg, border: "none", padding: "8px 16px", borderRadius: 8, color: theme.text, fontWeight: 700, cursor: "pointer" }}>Voir la rétrospective</button>
@@ -4143,7 +4640,7 @@ ${langInstr}`,
                   <ul style={{ listStyle: "none", padding: 0 }}>
                     {dashWeeklyGoals.map((goal, i) => (
                       <li key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                        <input type="checkbox" style={{ accentColor: "#10B981" }} />
+                        <input type="checkbox" style={{ accentColor: "#4D6BFE" }} />
                         <span style={{ color: theme.text }}>{goal}</span>
                         <button onClick={() => removeWeeklyGoal(i)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#EF4444", cursor: "pointer" }}>✕</button>
                       </li>
@@ -4151,27 +4648,27 @@ ${langInstr}`,
                   </ul>
                   <div style={{ display: "flex", gap: 8 }}>
                     <input value={dashWeeklyGoalsInput} onChange={e => setDashWeeklyGoalsInput(e.target.value)} placeholder="Nouvel objectif..." style={{ flex: 1, padding: 8, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
-                    <button onClick={addWeeklyGoal} style={{ padding: "8px 14px", background: "#10B981", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>+</button>
+                    <button onClick={addWeeklyGoal} style={{ padding: "8px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>+</button>
                   </div>
                 </div>
 
                 {/* Widget 5 – Prochain oubli (cartes critiques) */}
                 {dashUrgentCards.length > 0 && (
-                  <div style={{ background: "#FFFBEB", borderRadius: 22, padding: 20, border: "2px solid #FDE68A", gridColumn: "1 / -1" }}>
-                    <h3 style={{ margin: "0 0 12px", color: "#92400E" }}>⚠️ À réviser maintenant (risque d'oubli)</h3>
+                  <div style={{ background: "#EFF3FF", borderRadius: 22, padding: 20, border: "2px solid #C7D2FE", gridColumn: "1 / -1" }}>
+                    <h3 style={{ margin: "0 0 12px", color: "#1E3A8A" }}>⚠️ À réviser maintenant (risque d'oubli)</h3>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                       {dashUrgentCards.map(card => (
-                        <div key={card.id} style={{ background: "white", borderRadius: 12, padding: "10px 16px", border: "1px solid #FDE68A", fontWeight: 600, color: "#78350F" }}>
-                          {card.front} <span style={{ fontSize: 11, color: "#D97706" }}>({card.nextReview})</span>
+                        <div key={card.id} style={{ background: "white", borderRadius: 12, padding: "10px 16px", border: "1px solid #C7D2FE", fontWeight: 600, color: "#1E3558" }}>
+                          {card.front} <span style={{ fontSize: 11, color: "#4D6BFE" }}>({card.nextReview})</span>
                         </div>
                       ))}
                     </div>
-                    <button onClick={() => startReview(null, "standard")} style={{ marginTop: 12, padding: "8px 20px", background: "#F59E0B", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>🚀 Réviser ces cartes</button>
+                    <button onClick={() => startReview(null, "standard")} style={{ marginTop: 12, padding: "8px 20px", background: "#6B82F5", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>🚀 Réviser ces cartes</button>
                   </div>
                 )}
 
                 {/* Widget 6 – Citation du jour */}
-                <div style={{ background: "linear-gradient(135deg, #F5F3FF, #EDE9FE)", borderRadius: 22, padding: 20, border: "1px solid #DDD6FE" }}>
+                <div style={{ background: "linear-gradient(135deg, #FFFFFF, #EEF2FF)", borderRadius: 22, padding: 20, border: "1px solid #C7D2FE" }}>
                   <p style={{ fontStyle: "italic", color: "#4C1D95", margin: 0 }}>« {dashQuote || "La connaissance s'acquiert par l'expérience, tout le reste n'est que de l'information."} »</p>
                 </div>
 
@@ -4186,7 +4683,7 @@ ${langInstr}`,
                       const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
                       const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
                       const isUrgent = daysToExam !== null && daysToExam <= 7;
-                      const catColor = isUrgent ? "#EF4444" : (cat.color || "#1D4ED8");
+                      const catColor = isUrgent ? "#EF4444" : (cat.color || "#3451D1");
                       return (
                         <div key={cat.name} style={{
                           background: theme.cardBg, borderRadius: 20, padding: "20px", border: `1px solid ${theme.border}`, borderLeft: `6px solid ${catColor}`
@@ -4195,10 +4692,10 @@ ${langInstr}`,
                             <div style={{ fontWeight: 800, color: theme.text, fontSize: 16, marginBottom: 12 }}>{cat.name}</div>
                             {dueCount > 0 && <span style={{ background: "#FEE2E2", color: "#EF4444", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800 }}>{dueCount} dues</span>}
                           </div>
-                          {daysToExam !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isUrgent ? "#EF4444" : "#D97706", marginBottom: 8 }}>{daysToExam > 0 ? `⏳ Examen J-${daysToExam}` : daysToExam === 0 ? "🚨 Examen aujourd'hui !" : "Passé"}</div>}
+                          {daysToExam !== null && <div style={{ fontSize: 12, fontWeight: 700, color: isUrgent ? "#EF4444" : "#4D6BFE", marginBottom: 8 }}>{daysToExam > 0 ? `⏳ Examen J-${daysToExam}` : daysToExam === 0 ? "🚨 Examen aujourd'hui !" : "Passé"}</div>}
                           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                             <div style={{ flex: 1, height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
-                              <div style={{ height: "100%", borderRadius: 4, width: `${pct}%`, background: pct >= (cat.targetScore || 80) ? "#10B981" : catColor }} />
+                              <div style={{ height: "100%", borderRadius: 4, width: `${pct}%`, background: pct >= (cat.targetScore || 80) ? "#4D6BFE" : catColor }} />
                             </div>
                             <span style={{ fontSize: 13, fontWeight: 800, color: catColor, minWidth: 38 }}>{pct}%</span>
                           </div>
@@ -4242,21 +4739,21 @@ ${langInstr}`,
                 <div style={{ fontSize: 12, color: theme.textMuted }}>Niveau moy. avant</div>
               </div>
               <div style={{ background: theme.inputBg, padding: 14, borderRadius: 12 }}>
-                <div style={{ fontSize: 24, fontWeight: 900, color: "#10B981" }}>N{sessionSummary?.avgLevelAfter}</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: "#4D6BFE" }}>N{sessionSummary?.avgLevelAfter}</div>
                 <div style={{ fontSize: 12, color: theme.textMuted }}>Niveau moy. estimé après</div>
               </div>
             </div>
-            <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
+            <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
           </div>
         ) : currentCard && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <button onClick={() => { clearInterval(sessionTimerRef.current); setView("dashboard"); if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone); }} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>← Quitter</button>
               <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{reviewIndex + 1}</span> / {reviewQueue.length}</div>
-              <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: "#EFF6FF", color: "#1D4ED8", padding: "4px 12px", borderRadius: 8 }}>⏱ {Math.floor(sessionTimer/60)}:{(sessionTimer%60).toString().padStart(2,'0')}</div>
+              <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: "#FFFFFF", color: "#3451D1", padding: "4px 12px", borderRadius: 8 }}>⏱ {Math.floor(sessionTimer/60)}:{(sessionTimer%60).toString().padStart(2,'0')}</div>
             </div>
             <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, marginBottom: 32, overflow: "hidden" }}>
-              <div style={{ height: "100%", background: "linear-gradient(90deg, #1D4ED8, #3B82F6)", borderRadius: 4, transition: "width 0.4s ease", width: `${(reviewIndex / reviewQueue.length) * 100}%` }} />
+              <div style={{ height: "100%", background: "linear-gradient(90deg, #3451D1, #4D6BFE)", borderRadius: 4, transition: "width 0.4s ease", width: `${(reviewIndex / reviewQueue.length) * 100}%` }} />
             </div>
             {currentCard && (() => {
               const tag = cognitiveTag(currentCard);
@@ -4270,11 +4767,11 @@ ${langInstr}`,
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                 <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{currentCard.category}</span>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>{currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}</span>
-                  <span style={{ background: "#40C08022", color: "#40C080", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>N{currentCard.level}</span>
+                  <span style={{ background: "#FFFFFF", color: "#3451D1", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>{currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}</span>
+                  <span style={{ background: "#4D6BFE22", color: "#4D6BFE", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>N{currentCard.level}</span>
                 </div>
               </div>
-              <div style={{ background: isDarkMode?"#0F172A":"#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
+              <div style={{ background: isDarkMode?"#0F1A3A":"#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
                 <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>QUESTION</div>
                 <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{currentCard.front}</div>
                 {currentCard.imageUrl && (
@@ -4287,14 +4784,14 @@ ${langInstr}`,
                     <div style={{ textAlign: "center", padding: 20 }}>
                       <div style={{ fontSize: 40, animation: "pulse 1s infinite", marginBottom: 16 }}>🎤</div>
                       <p style={{ fontWeight: 700, color: theme.highlight }}>Parle ta réponse... (reconnaissance active)</p>
-                      <button className="hov btn-glow" onClick={handleRevealAndStopVoice} style={{ padding: "12px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 800, marginTop: 12 }}>Arrêter et voir la réponse</button>
+                      <button className="hov btn-glow" onClick={handleRevealAndStopVoice} style={{ padding: "12px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 12, cursor: "pointer", fontWeight: 800, marginTop: 12 }}>Arrêter et voir la réponse</button>
                     </div>
                   ) : (
                     <>
                       <textarea style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 80, marginBottom: 12 }} placeholder="Tape ta réponse..." value={userAnswer} onChange={(e) => setUserAnswer(e.target.value)} />
-                      {socraticHint && <div style={{ background: "#FFFBEB", borderLeft: "4px solid #F59E0B", padding: 12, borderRadius: 4, marginBottom: 16, color: "#92400E", fontSize: 14 }}><strong style={{ display: "block", marginBottom: 4 }}>🧙‍♂️ Tuteur IA :</strong> {socraticHint}</div>}
+                      {socraticHint && <div style={{ background: "#EFF3FF", borderLeft: "4px solid #6B82F5", padding: 12, borderRadius: 4, marginBottom: 16, color: "#1E3A8A", fontSize: 14 }}><strong style={{ display: "block", marginBottom: 4 }}>🧙‍♂️ Tuteur IA :</strong> {socraticHint}</div>}
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                        <button onClick={handleSemanticEval} disabled={evalLoading || !userAnswer.trim()} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{evalLoading ? "🧠 Analyse..." : "🧠 IA Socratique"}</button>
+                        <button onClick={handleSemanticEval} disabled={evalLoading || !userAnswer.trim()} style={{ flex: 1, padding: "18px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{evalLoading ? "🧠 Analyse..." : "🧠 IA Socratique"}</button>
                         <button onClick={handleReveal} style={{ flex: "0 0 auto", padding: "18px", background: "transparent", color: theme.textMuted, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>Passer / Voir</button>
                       </div>
                     </>
@@ -4302,26 +4799,26 @@ ${langInstr}`,
                 </div>
               ) : (
                 <div style={{ animation: "slideIn 0.3s ease" }}>
-                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
-                    <div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
+                  <div style={{ background: isDarkMode?"#2A1400":"#FFFFFF", border: `2px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
                     <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.back) }} style={{ fontSize: 18, fontWeight: 600, color: theme.text, lineHeight: 1.6 }} />
                     {currentCard.example && (
-                      <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}>
-                        <span style={{ color: "#4F8EF7", fontSize: 11, fontFamily: "JetBrains Mono" }}>// exemple</span><br />
+                      <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #4D6BFE" }}>
+                        <span style={{ color: "#4D6BFE", fontSize: 11, fontFamily: "JetBrains Mono" }}>// exemple</span><br />
                         <div dangerouslySetInnerHTML={{ __html: highlightCode(currentCard.example) }} />
                       </div>
                     )}
                   </div>
-                  <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ display: "block", width: "100%", padding: "12px", background: "linear-gradient(135deg, #F5F3FF, #EDE9FE)", color: "#7B5FF5", border: "1px solid #DDD6FE", borderRadius: 12, fontWeight: 800, marginBottom: 20, cursor: "pointer" }}>
+                  <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ display: "block", width: "100%", padding: "12px", background: "linear-gradient(135deg, #FFFFFF, #EEF2FF)", color: "#4D6BFE", border: "1px solid #C7D2FE", borderRadius: 12, fontWeight: 800, marginBottom: 20, cursor: "pointer" }}>
                     {mnemonicLoading ? "⏳ Création..." : "✨ Générer un Mnémonique"}
                   </button>
                   {mnemonicText && (
-                    <div style={{ background: "#F5F3FF", borderLeft: "4px solid #7B5FF5", padding: "16px", borderRadius: 12, color: "#4C1D95", marginBottom: 20, fontSize: 14, fontStyle: "italic" }}>{mnemonicText}</div>
+                    <div style={{ background: "#FFFFFF", borderLeft: "4px solid #4D6BFE", padding: "16px", borderRadius: 12, color: "#4C1D95", marginBottom: 20, fontSize: 14, fontStyle: "italic" }}>{mnemonicText}</div>
                   )}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                     <button className="hov" onClick={() => handleAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>😓 Oublié <span style={{ fontSize: 11, opacity: 0.8 }}>1</span></button>
-                    <button className="hov" onClick={() => handleAnswer(3)} style={{ padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🤔 Hésité <span style={{ fontSize: 11, opacity: 0.8 }}>2</span></button>
-                    <button className="hov" onClick={() => handleAnswer(5)} style={{ padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⚡ Facile <span style={{ fontSize: 11, opacity: 0.8 }}>3</span></button>
+                    <button className="hov" onClick={() => handleAnswer(3)} style={{ padding: "16px 8px", background: "#E8EEFF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>🤔 Hésité <span style={{ fontSize: 11, opacity: 0.8 }}>2</span></button>
+                    <button className="hov" onClick={() => handleAnswer(5)} style={{ padding: "16px 8px", background: "#EEF2FF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer", fontSize: 14 }}>⚡ Facile <span style={{ fontSize: 11, opacity: 0.8 }}>3</span></button>
                   </div>
                 </div>
               )}
@@ -4329,7 +4826,7 @@ ${langInstr}`,
             {(currentCard.reviewHistory?.length || 0) > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 20, justifyContent: "center" }}>
                 <span style={{ color: theme.textMuted, fontSize: 12, fontFamily: "JetBrains Mono" }}>Historique: </span>
-                {currentCard.reviewHistory.slice(-7).map((h, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: h.q === 0 ? "#F04040" : h.q === 3 ? "#F0A040" : "#40C080" }} title={`${h.date} — ${h.q === 0 ? "Oublié" : h.q === 3 ? "Hésité" : "Facile"}`} />)}
+                {currentCard.reviewHistory.slice(-7).map((h, i) => <span key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: h.q === 0 ? "#F04040" : h.q === 3 ? "#7B93FF" : "#4D6BFE" }} title={`${h.date} — ${h.q === 0 ? "Oublié" : h.q === 3 ? "Hésité" : "Facile"}`} />)}
               </div>
             )}
           </div>
@@ -4337,7 +4834,7 @@ ${langInstr}`,
 
                 {view === "add" && (addZenMode ? (
           /* ── MODE ZEN ── */
-          <div style={{ animation: "fadeUp 0.4s ease", minHeight: "100vh", background: isDarkMode ? "#0F172A" : "#F0F5FF", padding: "40px 20px", display: "flex", justifyContent: "center" }}>
+          <div style={{ animation: "fadeUp 0.4s ease", minHeight: "100vh", background: isDarkMode ? "#0F1A3A" : "#F0F5FF", padding: "40px 20px", display: "flex", justifyContent: "center" }}>
             <div style={{ maxWidth: 600, width: "100%", background: theme.cardBg, borderRadius: 24, padding: "40px", border: `1px solid ${theme.border}`, boxShadow: "0 20px 50px rgba(0,0,0,0.08)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
                 <h1 style={{ fontWeight: 900, color: theme.highlight, margin: 0 }}>🧘 Mode Zen</h1>
@@ -4347,10 +4844,10 @@ ${langInstr}`,
                 {catNames.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
               <input value={addForm.front} onChange={e => { setAddForm(f=>({...f, front:e.target.value})); if(e.target.value.length>3) checkDoublon(e.target.value); }} style={{ width:"100%", padding:"14px", background:theme.inputBg, border:`2px solid ${theme.border}`, borderRadius:12, color:theme.text, marginBottom:12, fontSize:16 }} placeholder="Concept à maîtriser..." />
-              {addDoublonCheck?.duplicate && <div style={{ background:"#FEF3C7", padding:8, borderRadius:8, marginBottom:12, color:"#92400E" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
+              {addDoublonCheck?.duplicate && <div style={{ background:"#E8EEFF", padding:8, borderRadius:8, marginBottom:12, color:"#1E3A8A" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
               <textarea value={addForm.back} onChange={e => setAddForm(f=>({...f, back:e.target.value}))} style={{ width:"100%", padding:"14px", background:theme.inputBg, border:`2px solid ${theme.border}`, borderRadius:12, color:theme.text, minHeight:100, marginBottom:12, fontSize:14 }} placeholder="Explication claire..." />
               <input value={addForm.example} onChange={e => setAddForm(f=>({...f, example:e.target.value}))} style={{ width:"100%", padding:"14px", background:theme.inputBg, border:`2px solid ${theme.border}`, borderRadius:12, color:theme.text, marginBottom:20, fontSize:14 }} placeholder="Exemple concret..." />
-              <button onClick={handleAddWithInverted} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width:"100%", padding:"18px", background:"linear-gradient(135deg,#1D4ED8,#3B82F6)", color:"white", border:"none", borderRadius:14, fontWeight:800, fontSize:16, cursor:"pointer", opacity: addForm.front && addForm.back ? 1:0.5 }}>⚡ Créer</button>
+              <button onClick={handleAddWithInverted} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width:"100%", padding:"18px", background:"linear-gradient(135deg,#3451D1,#4D6BFE)", color:"white", border:"none", borderRadius:14, fontWeight:800, fontSize:16, cursor:"pointer", opacity: addForm.front && addForm.back ? 1:0.5 }}>⚡ Créer</button>
             </div>
           </div>
         ) : (
@@ -4377,7 +4874,7 @@ ${langInstr}`,
                   { id: "multimedia", icon: "🎨", label: "Multimédia" },
                   { id: "templates", icon: "📋", label: "Templates" },
                 ].map(t => (
-                  <button key={t.id} onClick={() => { setAddSubView(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, padding: "12px 8px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.2s", background: addSubView === t.id ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : "transparent", color: addSubView === t.id ? "white" : theme.textMuted }}>
+                  <button key={t.id} onClick={() => { setAddSubView(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, padding: "12px 8px", borderRadius: 12, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, transition: "all 0.2s", background: addSubView === t.id ? "linear-gradient(135deg, #3451D1, #4D6BFE)" : "transparent", color: addSubView === t.id ? "white" : theme.textMuted }}>
                     {t.icon} {t.label}
                   </button>
                 ))}
@@ -4388,39 +4885,39 @@ ${langInstr}`,
             {addBatchQueue.length > 0 && (
               <div style={{ background: theme.cardBg, borderRadius: 16, padding: "14px 20px", marginBottom: 20, border: `1px solid ${theme.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div><span style={{ fontWeight:800, color:theme.text }}>{addBatchQueue.length} concepts en file</span> <span style={{ color:theme.textMuted }}>{addBatchQueue.slice(0,3).join(', ')}{addBatchQueue.length>3 ? '...' : ''}</span></div>
-                <button onClick={processBatchQueue} disabled={addBatchRunning} className="hov btn-glow" style={{ background:"linear-gradient(135deg,#10B981,#059669)", color:"white", border:"none", borderRadius:10, padding:"8px 18px", fontWeight:800, cursor:"pointer" }}>{addBatchRunning ? "⏳" : "▶️ Traiter"}</button>
+                <button onClick={processBatchQueue} disabled={addBatchRunning} className="hov btn-glow" style={{ background:"linear-gradient(135deg,#4D6BFE,#3451D1)", color:"white", border:"none", borderRadius:10, padding:"8px 18px", fontWeight:800, cursor:"pointer" }}>{addBatchRunning ? "⏳" : "▶️ Traiter"}</button>
               </div>
             )}
 
             {/* ========= SINGLE / EDITION ========= */}
             {(addSubView === "single" || editingId) && (
-              <div style={{ background: "linear-gradient(135deg, #1D4ED8 0%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>L'IA s'adapte automatiquement au module sélectionné.</div></div></div>
+              <div style={{ background: "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "#EEF2FF", fontSize: 13 }}>L'IA s'adapte automatiquement au module sélectionné.</div></div></div>
                 <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
                   <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
-                  <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
+                  <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "#3451D1", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
                 </div>
               </div>
             )}
 
             {addSubView === "batch" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 50%, #059669 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
+              <div style={{ background: "linear-gradient(135deg, #1A0800 0%, #3451D1 50%, #3451D1 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "#EEF2FF", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
                 <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
                   <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Annotations Spring Boot"...' />
                   <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "#1e3a8a", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
-                  <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "#1D4ED8", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
+                  <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "#3451D1", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
                 </div>
                 {showBatchPreview && batchPreview.length > 0 && (
                   <div style={{ marginTop: 20, background: "rgba(255,255,255,0.08)", borderRadius: 18, padding: "20px", border: "1px solid rgba(255,255,255,0.15)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                       <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>📋 {batchPreview.length} fiches prêtes</div>
-                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => { setBatchPreview([]); setShowBatchPreview(false); }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", borderRadius: 10, padding: "8px 14px", cursor: "pointer" }}>Annuler</button><button className="hov btn-glow" onClick={confirmBatch} style={{ background: "#10B981", border: "none", color: "white", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>✅ Sauvegarder</button></div>
+                      <div style={{ display: "flex", gap: 8 }}><button onClick={() => { setBatchPreview([]); setShowBatchPreview(false); }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", borderRadius: 10, padding: "8px 14px", cursor: "pointer" }}>Annuler</button><button className="hov btn-glow" onClick={confirmBatch} style={{ background: "#4D6BFE", border: "none", color: "white", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>✅ Sauvegarder</button></div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 380, overflowY: "auto" }}>
                       {batchPreview.map((card, idx) => (
                         <div key={idx} style={{ background: "white", borderRadius: 14, padding: "16px", display: "flex", gap: 12 }}>
-                          <div style={{ flex: 1 }}><div style={{ fontWeight: 800, color: "#1D4ED8", marginBottom: 6 }}>{card.front}</div><div style={{ color: "#4B5563", fontSize: 13 }}>{card.back}</div></div>
+                          <div style={{ flex: 1 }}><div style={{ fontWeight: 800, color: "#3451D1", marginBottom: 6 }}>{card.front}</div><div style={{ color: "#4B5563", fontSize: 13 }}>{card.back}</div></div>
                           <button onClick={() => removeBatchCard(idx)} style={{ background: "#FEF2F2", border: "none", borderRadius: 8, padding: "6px 10px", color: "#EF4444", cursor: "pointer" }}>✕</button>
                         </div>
                       ))}
@@ -4430,27 +4927,27 @@ ${langInstr}`,
                 {/* File d'attente batch */}
                 <div style={{ marginTop: 16, display:"flex", gap:8 }}>
                   <input placeholder="Ajouter un concept à la file..." style={{ flex:1, padding:"10px", borderRadius:10, border:"none", background:"rgba(255,255,255,0.1)", color:"white" }} onKeyDown={e => { if(e.key==='Enter') { addToBatchQueue(e.target.value); e.target.value=''; }}} />
-                  <button onClick={() => showToast("Tape un concept et appuie sur Entrée pour l'ajouter à la file.")} style={{ background:"white", color:"#1D4ED8", border:"none", borderRadius:10, padding:"8px 14px", fontWeight:800 }}>+</button>
+                  <button onClick={() => showToast("Tape un concept et appuie sur Entrée pour l'ajouter à la file.")} style={{ background:"white", color:"#3451D1", border:"none", borderRadius:10, padding:"8px 14px", fontWeight:800 }}>+</button>
                 </div>
               </div>
             )}
 
             {addSubView === "text" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #312E81 0%, #4338CA 50%, #7B5FF5 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>📄</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération depuis un Texte</div><div style={{ color: "#DBEAFE", fontSize: 13 }}>Colle un cours, l'IA extrait les concepts.</div></div></div>
+              <div style={{ background: "linear-gradient(135deg, #1E3A8A 0%, #4338CA 50%, #4D6BFE 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>📄</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération depuis un Texte</div><div style={{ color: "#EEF2FF", fontSize: 13 }}>Colle un cours, l'IA extrait les concepts.</div></div></div>
                 <div style={{ marginTop: 16 }}>
-                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#312E81", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 8 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 8 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
                   <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 140 }} placeholder="Colle ton texte ici..." />
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}><span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{aiFromText.length}/3000</span><button className="hov btn-glow" onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ padding: "14px 24px", background: "white", color: "#312E81", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "🔍 Analyser"}</button></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}><span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{aiFromText.length}/3000</span><button className="hov btn-glow" onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ padding: "14px 24px", background: "white", color: "#1E3A8A", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "🔍 Analyser"}</button></div>
                 </div>
               </div>
             )}
 
             {addSubView === "file" && !editingId && (
-              <div style={{ background: "linear-gradient(135deg, #064E3B 0%, #059669 50%, #10B981 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>👁️</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>L'Œil de l'IA (Vision)</div><div style={{ color: "#D1FAE5", fontSize: 13 }}>Upload un schéma ou une capture d'écran.</div></div></div>
+              <div style={{ background: "linear-gradient(135deg, #1E3A8A 0%, #3451D1 50%, #4D6BFE 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+                <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>👁️</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>L'Œil de l'IA (Vision)</div><div style={{ color: "#EEF2FF", fontSize: 13 }}>Upload un schéma ou une capture d'écran.</div></div></div>
                 <div style={{ marginTop: 16 }}>
-                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 12 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "12px 16px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, color: "white", fontWeight: 700, width: "100%", marginBottom: 12 }}>{catNames.map(c => <option key={c} value={c}>{c}</option>)}</select>
                   <div style={{ border: "2px dashed rgba(255,255,255,0.4)", borderRadius: 16, padding: "40px 20px", textAlign: "center", background: "rgba(0,0,0,0.1)" }}>
                     {uploadLoading ? <div style={{ color: "white", fontWeight: 700 }}>⏳ Upload vers Storage en cours...</div> : (
                       <>
@@ -4462,7 +4959,7 @@ ${langInstr}`,
                   {addForm.imageUrl && (
                     <div style={{ marginTop: 20, textAlign: "center" }}>
                       <img src={addForm.imageUrl} alt="upload preview" style={{ maxHeight: 200, borderRadius: 12, marginBottom: 16, border: "2px solid white" }} />
-                      <button onClick={handleVisionAI} disabled={aiLoading} className="btn-glow hov" style={{ display: "block", width: "100%", padding: "16px", background: "white", color: "#065F46", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", fontSize: 16 }}>{aiLoading ? "🧠 Analyse complexe en cours..." : "✨ Extraire le concept"}</button>
+                      <button onClick={handleVisionAI} disabled={aiLoading} className="btn-glow hov" style={{ display: "block", width: "100%", padding: "16px", background: "white", color: "#1E3A8A", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", fontSize: 16 }}>{aiLoading ? "🧠 Analyse complexe en cours..." : "✨ Extraire le concept"}</button>
                     </div>
                   )}
                 </div>
@@ -4479,7 +4976,7 @@ ${langInstr}`,
                     <div style={{ marginTop:12 }}>
                       <div style={{ display:"flex", gap:8, marginBottom:12 }}>
                         <input value={addImageSearch} onChange={e=>setAddImageSearch(e.target.value)} placeholder="Rechercher..." style={{ flex:1, padding:"8px", background:theme.inputBg, border:`1px solid ${theme.border}`, borderRadius:8, color:theme.text }} />
-                        <button onClick={searchImages} disabled={addImageSearchLoading} className="hov" style={{ background:"#3B82F6", color:"white", border:"none", borderRadius:8, padding:"8px 16px" }}>🔍</button>
+                        <button onClick={searchImages} disabled={addImageSearchLoading} className="hov" style={{ background:"#4D6BFE", color:"white", border:"none", borderRadius:8, padding:"8px 16px" }}>🔍</button>
                       </div>
                       <div style={{ display:"flex", gap:8, overflowX:"auto" }}>
                         {addImageResults.map((img,i) => (
@@ -4495,9 +4992,9 @@ ${langInstr}`,
                   {addDiagramMode && (
                     <div style={{ marginTop:12 }}>
                       <textarea rows={6} value={addDiagramCode} onChange={e=>setAddDiagramCode(e.target.value)} style={{ width:"100%", padding:"10px", background:theme.inputBg, border:`1px solid ${theme.border}`, borderRadius:8, color:theme.text }} placeholder="graph TD; A-->B;..." />
-                      <button onClick={renderDiagram} className="hov" style={{ marginTop:8, padding:"8px 16px", background:"#8B5CF6", color:"white", border:"none", borderRadius:8 }}>Générer</button>
+                      <button onClick={renderDiagram} className="hov" style={{ marginTop:8, padding:"8px 16px", background:"#7B93FF", color:"white", border:"none", borderRadius:8 }}>Générer</button>
                       {addDiagramSvg && <div style={{ marginTop:12, background:"white", padding:12, borderRadius:8 }} dangerouslySetInnerHTML={{ __html: addDiagramSvg }} />}
-                      {addDiagramSvg && <button onClick={insertDiagram} className="hov" style={{ marginTop:8, background:"#10B981", color:"white", border:"none", borderRadius:8, padding:"8px 16px" }}>Insérer dans la fiche</button>}
+                      {addDiagramSvg && <button onClick={insertDiagram} className="hov" style={{ marginTop:8, background:"#4D6BFE", color:"white", border:"none", borderRadius:8, padding:"8px 16px" }}>Insérer dans la fiche</button>}
                     </div>
                   )}
                 </div>
@@ -4528,13 +5025,13 @@ ${langInstr}`,
                   <select value={addForm.category} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, fontWeight: 600, color: theme.text }}>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
                 </div>
                 <div style={{ marginBottom: 20 }}>
-                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Recto <span style={{ color: "#3B82F6" }}>*</span></label>
+                  <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Recto <span style={{ color: "#4D6BFE" }}>*</span></label>
                   <div style={{ position: "relative" }}>
                     <input autoFocus value={addForm.front} onChange={(e) => { setAddForm((f) => ({ ...f, front: e.target.value })); if(e.target.value.length>3 && !editingId) checkDoublon(e.target.value); }} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Le concept à mémoriser..." />
                     <button onClick={() => listening === "front" ? stopVoice() : startVoice("front")} className={listening === "front" ? "mic-pulse" : "hov"} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: theme.cardBg, border: `1px solid ${theme.border}`, cursor: "pointer", fontSize: 20, padding: 8, borderRadius: 12, color: listening === "front" ? "#EF4444" : theme.textMuted }}>🎙️</button>
                   </div>
                   {/* Doublon */}
-                  {addDoublonCheck?.duplicate && <div style={{ marginTop:8, background:"#FEF3C7", padding:8, borderRadius:8, color:"#92400E", fontSize:13 }}>⚠️ Doublon possible : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
+                  {addDoublonCheck?.duplicate && <div style={{ marginTop:8, background:"#E8EEFF", padding:8, borderRadius:8, color:"#1E3A8A", fontSize:13 }}>⚠️ Doublon possible : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
                   {/* Reformulations */}
                   {addReformulations['front'] && (
                     <div style={{ marginTop:6 }}>
@@ -4544,10 +5041,10 @@ ${langInstr}`,
                 </div>
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Verso <span style={{ color: "#3B82F6" }}>*</span></label>
+                    <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Verso <span style={{ color: "#4D6BFE" }}>*</span></label>
                     <div style={{ display:"flex", gap:6 }}>
-                      <button onClick={() => generateReformulations('back')} disabled={addReformLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>✨ Reformuler</button>
-                      <button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🤖 Expliquer</button>
+                      <button onClick={() => generateReformulations('back')} disabled={addReformLoading} style={{ background: "#FFFFFF", color: "#4D6BFE", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>✨ Reformuler</button>
+                      <button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: "#FFFFFF", color: "#4D6BFE", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🤖 Expliquer</button>
                     </div>
                   </div>
                   <textarea value={addForm.back} onChange={(e) => setAddForm((f) => ({ ...f, back: e.target.value }))} onKeyDown={(e) => { if (e.ctrlKey && e.key === "Enter") { e.preventDefault(); handleAdd(); } }} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text, minHeight: 110 }} placeholder="L'explication claire..." />
@@ -4571,13 +5068,13 @@ ${langInstr}`,
                   )}
                 </div>
                 <div style={{ marginBottom: 20 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Exemple</label><button onClick={() => handleMicroAI("example")} disabled={aiLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>💡 Exemple</button></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}><label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>Exemple</label><button onClick={() => handleMicroAI("example")} disabled={aiLoading} style={{ background: "#FFFFFF", color: "#4D6BFE", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>💡 Exemple</button></div>
                   <input value={addForm.example} onChange={(e) => setAddForm((f) => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 15, color: theme.text }} placeholder="Mise en contexte..." />
                 </div>
                 {/* Métaphore */}
                 <div style={{ marginBottom:20 }}>
-                  <button onClick={generateMetaphore} disabled={addMetaphoreLoading} style={{ background: "#F5F3FF", color: "#7B5FF5", border: "none", borderRadius: 10, padding: "8px 16px", fontWeight: 700, cursor:"pointer" }}>🌱 Générer une métaphore</button>
-                  {addMetaphoreText && <div style={{ marginTop:8, padding:10, background:"#FFFBEB", borderRadius:8, fontSize:13, fontStyle:"italic" }}>{addMetaphoreText}</div>}
+                  <button onClick={generateMetaphore} disabled={addMetaphoreLoading} style={{ background: "#FFFFFF", color: "#4D6BFE", border: "none", borderRadius: 10, padding: "8px 16px", fontWeight: 700, cursor:"pointer" }}>🌱 Générer une métaphore</button>
+                  {addMetaphoreText && <div style={{ marginTop:8, padding:10, background:"#EFF3FF", borderRadius:8, fontSize:13, fontStyle:"italic" }}>{addMetaphoreText}</div>}
                 </div>
                 {/* Options */}
                 <div style={{ display:"flex", gap:16, marginBottom:16, flexWrap:"wrap" }}>
@@ -4590,7 +5087,7 @@ ${langInstr}`,
                   <button onClick={startCollaboration} className="hov" style={{ fontSize:12, background:"none", border:`1px solid ${theme.border}`, borderRadius:8, padding:"4px 10px", color:theme.textMuted, cursor:"pointer" }}>👥 Collab</button>
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
-                  <button className="hov btn-glow" onClick={handleAddWithInverted} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>{editingId ? "💾 Mettre à jour" : "⚡ Créer + Inversée"}</button>
+                  <button className="hov btn-glow" onClick={handleAddWithInverted} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>{editingId ? "💾 Mettre à jour" : "⚡ Créer + Inversée"}</button>
                   {!editingId && <button className="hov" onClick={() => setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null }))} style={{ padding: "18px 24px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 16, fontSize: 15, fontWeight: 700, cursor: "pointer" }}>Effacer</button>}
                 </div>
               </div>
@@ -4598,21 +5095,21 @@ ${langInstr}`,
               <div style={{ position: "sticky", top: 90, display: "flex", flexDirection: "column", gap: 20 }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: theme.textMuted, letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", paddingLeft: 12 }}>LIVE PREVIEW</div>
                 <div style={{ background: theme.cardBg, border: `2px dashed ${theme.highlight}55`, borderRadius: 24, padding: "28px", boxShadow: "0 20px 50px rgba(0,0,0,0.05)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{addForm.category || "Catégorie"}</span><span style={{ background: "#F5F3FF", color: "#7C3AED", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Niveau 0</span></div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}><span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{addForm.category || "Catégorie"}</span><span style={{ background: "#FFFFFF", color: "#3451D1", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>Niveau 0</span></div>
                   <div style={{ background: theme.inputBg, borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}><div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>QUESTION</div><div style={{ fontSize: 26, fontWeight: 800, color: addForm.front ? theme.highlight : theme.textMuted }}>{addForm.front || "Tape un concept..."}</div></div>
                   {addForm.imageUrl && <img src={addForm.imageUrl} className="occlusion-img" alt="media" style={{ width: "100%", borderRadius: 16, marginBottom: 20, border: `1px solid ${theme.border}` }} />}
                   {addAudioUrl && <audio controls src={addAudioUrl} style={{ width:"100%", marginBottom:16 }} />}
                   {addDiagramSvg && <div style={{ marginBottom:16 }} dangerouslySetInnerHTML={{ __html: addDiagramSvg }} />}
-                  <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px" }}>
-                    <div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div>
+                  <div style={{ background: isDarkMode?"#2A1400":"#FFFFFF", border: `2px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 20, padding: "28px" }}>
+                    <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div>
                     <div dangerouslySetInnerHTML={{ __html: highlightCode(addForm.back) }} style={{ fontSize: 18, fontWeight: 600, color: addForm.back ? theme.text : theme.textMuted }} />
-                    {(addForm.example || editingId) && <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #3B82F6" }}><span style={{ color: "#4F8EF7", fontSize: 11 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(addForm.example) }} /></div>}
-                    {addLayers.length>1 && addLayers.slice(1).map((l,i) => <div key={i} style={{ marginTop:12, padding:"12px", background:theme.inputBg, borderRadius:8, borderLeft:"3px solid #8B5CF6" }}><div style={{ fontSize:11, color:"#8B5CF6" }}>Niveau {i+2}</div><div style={{ fontSize:14 }}>{l.back}</div></div>)}
+                    {(addForm.example || editingId) && <div style={{ marginTop: 16, padding: "14px 18px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: "4px solid #4D6BFE" }}><span style={{ color: "#4D6BFE", fontSize: 11 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(addForm.example) }} /></div>}
+                    {addLayers.length>1 && addLayers.slice(1).map((l,i) => <div key={i} style={{ marginTop:12, padding:"12px", background:theme.inputBg, borderRadius:8, borderLeft:"3px solid #7B93FF" }}><div style={{ fontSize:11, color:"#7B93FF" }}>Niveau {i+2}</div><div style={{ fontSize:14 }}>{l.back}</div></div>)}
                   </div>
                 </div>
                 <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 16, padding: "20px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted }}>📤 Import en masse (CSV)</span><button className="hov" onClick={() => setShowImport(!showImport)} style={{ background: theme.inputBg, color: theme.highlight, border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{showImport ? "Fermer" : "Ouvrir"}</button></div>
-                  {showImport && <div style={{ marginTop: 12, animation: "fadeUp 0.3s ease" }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 12, color: theme.text, minHeight: 80, fontFamily: "JetBrains Mono" }} placeholder="front,back,category,example..." /><button className="hov" onClick={handleImport} style={{ width: "100%", padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
+                  {showImport && <div style={{ marginTop: 12, animation: "fadeUp 0.3s ease" }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 16, fontSize: 12, color: theme.text, minHeight: 80, fontFamily: "JetBrains Mono" }} placeholder="front,back,category,example..." /><button className="hov" onClick={handleImport} style={{ width: "100%", padding: "10px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
                 </div>
               </div>
             </div>
@@ -4633,7 +5130,7 @@ ${langInstr}`,
                   <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted }}>Fiches</div>
                 </div>
                 <div style={{ background: theme.cardBg, padding: "12px 18px", borderRadius: 16, border: `1px solid ${theme.border}`, textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#10B981" }}>{masteredCount}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#4D6BFE" }}>{masteredCount}</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted }}>Maîtrisées</div>
                 </div>
               </div>
@@ -4682,11 +5179,11 @@ ${langInstr}`,
                   🏛️ Biblio
                 </button>
                 <button onClick={startPlaylist} disabled={cardsPlaylist.length===0 || cardsAudioPlaying} className="hov"
-                  style={{ padding:"8px 14px", borderRadius:10, background:cardsAudioPlaying ? "#10B981" : theme.inputBg, border:`1px solid ${theme.border}`, color: cardsAudioPlaying ? "white" : theme.textMuted, fontWeight:600, fontSize:12, cursor:"pointer" }}>
+                  style={{ padding:"8px 14px", borderRadius:10, background:cardsAudioPlaying ? "#4D6BFE" : theme.inputBg, border:`1px solid ${theme.border}`, color: cardsAudioPlaying ? "white" : theme.textMuted, fontWeight:600, fontSize:12, cursor:"pointer" }}>
                   {cardsAudioPlaying ? "⏸️" : "▶️"} Playlist ({cardsPlaylist.length})
                 </button>
                 <button onClick={clearPlaylist} className="hov"
-                  style={{ padding:"8px 14px", borderRadius:10, background:"#FEF2F2", border:"1px solid #FCA5A5", color:"#EF4444", fontWeight:600, fontSize:12, cursor:"pointer" }}>
+                  style={{ padding:"8px 14px", borderRadius:10, background:"#FEF2F2", border:"1px solid #A5B4FC", color:"#EF4444", fontWeight:600, fontSize:12, cursor:"pointer" }}>
                   ✕
                 </button>
               </div>
@@ -4731,14 +5228,14 @@ ${langInstr}`,
               <span style={{ fontSize: 18, color: theme.textMuted }}>🔍</span>
               <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} style={{ flex: 1, padding: "10px 12px", background: "transparent", border: "none", fontSize: 14, color: theme.text, outline: "none" }} placeholder="Chercher un concept..." />
               {searchQuery && <button onClick={() => setSearchQuery("")} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 14, padding: 8 }}>✕</button>}
-              <button onClick={handleSemanticSearch} disabled={semanticLoading} className="btn-glow hov" style={{ background: "linear-gradient(135deg, #7B5FF5, #6D28D9)", color: "white", border: "none", padding: "8px 14px", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 12 }}>
+              <button onClick={handleSemanticSearch} disabled={semanticLoading} className="btn-glow hov" style={{ background: "linear-gradient(135deg, #4D6BFE, #6D28D9)", color: "white", border: "none", padding: "8px 14px", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 12 }}>
                 {semanticLoading ? "🧠" : "🧠 Sémantique"}
               </button>
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
                 {["Toutes", ...catNames].map((c) => <button key={c} onClick={() => setFilterCat(c)} className="hov" style={{ padding: "6px 12px", borderRadius: 100, fontSize: 12, fontWeight: 700, cursor: "pointer", background: filterCat === c ? theme.highlight : theme.cardBg, color: filterCat === c ? "white" : theme.textMuted, border: filterCat === c ? `1px solid ${theme.highlight}` : `1px solid ${theme.border}`, whiteSpace: "nowrap" }}>{c}</button>)}
               </div>
               <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-                {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => <button key={l} onClick={() => setFilterLevel(l)} className="hov" style={{ padding: "6px 12px", borderRadius: 100, fontSize: 11, cursor: "pointer", border: "none", background: filterLevel === l ? "#F5F3FF" : "transparent", color: filterLevel === l ? "#7B5FF5" : theme.textMuted, fontWeight: filterLevel === l ? 800 : 600, whiteSpace: "nowrap" }}>{l}</button>)}
+                {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => <button key={l} onClick={() => setFilterLevel(l)} className="hov" style={{ padding: "6px 12px", borderRadius: 100, fontSize: 11, cursor: "pointer", border: "none", background: filterLevel === l ? "#FFFFFF" : "transparent", color: filterLevel === l ? "#4D6BFE" : theme.textMuted, fontWeight: filterLevel === l ? 800 : 600, whiteSpace: "nowrap" }}>{l}</button>)}
               </div>
             </div>
 
@@ -4750,14 +5247,14 @@ ${langInstr}`,
                   <button onClick={() => setCardsViewMode("grid")} className="hov" style={{ background:theme.inputBg, border:"none", color:theme.textMuted, cursor:"pointer", padding:"6px 12px", borderRadius:8 }}>← Grille</button>
                 </div>
                 {cardsGraphLoading ? <div style={{ textAlign:"center", padding:40 }}>Génération du graphe... 🧠</div> :
-                  <div style={{ position:"relative", height:380, overflow:"auto", background:isDarkMode?"#0F172A":"#F8FAFC", borderRadius:16, border: `1px solid ${theme.border}` }}>
+                  <div style={{ position:"relative", height:380, overflow:"auto", background:isDarkMode?"#0F1A3A":"#F8FAFC", borderRadius:16, border: `1px solid ${theme.border}` }}>
                     <svg width="100%" height="100%" style={{ minWidth:600, minHeight:380 }}>
                       {cardsGraphData.nodes.map((node, i) => {
                         const x = 100 + (i % 5) * 120;
                         const y = 80 + Math.floor(i / 5) * 80;
                         return (
                           <g key={node.id}>
-                            <circle cx={x} cy={y} r={30} fill={categories.find(c=>c.name===node.category)?.color || "#3B82F6"} opacity={0.8} />
+                            <circle cx={x} cy={y} r={30} fill={categories.find(c=>c.name===node.category)?.color || "#4D6BFE"} opacity={0.8} />
                             <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fill="white" fontSize={10} fontWeight="bold">{node.label.substring(0,10)}</text>
                           </g>
                         );
@@ -4787,8 +5284,8 @@ ${langInstr}`,
                 {cardsClusters.length === 0 ? <div style={{ textAlign:"center", padding:20, color:theme.textMuted }}>Aucun cluster généré.</div> :
                   <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
                     {cardsClusters.map((cluster, i) => (
-                      <div key={i} style={{ background: isDarkMode?"#1E293B":"#F5F3FF", borderRadius:16, padding:"16px", border:`1px solid ${theme.border}` }}>
-                        <h4 style={{ margin:"0 0 8px", color:"#7B5FF5" }}>{cluster.name}</h4>
+                      <div key={i} style={{ background: isDarkMode?"#2A1400":"#FFFFFF", borderRadius:16, padding:"16px", border:`1px solid ${theme.border}` }}>
+                        <h4 style={{ margin:"0 0 8px", color:"#4D6BFE" }}>{cluster.name}</h4>
                         <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                           {cluster.cards.map(cardId => {
                             const card = expressions.find(e => e.id === cardId);
@@ -4810,12 +5307,12 @@ ${langInstr}`,
                 </div>
                 <div style={{ display:"flex", flexDirection:"column", gap:10, maxHeight:500, overflowY:"auto" }}>
                   {cardsTimeline.map((card, i) => (
-                    <div key={i} style={{ background:theme.inputBg, borderRadius:14, padding:"12px 16px", borderLeft:`4px solid ${card.level>=7?"#10B981":"#3B82F6"}` }}>
+                    <div key={i} style={{ background:theme.inputBg, borderRadius:14, padding:"12px 16px", borderLeft:`4px solid ${card.level>=7?"#4D6BFE":"#4D6BFE"}` }}>
                       <div style={{ fontWeight:700 }}>{card.front}</div>
                       <div style={{ fontSize:11, color:theme.textMuted }}>Niveau {card.level} · Créée le {card.createdAt}</div>
                       <div style={{ marginTop:6, display:"flex", gap:4 }}>
                         {card.history.slice(-10).map((h, j) => (
-                          <span key={j} title={h.date} style={{ width:10, height:10, borderRadius:"50%", background: h.q===0?"#EF4444":h.q===3?"#F59E0B":"#10B981", display:"inline-block" }} />
+                          <span key={j} title={h.date} style={{ width:10, height:10, borderRadius:"50%", background: h.q===0?"#EF4444":h.q===3?"#6B82F5":"#4D6BFE", display:"inline-block" }} />
                         ))}
                       </div>
                     </div>
@@ -4832,14 +5329,14 @@ ${langInstr}`,
                     <div style={{ fontSize: 64, marginBottom: 16 }}>📭</div>
                     <h3 style={{ color: theme.text, fontSize: 20, fontWeight: 800 }}>Aucune fiche trouvée</h3>
                     <p style={{ color: theme.textMuted, marginTop: 8, marginBottom: 24 }}>Élargis ta recherche ou crée un nouveau concept.</p>
-                    <button onClick={() => setView("add")} className="btn-glow hov" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚡ Créer une fiche</button>
+                    <button onClick={() => setView("add")} className="btn-glow hov" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚡ Créer une fiche</button>
                   </div>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 24 }}>
                     {filteredExps.map((exp) => {
                       const lvl = exp.level || 0;
-                      const lvlColor = lvl >= 7 ? "#10B981" : lvl >= 5 ? "#3B82F6" : lvl >= 3 ? "#8B5CF6" : lvl >= 1 ? "#F59E0B" : "#9CA3AF";
-                      const catColor = categories.find((c) => c.name === exp.category)?.color || "#3B82F6";
+                      const lvlColor = lvl >= 7 ? "#4D6BFE" : lvl >= 5 ? "#4D6BFE" : lvl >= 3 ? "#7B93FF" : lvl >= 1 ? "#6B82F5" : "#9CA3AF";
+                      const catColor = categories.find((c) => c.name === exp.category)?.color || "#4D6BFE";
                       const tag = cognitiveTag(exp);
                       const isFortress = cardsFortressActive[exp.id];
                       return (
@@ -4853,14 +5350,14 @@ ${langInstr}`,
                           </div>
                           <div style={{ padding: "0 24px", flex: 1 }}>
                             <div style={{ fontSize: 20, fontWeight: 800, color: theme.highlight, marginBottom: 12, lineHeight: 1.3 }}>{exp.front}</div>
-                            {exp.imageUrl && <div style={{ fontSize: 11, background: "#10B98122", color: "#10B981", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
+                            {exp.imageUrl && <div style={{ fontSize: 11, background: "#4D6BFE22", color: "#4D6BFE", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
                             <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.6, marginBottom: 16 }} dangerouslySetInnerHTML={{ __html: highlightCode(exp.back) }} />
-                            {exp.example && <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #3B82F6", marginBottom: 16 }}><span style={{ color: "#3B82F6", fontSize: 10 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(exp.example) }} /></div>}
+                            {exp.example && <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #4D6BFE", marginBottom: 16 }}><span style={{ color: "#4D6BFE", fontSize: 10 }}>// exemple</span><br /><div dangerouslySetInnerHTML={{ __html: highlightCode(exp.example) }} /></div>}
                             {/* Tags sémantiques */}
                             {cardsTags[exp.id] && cardsTags[exp.id].length > 0 && (
                               <div style={{ display:"flex", flexWrap:"wrap", gap:4, marginBottom:10 }}>
                                 {cardsTags[exp.id].map((t, i) => (
-                                  <span key={i} style={{ background:isDarkMode?"#334155":"#E0E7FF", color:isDarkMode?"#93C5FD":"#4338CA", borderRadius:10, padding:"2px 8px", fontSize:10, fontWeight:600 }}>{t}</span>
+                                  <span key={i} style={{ background:isDarkMode?"#3D2000":"#E0E7FF", color:isDarkMode?"#C7D2FE":"#4338CA", borderRadius:10, padding:"2px 8px", fontSize:10, fontWeight:600 }}>{t}</span>
                                 ))}
                               </div>
                             )}
@@ -4871,13 +5368,13 @@ ${langInstr}`,
                               <div>{lvl >= 7 ? "✅ Maîtrisée" : `📅 Rév: ${formatDate(exp.nextReview)}`}</div>
                             </div>
                             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                              <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#F5F3FF", color: "#8B5CF6", fontSize:14 }} title="Améliorer">✨</button>
-                              <button onClick={() => startEdit(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#EFF6FF", color: "#3B82F6", fontSize:14 }} title="Éditer">✏️</button>
+                              <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#7B93FF", fontSize:14 }} title="Améliorer">✨</button>
+                              <button onClick={() => startEdit(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Éditer">✏️</button>
                               <button onClick={() => deleteExp(exp.id)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FEF2F2", color: "#EF4444", fontSize:14 }} title="Supprimer">🗑️</button>
-                              <button onClick={() => addToPlaylist(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#F0FDF4", color: "#10B981", fontSize:14 }} title="Écouter">🔊</button>
-                              <button onClick={() => toggleFortress(exp.id)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: isFortress ? "#FEF3C7" : theme.inputBg, color: isFortress ? "#D97706" : theme.textMuted, fontSize:14 }} title={isFortress ? "Protégé" : "Protéger"}>{isFortress ? "🛡️" : "🛡️"}</button>
-                              <button onClick={() => startDuel(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFF7ED", color: "#F97316", fontSize:14 }} title="Duel">⚔️</button>
-                              <button onClick={() => generateVariants(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#EFF6FF", color: "#3B82F6", fontSize:14 }} title="Variantes">⚗️</button>
+                              <button onClick={() => addToPlaylist(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Écouter">🔊</button>
+                              <button onClick={() => toggleFortress(exp.id)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: isFortress ? "#E8EEFF" : theme.inputBg, color: isFortress ? "#4D6BFE" : theme.textMuted, fontSize:14 }} title={isFortress ? "Protégé" : "Protéger"}>{isFortress ? "🛡️" : "🛡️"}</button>
+                              <button onClick={() => startDuel(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFF7ED", color: "#4D6BFE", fontSize:14 }} title="Duel">⚔️</button>
+                              <button onClick={() => generateVariants(exp)} className="hov" style={{ width: 30, height: 30, borderRadius: 8, border: "none", cursor: "pointer", background: "#FFFFFF", color: "#4D6BFE", fontSize:14 }} title="Variantes">⚗️</button>
                             </div>
                           </div>
                           {/* Variantes (si générées) */}
@@ -4885,7 +5382,7 @@ ${langInstr}`,
                             <div style={{ padding: "0 24px 16px", marginTop:8 }}>
                               <div style={{ fontSize:12, fontWeight:700, color:theme.highlight, marginBottom:8 }}>⚗️ Variantes</div>
                               {cardsVariants[exp.id].map((v, i) => (
-                                <div key={i} style={{ background:theme.inputBg, borderRadius:10, padding:"8px 12px", marginBottom:6, borderLeft:`3px solid ${v.type==='definition'?'#3B82F6':v.type==='analogy'?'#8B5CF6':v.type==='example'?'#10B981':v.type==='contre-exemple'?'#EF4444':'#F59E0B'}` }}>
+                                <div key={i} style={{ background:theme.inputBg, borderRadius:10, padding:"8px 12px", marginBottom:6, borderLeft:`3px solid ${v.type==='definition'?'#4D6BFE':v.type==='analogy'?'#7B93FF':v.type==='example'?'#4D6BFE':v.type==='contre-exemple'?'#EF4444':'#6B82F5'}` }}>
                                   <div style={{ fontWeight:700, fontSize:12 }}>{v.front}</div>
                                   <div style={{ fontSize:11, color:theme.textMuted }}>{v.back}</div>
                                 </div>
@@ -4900,34 +5397,34 @@ ${langInstr}`,
 
                 {/* Fiches pièges affichées en bas */}
                 {cardsFakeCards.length > 0 && (
-                  <div style={{ marginTop: 32, background: "#FFF7ED", borderRadius: 20, padding: "20px 24px", border: "2px solid #F97316" }}>
-                    <h3 style={{ color: "#F97316", marginTop: 0 }}>🧪 Fiches pièges — Trouve les erreurs !</h3>
+                  <div style={{ marginTop: 32, background: "#FFF7ED", borderRadius: 20, padding: "20px 24px", border: "2px solid #4D6BFE" }}>
+                    <h3 style={{ color: "#4D6BFE", marginTop: 0 }}>🧪 Fiches pièges — Trouve les erreurs !</h3>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
                       {cardsFakeCards.map((fc, i) => (
-                        <div key={i} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #FED7AA" }}>
-                          <div style={{ fontWeight: 800, color: "#7C2D12" }}>{fc.front}</div>
+                        <div key={i} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #C7D2FE" }}>
+                          <div style={{ fontWeight: 800, color: "#1E3A8A" }}>{fc.front}</div>
                           <div style={{ fontSize: 13, color: "#431407", marginTop: 6 }}>{fc.back}</div>
                         </div>
                       ))}
                     </div>
-                    <button onClick={() => setCardsFakeCards([])} style={{ marginTop: 12, background: "none", border: "none", color: "#F97316", cursor: "pointer" }}>✕ Fermer</button>
+                    <button onClick={() => setCardsFakeCards([])} style={{ marginTop: 12, background: "none", border: "none", color: "#4D6BFE", cursor: "pointer" }}>✕ Fermer</button>
                   </div>
                 )}
 
                 {/* Bibliothèque communautaire */}
                 {cardsCommunity.length > 0 && (
-                  <div style={{ marginTop: 32, background: "#F0FDF4", borderRadius: 20, padding: "20px 24px", border: "2px solid #10B981" }}>
-                    <h3 style={{ color: "#065F46", marginTop: 0 }}>🏛️ Bibliothèque communautaire</h3>
+                  <div style={{ marginTop: 32, background: "#FFFFFF", borderRadius: 20, padding: "20px 24px", border: "2px solid #4D6BFE" }}>
+                    <h3 style={{ color: "#1E3A8A", marginTop: 0 }}>🏛️ Bibliothèque communautaire</h3>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
                       {cardsCommunity.map(card => (
-                        <div key={card.id} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #A7F3D0" }}>
-                          <div style={{ fontWeight: 800, color: "#065F46" }}>{card.front}</div>
-                          <div style={{ fontSize: 13, color: "#047857", marginTop: 6 }}>{card.back}</div>
-                          <button onClick={() => importCommunityCard(card)} className="hov" style={{ marginTop: 10, padding: "6px 14px", background: "#10B981", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📥 Importer</button>
+                        <div key={card.id} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #C7D2FE" }}>
+                          <div style={{ fontWeight: 800, color: "#1E3A8A" }}>{card.front}</div>
+                          <div style={{ fontSize: 13, color: "#2D45B0", marginTop: 6 }}>{card.back}</div>
+                          <button onClick={() => importCommunityCard(card)} className="hov" style={{ marginTop: 10, padding: "6px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>📥 Importer</button>
                         </div>
                       ))}
                     </div>
-                    <button onClick={() => setCardsCommunity([])} style={{ marginTop: 12, background: "none", border: "none", color: "#10B981", cursor: "pointer" }}>✕ Fermer</button>
+                    <button onClick={() => setCardsCommunity([])} style={{ marginTop: 12, background: "none", border: "none", color: "#4D6BFE", cursor: "pointer" }}>✕ Fermer</button>
                   </div>
                 )}
               </>
@@ -4941,7 +5438,7 @@ ${langInstr}`,
                   <p style={{ color: theme.textMuted }}>Qui répond correctement en premier ?</p>
                   <div style={{ display: "flex", gap: 16, marginTop: 20 }}>
                     <div style={{ flex: 1 }}>
-                      <button onClick={() => handleDuelAnswer(1, prompt("Joueur 1, tapez la réponse :"))} style={{ width:"100%", padding:"14px", background:"#3B82F6", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>Joueur 1</button>
+                      <button onClick={() => handleDuelAnswer(1, prompt("Joueur 1, tapez la réponse :"))} style={{ width:"100%", padding:"14px", background:"#4D6BFE", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>Joueur 1</button>
                       {cardsDuelPlayer1 && <div style={{ marginTop:8, fontWeight:700, color: theme.text }}>Réponse: {cardsDuelPlayer1}</div>}
                     </div>
                     <div style={{ flex: 1 }}>
@@ -4962,15 +5459,15 @@ ${langInstr}`,
             {/* ══ HOME ══ */}
             {examSubView === "home" && (
               <div>
-                <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #1D4ED8 60%, #7B5FF5 100%)", borderRadius: 28, padding: "40px 36px", marginBottom: 32, position: "relative", overflow: "hidden" }}>
+                <div style={{ background: "linear-gradient(135deg, #1A0800 0%, #3451D1 60%, #4D6BFE 100%)", borderRadius: 28, padding: "40px 36px", marginBottom: 32, position: "relative", overflow: "hidden" }}>
                   <div style={{ position: "absolute", top: -30, right: -30, fontSize: 180, opacity: 0.05 }}>🏟️</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: "#93C5FD", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>ARÈNE D'EXAMENS — GOD LEVEL</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#C7D2FE", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>ARÈNE D'EXAMENS — GOD LEVEL</div>
                   <h1 style={{ fontSize: 34, fontWeight: 900, color: "white", marginBottom: 10 }}>Forge ta maîtrise absolue 🏆</h1>
-                  <p style={{ color: "#93C5FD", fontSize: 15, marginBottom: 28, maxWidth: 520, lineHeight: 1.6 }}>10 modes d'examen. Chaque session te rend plus fort. La médiocrité n'existe pas ici.</p>
+                  <p style={{ color: "#C7D2FE", fontSize: 15, marginBottom: 28, maxWidth: 520, lineHeight: 1.6 }}>10 modes d'examen. Chaque session te rend plus fort. La médiocrité n'existe pas ici.</p>
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>🎯 {stats.examsDone} examens passés</div>
                     <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 14, padding: "12px 20px", color: "white", fontSize: 13, fontWeight: 700, border: "1px solid rgba(255,255,255,0.15)" }}>📚 {expressions.length} fiches disponibles</div>
-                    {examDeathrunBest > 0 && <div style={{ background: "rgba(239,68,68,0.2)", borderRadius: 14, padding: "12px 20px", color: "#FCA5A5", fontSize: 13, fontWeight: 700, border: "1px solid rgba(239,68,68,0.3)" }}>💥 Deathrun record: {examDeathrunBest}</div>}
+                    {examDeathrunBest > 0 && <div style={{ background: "rgba(239,68,68,0.2)", borderRadius: 14, padding: "12px 20px", color: "#A5B4FC", fontSize: 13, fontWeight: 700, border: "1px solid rgba(239,68,68,0.3)" }}>💥 Deathrun record: {examDeathrunBest}</div>}
                   </div>
                   <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                     <button onClick={() => setExamShowHistory(!examShowHistory)} style={{ padding: "10px 20px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", fontSize: 13 }}>📊 Historique</button>
@@ -4990,13 +5487,13 @@ ${langInstr}`,
                           {/* Mini graphe de progression */}
                           <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 60, marginBottom: 16 }}>
                             {examHistory.slice(0, 20).reverse().map((h, i) => (
-                              <div key={i} title={`${h.date} — ${h.score}%`} style={{ flex: 1, height: `${Math.max(10, h.score)}%`, background: h.score >= 80 ? "#10B981" : h.score >= 60 ? "#F59E0B" : "#EF4444", borderRadius: "4px 4px 0 0", opacity: 0.85 }} />
+                              <div key={i} title={`${h.date} — ${h.score}%`} style={{ flex: 1, height: `${Math.max(10, h.score)}%`, background: h.score >= 80 ? "#4D6BFE" : h.score >= 60 ? "#6B82F5" : "#EF4444", borderRadius: "4px 4px 0 0", opacity: 0.85 }} />
                             ))}
                           </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 280, overflowY: "auto" }}>
                             {examHistory.slice(0, 15).map((h, i) => (
                               <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: theme.inputBg, borderRadius: 12, fontSize: 13 }}>
-                                <div style={{ width: 42, height: 42, borderRadius: 12, background: h.score >= 80 ? "#D1FAE5" : h.score >= 60 ? "#FEF3C7" : "#FEE2E2", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 15, color: h.score >= 80 ? "#047857" : h.score >= 60 ? "#B45309" : "#B91C1C", flexShrink: 0 }}>{h.score}%</div>
+                                <div style={{ width: 42, height: 42, borderRadius: 12, background: h.score >= 80 ? "#EEF2FF" : h.score >= 60 ? "#E8EEFF" : "#FEE2E2", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 15, color: h.score >= 80 ? "#2D45B0" : h.score >= 60 ? "#2D45B0" : "#B91C1C", flexShrink: 0 }}>{h.score}%</div>
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontWeight: 700, color: theme.text }}>{h.mode?.toUpperCase()} — {h.category}</div>
                                   <div style={{ color: theme.textMuted, fontSize: 11 }}>{h.correct}/{h.total} correctes · {h.date} · {Math.floor((h.duration||0)/60)}m{(h.duration||0)%60}s</div>
@@ -5021,7 +5518,7 @@ ${langInstr}`,
                             <div style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>{t.concept}</div>
                             <span style={{ background: "#FEF2F2", color: "#EF4444", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700 }}>raté {t.frequency}×</span>
                           </div>
-                          {t.confusionWith && <div style={{ color: "#F59E0B", fontSize: 12, marginTop: 4 }}>🔀 Confusion probable avec : {t.confusionWith}</div>}
+                          {t.confusionWith && <div style={{ color: "#6B82F5", fontSize: 12, marginTop: 4 }}>🔀 Confusion probable avec : {t.confusionWith}</div>}
                           <div style={{ color: theme.textMuted, fontSize: 12, marginTop: 6, fontStyle: "italic" }}>💡 {t.remedy}</div>
                         </div>
                       ))}
@@ -5038,16 +5535,16 @@ ${langInstr}`,
                 <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.highlight, marginBottom: 16, fontFamily: "JetBrains Mono", letterSpacing: 1 }}>CHOISIR UN MODE</h2>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16, marginBottom: 36 }}>
                   {[
-                    { mode: "flashcard", icon: "🃏", title: "Classique", sub: "Auto-évaluation", desc: "Recto/verso avec timer. Les bases, mais indispensables.", color: "#1D4ED8", bg: isDarkMode?"linear-gradient(135deg,#1e293b,#1e3a5f)":"linear-gradient(135deg,#EFF6FF,#DBEAFE)", border: isDarkMode?"#1D4ED8":"#BFDBFE" },
-                    { mode: "qcm", icon: "📝", title: "QCM IA", sub: "L'IA te piège", desc: "3 fausses réponses ultra-crédibles générées par l'IA.", color: "#7B5FF5", bg: isDarkMode?"linear-gradient(135deg,#1e1b4b,#2e1065)":"linear-gradient(135deg,#F5F3FF,#EDE9FE)", border: isDarkMode?"#7B5FF5":"#DDD6FE" },
-                    { mode: "speedrun", icon: "⚡", title: "Speedrun", sub: "5s par question", desc: "Test de réflexes absolu. Pas le temps de réfléchir.", color: "#F59E0B", bg: isDarkMode?"linear-gradient(135deg,#1c1007,#292524)":"linear-gradient(135deg,#FEF3C7,#FDE68A)", border: isDarkMode?"#F59E0B":"#FCD34D" },
-                    { mode: "boss", icon: "💀", title: "Boss Fight", sub: "Sanction extrême", desc: "Simule tes profs. Si tu échoues, tes fiches sont rétrogradées.", color: "#EF4444", bg: isDarkMode?"linear-gradient(135deg,#1c0a0a,#2d0000)":"linear-gradient(135deg,#FEE2E2,#FECACA)", border: isDarkMode?"#EF4444":"#FCA5A5" },
-                    { mode: "survival", icon: "❤️", title: "Arène de Survie", sub: "3 vies max", desc: "3 erreurs et c'est terminé. Jusqu'où tu peux aller ?", color: "#EC4899", bg: isDarkMode?"linear-gradient(135deg,#1a0a14,#2d0a1e)":"linear-gradient(135deg,#FCE7F3,#FBCFE8)", border: isDarkMode?"#EC4899":"#F9A8D4" },
-                    { mode: "deathrun", icon: "💥", title: "Deathrun", sub: "1 erreur = game over", desc: "Questions infinies. La première erreur t'arrête. Bats ton record.", color: "#EF4444", bg: isDarkMode?"linear-gradient(135deg,#1c0a0a,#1a0000)":"linear-gradient(135deg,#FFF1F2,#FFE4E6)", border: isDarkMode?"#DC2626":"#FCA5A5" },
-                    { mode: "duel", icon: "🤖", title: "Duel IA", sub: "Bats l'IA", desc: "L'IA joue contre toi sur les mêmes fiches. Qui est le meilleur ?", color: "#06B6D4", bg: isDarkMode?"linear-gradient(135deg,#082f49,#0c4a6e)":"linear-gradient(135deg,#ECFEFF,#CFFAFE)", border: isDarkMode?"#06B6D4":"#A5F3FC" },
-                    { mode: "matching", icon: "🧩", title: "Connexion", sub: "Relier les paires", desc: "Relie chaque terme à sa définition contre la montre.", color: "#10B981", bg: isDarkMode?"linear-gradient(135deg,#022c22,#064e3b)":"linear-gradient(135deg,#ECFDF5,#D1FAE5)", border: isDarkMode?"#10B981":"#A7F3D0" },
-                    { mode: "redaction", icon: "✍️", title: "Rédaction Libre", sub: "Corrigé par l'IA", desc: "Rédige une vraie réponse. L'IA la corrige comme un prof : note /20 et commentaires.", color: "#8B5CF6", bg: isDarkMode?"linear-gradient(135deg,#1e1b4b,#2e1065)":"linear-gradient(135deg,#F5F3FF,#EDE9FE)", border: isDarkMode?"#8B5CF6":"#C4B5FD" },
-                    { mode: "custom", icon: "🛠️", title: "Examens Perso", sub: "Tes propres règles", desc: "Crée et passe tes propres devoirs surveillés.", color: "#059669", bg: isDarkMode?"linear-gradient(135deg,#022c22,#064e3b)":"linear-gradient(135deg,#ECFDF5,#D1FAE5)", border: isDarkMode?"#059669":"#A7F3D0" },
+                    { mode: "flashcard", icon: "🃏", title: "Classique", sub: "Auto-évaluation", desc: "Recto/verso avec timer. Les bases, mais indispensables.", color: "#3451D1", bg: isDarkMode?"linear-gradient(135deg,#1e293b,#1e3a5f)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#3451D1":"#BFDBFE" },
+                    { mode: "qcm", icon: "📝", title: "QCM IA", sub: "L'IA te piège", desc: "3 fausses réponses ultra-crédibles générées par l'IA.", color: "#4D6BFE", bg: isDarkMode?"linear-gradient(135deg,#1e1b4b,#2e1065)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#4D6BFE":"#C7D2FE" },
+                    { mode: "speedrun", icon: "⚡", title: "Speedrun", sub: "5s par question", desc: "Test de réflexes absolu. Pas le temps de réfléchir.", color: "#6B82F5", bg: isDarkMode?"linear-gradient(135deg,#1c1007,#292524)":"linear-gradient(135deg,#E8EEFF,#C7D2FE)", border: isDarkMode?"#6B82F5":"#93A8FF" },
+                    { mode: "boss", icon: "💀", title: "Boss Fight", sub: "Sanction extrême", desc: "Simule tes profs. Si tu échoues, tes fiches sont rétrogradées.", color: "#EF4444", bg: isDarkMode?"linear-gradient(135deg,#1c0a0a,#2d0000)":"linear-gradient(135deg,#FEE2E2,#FECACA)", border: isDarkMode?"#EF4444":"#A5B4FC" },
+                    { mode: "survival", icon: "❤️", title: "Arène de Survie", sub: "3 vies max", desc: "3 erreurs et c'est terminé. Jusqu'où tu peux aller ?", color: "#4D6BFE", bg: isDarkMode?"linear-gradient(135deg,#1a0a14,#2d0a1e)":"linear-gradient(135deg,#FCE7F3,#FBCFE8)", border: isDarkMode?"#4D6BFE":"#F9A8D4" },
+                    { mode: "deathrun", icon: "💥", title: "Deathrun", sub: "1 erreur = game over", desc: "Questions infinies. La première erreur t'arrête. Bats ton record.", color: "#EF4444", bg: isDarkMode?"linear-gradient(135deg,#1c0a0a,#1a0000)":"linear-gradient(135deg,#FFF1F2,#FFE4E6)", border: isDarkMode?"#DC2626":"#A5B4FC" },
+                    { mode: "duel", icon: "🤖", title: "Duel IA", sub: "Bats l'IA", desc: "L'IA joue contre toi sur les mêmes fiches. Qui est le meilleur ?", color: "#7B93FF", bg: isDarkMode?"linear-gradient(135deg,#082f49,#0c4a6e)":"linear-gradient(135deg,#FFFFFF,#CFFAFE)", border: isDarkMode?"#7B93FF":"#C7D2FE" },
+                    { mode: "matching", icon: "🧩", title: "Connexion", sub: "Relier les paires", desc: "Relie chaque terme à sa définition contre la montre.", color: "#4D6BFE", bg: isDarkMode?"linear-gradient(135deg,#022c22,#064e3b)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#4D6BFE":"#C7D2FE" },
+                    { mode: "redaction", icon: "✍️", title: "Rédaction Libre", sub: "Corrigé par l'IA", desc: "Rédige une vraie réponse. L'IA la corrige comme un prof : note /20 et commentaires.", color: "#7B93FF", bg: isDarkMode?"linear-gradient(135deg,#1e1b4b,#2e1065)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#7B93FF":"#C4B5FD" },
+                    { mode: "custom", icon: "🛠️", title: "Examens Perso", sub: "Tes propres règles", desc: "Crée et passe tes propres devoirs surveillés.", color: "#3451D1", bg: isDarkMode?"linear-gradient(135deg,#022c22,#064e3b)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#3451D1":"#C7D2FE" },
                   ].map(m => (
                     <div key={m.mode} onClick={() => {
                       if (m.mode === "custom") setExamSubView("custom");
@@ -5082,19 +5579,19 @@ ${langInstr}`,
                     </div>
                   )}
                   {examConfig.mode === "deathrun" && (
-                    <div style={{ background: "#FFF1F2", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #FCA5A5" }}>
+                    <div style={{ background: "#FFF1F2", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #A5B4FC" }}>
                       <div style={{ fontSize: 24, marginBottom: 4 }}>💥</div>
                       <div style={{ fontWeight: 700, color: "#B91C1C", fontSize: 14 }}>La première erreur arrête tout. Record actuel : <strong>{examDeathrunBest}</strong> réponses consécutives.</div>
                     </div>
                   )}
                   {examConfig.mode === "duel" && (
-                    <div style={{ background: "#ECFEFF", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #A5F3FC" }}>
+                    <div style={{ background: "#FFFFFF", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #C7D2FE" }}>
                       <div style={{ fontSize: 24, marginBottom: 4 }}>🤖</div>
-                      <div style={{ fontWeight: 700, color: "#0E7490", fontSize: 14 }}>L'IA joue contre toi. Elle se trompe parfois exprès. Qui finira avec le meilleur score ?</div>
+                      <div style={{ fontWeight: 700, color: "#3451D1", fontSize: 14 }}>L'IA joue contre toi. Elle se trompe parfois exprès. Qui finira avec le meilleur score ?</div>
                     </div>
                   )}
                   {examConfig.mode === "redaction" && (
-                    <div style={{ background: "#F5F3FF", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #C4B5FD" }}>
+                    <div style={{ background: "#FFFFFF", borderRadius: 16, padding: "16px 20px", marginBottom: 20, border: "1px solid #C4B5FD" }}>
                       <div style={{ fontSize: 24, marginBottom: 4 }}>✍️</div>
                       <div style={{ fontWeight: 700, color: "#5B21B6", fontSize: 14 }}>Tu rédiges une réponse complète. L'IA te donne une note sur 20 avec analyse structurée.</div>
                     </div>
@@ -5122,9 +5619,9 @@ ${langInstr}`,
                       <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>🔥 Difficulté</label>
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
                         {[
-                          { val: "facile", icon: "😌", label: "Facile", color: "#10B981" },
-                          { val: "adaptative", icon: "🎯", label: "Adaptative", color: "#3B82F6" },
-                          { val: "difficile", icon: "💪", label: "Difficile", color: "#F59E0B" },
+                          { val: "facile", icon: "😌", label: "Facile", color: "#4D6BFE" },
+                          { val: "adaptative", icon: "🎯", label: "Adaptative", color: "#4D6BFE" },
+                          { val: "difficile", icon: "💪", label: "Difficile", color: "#6B82F5" },
                           { val: "extreme", icon: "💀", label: "EXTRÊME", color: "#EF4444" },
                         ].map(d => (
                           <div key={d.val} onClick={() => setExamConfig(c => ({...c, difficulty: d.val}))} style={{ border: `2px solid ${examConfig.difficulty === d.val ? d.color : theme.border}`, borderRadius: 16, padding: "14px", cursor: "pointer", background: examConfig.difficulty === d.val ? d.color + "18" : theme.inputBg, textAlign: "center" }}>
@@ -5135,7 +5632,7 @@ ${langInstr}`,
                       </div>
                     </div>
                   )}
-                  <button className="hov btn-glow" onClick={() => startExam()} style={{ width: "100%", padding: "18px 36px", background: examConfig.mode === "boss" || examConfig.mode === "deathrun" ? "linear-gradient(135deg, #EF4444, #B91C1C)" : examConfig.mode === "survival" ? "linear-gradient(135deg,#EC4899,#BE185D)" : examConfig.mode === "duel" ? "linear-gradient(135deg,#06B6D4,#0E7490)" : "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer l'examen</button>
+                  <button className="hov btn-glow" onClick={() => startExam()} style={{ width: "100%", padding: "18px 36px", background: examConfig.mode === "boss" || examConfig.mode === "deathrun" ? "linear-gradient(135deg, #EF4444, #B91C1C)" : examConfig.mode === "survival" ? "linear-gradient(135deg,#4D6BFE,#BE185D)" : examConfig.mode === "duel" ? "linear-gradient(135deg,#7B93FF,#3451D1)" : "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 800, cursor: "pointer" }}>🚀 Lancer l'examen</button>
                 </div>
               </div>
             )}
@@ -5161,30 +5658,30 @@ ${langInstr}`,
                       )}
                       {/* Score Duel */}
                       {isDuelMode && (
-                        <div style={{ background: "#ECFEFF", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#0E7490" }}>
+                        <div style={{ background: "#FFFFFF", borderRadius: 10, padding: "6px 12px", fontSize: 12, fontWeight: 800, color: "#3451D1" }}>
                           😊 {examIaDuelScore.user} vs 🤖 {examIaDuelScore.ia}
                         </div>
                       )}
-                      {examStreak >= 3 && <div style={{ background: "#FEF3C7", color: "#92400E", padding: "6px 12px", borderRadius: 10, fontSize: 12, fontWeight: 800, animation: "pulse 1s infinite" }}>🔥 Streak ×{examStreak}</div>}
+                      {examStreak >= 3 && <div style={{ background: "#E8EEFF", color: "#1E3A8A", padding: "6px 12px", borderRadius: 10, fontSize: 12, fontWeight: 800, animation: "pulse 1s infinite" }}>🔥 Streak ×{examStreak}</div>}
                       <div style={{ fontFamily: "JetBrains Mono", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{examIndex + 1}</span>{examConfig.mode !== "deathrun" && ` / ${examQueue.length}`}</div>
-                      {!isRedactionMode && <div style={{ padding: "6px 14px", borderRadius: 10, fontFamily: "JetBrains Mono", fontWeight: 900, fontSize: 14, background: timerDanger ? "#FEE2E2" : "#EFF6FF", color: timerDanger ? "#EF4444" : "#1D4ED8", animation: examTimer <= 5 ? "pulse 0.5s infinite" : "none" }}>⏱ {examTimer}s</div>}
+                      {!isRedactionMode && <div style={{ padding: "6px 14px", borderRadius: 10, fontFamily: "JetBrains Mono", fontWeight: 900, fontSize: 14, background: timerDanger ? "#FEE2E2" : "#FFFFFF", color: timerDanger ? "#EF4444" : "#3451D1", animation: examTimer <= 5 ? "pulse 0.5s infinite" : "none" }}>⏱ {examTimer}s</div>}
                     </div>
                   </div>
 
                   {/* Barre progression */}
                   <div style={{ height: 4, background: theme.inputBg, borderRadius: 4, marginBottom: 28 }}>
-                    <div style={{ height: "100%", background: examConfig.mode === "survival" ? "linear-gradient(90deg,#EC4899,#BE185D)" : examConfig.mode === "deathrun" ? "linear-gradient(90deg,#EF4444,#B91C1C)" : "linear-gradient(90deg,#10B981,#3B82F6)", borderRadius: 4, transition: "width 0.4s", width: examConfig.mode === "deathrun" ? "100%" : `${((examIndex) / examQueue.length) * 100}%` }} />
+                    <div style={{ height: "100%", background: examConfig.mode === "survival" ? "linear-gradient(90deg,#4D6BFE,#BE185D)" : examConfig.mode === "deathrun" ? "linear-gradient(90deg,#EF4444,#B91C1C)" : "linear-gradient(90deg,#4D6BFE,#4D6BFE)", borderRadius: 4, transition: "width 0.4s", width: examConfig.mode === "deathrun" ? "100%" : `${((examIndex) / examQueue.length) * 100}%` }} />
                   </div>
 
                   <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 26, padding: "32px", maxWidth: 720, margin: "0 auto", boxShadow: "0 10px 40px rgba(0,0,0,0.05)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
                       <span style={{ background: theme.inputBg, color: theme.highlight, padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{card.category || "Perso"}</span>
                       <div style={{ display: "flex", gap: 8 }}>
-                        {isQcmMode && <span style={{ background: "#F5F3FF", color: "#7B5FF5", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>📝 QCM</span>}
+                        {isQcmMode && <span style={{ background: "#FFFFFF", color: "#4D6BFE", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>📝 QCM</span>}
                         {examConfig.mode === "boss" && <span style={{ background: "#FEF2F2", color: "#EF4444", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>💀 BOSS</span>}
-                        {examConfig.mode === "survival" && <span style={{ background: "#FDF2F8", color: "#EC4899", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>❤️ SURVIE</span>}
+                        {examConfig.mode === "survival" && <span style={{ background: "#FDF2F8", color: "#4D6BFE", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>❤️ SURVIE</span>}
                         {examConfig.mode === "deathrun" && <span style={{ background: "#FFF1F2", color: "#EF4444", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>💥 #{examDeathrunCurrent + 1}</span>}
-                        {isDuelMode && examIaDuelIaAnswer && <span style={{ background: "#ECFEFF", color: "#06B6D4", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>🤖 IA prête</span>}
+                        {isDuelMode && examIaDuelIaAnswer && <span style={{ background: "#FFFFFF", color: "#7B93FF", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>🤖 IA prête</span>}
                       </div>
                     </div>
 
@@ -5196,18 +5693,18 @@ ${langInstr}`,
 
                     {/* Mode QCM */}
                     {isQcmMode && !isRedactionMode && (
-                      qcmLoading ? <div style={{ textAlign: "center", padding: "28px", color: "#7B5FF5" }}><div style={{ fontSize: 28, animation: "pulse 1s infinite" }}>🤖</div><div style={{ fontWeight: 700 }}>L'IA prépare les pièges...</div></div>
+                      qcmLoading ? <div style={{ textAlign: "center", padding: "28px", color: "#4D6BFE" }}><div style={{ fontSize: 28, animation: "pulse 1s infinite" }}>🤖</div><div style={{ fontWeight: 700 }}>L'IA prépare les pièges...</div></div>
                       : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                           {qcmChoices.map((choice, ci) => {
                             const isCorrect = choice === (card.back || card.answer);
                             const isSelected = qcmSelected === ci;
                             let bg = theme.inputBg, border = `2px solid ${theme.border}`, color = theme.text;
-                            if (isSelected && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
+                            if (isSelected && isCorrect) { bg = "#EEF2FF"; border = "2px solid #4D6BFE"; color = "#1E3A8A"; }
                             else if (isSelected && !isCorrect) { bg = "#FEE2E2"; border = "2px solid #EF4444"; color = "#991B1B"; }
-                            else if (qcmSelected !== null && isCorrect) { bg = "#D1FAE5"; border = "2px solid #10B981"; color = "#065F46"; }
+                            else if (qcmSelected !== null && isCorrect) { bg = "#EEF2FF"; border = "2px solid #4D6BFE"; color = "#1E3A8A"; }
                             return (
                               <button key={ci} onClick={() => { if (qcmSelected !== null) return; setQcmSelected(ci); setTimeout(() => handleExamAnswer(isCorrect ? 5 : 0), 900); }} disabled={qcmSelected !== null} style={{ background: bg, border, borderRadius: 14, padding: "16px 20px", textAlign: "left", cursor: qcmSelected !== null ? "default" : "pointer", color, fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", gap: 12 }}>
-                                <span style={{ width: 28, height: 28, borderRadius: "50%", background: isSelected ? (isCorrect ? "#10B981" : "#EF4444") : (qcmSelected !== null && isCorrect ? "#10B981" : (isDarkMode?"#334155":"#EFF6FF")), color: (isSelected || (qcmSelected !== null && isCorrect)) ? "white" : theme.textMuted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800 }}>{String.fromCharCode(65 + ci)}</span>
+                                <span style={{ width: 28, height: 28, borderRadius: "50%", background: isSelected ? (isCorrect ? "#4D6BFE" : "#EF4444") : (qcmSelected !== null && isCorrect ? "#4D6BFE" : (isDarkMode?"#3D2000":"#FFFFFF")), color: (isSelected || (qcmSelected !== null && isCorrect)) ? "white" : theme.textMuted, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800 }}>{String.fromCharCode(65 + ci)}</span>
                                 {choice} {qcmSelected !== null && isCorrect && <span style={{ marginLeft: "auto" }}>✅</span>} {isSelected && !isCorrect && <span style={{ marginLeft: "auto" }}>❌</span>}
                               </button>
                             );
@@ -5227,17 +5724,17 @@ ${langInstr}`,
                               placeholder="Rédige ta réponse complète ici... L'IA va la corriger comme un vrai professeur."
                               style={{ width: "100%", padding: "16px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 14, color: theme.text, fontSize: 14, lineHeight: 1.7, resize: "vertical", marginBottom: 12 }}
                             />
-                            <button onClick={() => submitRedaction(card)} disabled={examRedactionLoading || !examRedactionInput.trim()} style={{ width: "100%", padding: "14px", background: examRedactionInput.trim() ? "linear-gradient(135deg,#8B5CF6,#7C3AED)" : theme.inputBg, color: examRedactionInput.trim() ? "white" : theme.textMuted, border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
+                            <button onClick={() => submitRedaction(card)} disabled={examRedactionLoading || !examRedactionInput.trim()} style={{ width: "100%", padding: "14px", background: examRedactionInput.trim() ? "linear-gradient(135deg,#7B93FF,#3451D1)" : theme.inputBg, color: examRedactionInput.trim() ? "white" : theme.textMuted, border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
                               {examRedactionLoading ? "⏳ L'IA corrige..." : "✅ Soumettre ma réponse"}
                             </button>
                           </div>
                         ) : (
                           <div style={{ animation: "slideIn 0.3s ease" }}>
                             {/* Note */}
-                            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, background: examRedactionScore.note >= 14 ? "#D1FAE5" : examRedactionScore.note >= 10 ? "#FEF3C7" : "#FEE2E2", borderRadius: 16, padding: "16px 20px" }}>
-                              <div style={{ fontSize: 40, fontWeight: 900, color: examRedactionScore.note >= 14 ? "#047857" : examRedactionScore.note >= 10 ? "#B45309" : "#B91C1C" }}>{examRedactionScore.note}<span style={{ fontSize: 20 }}>/{examRedactionScore.sur}</span></div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, background: examRedactionScore.note >= 14 ? "#EEF2FF" : examRedactionScore.note >= 10 ? "#E8EEFF" : "#FEE2E2", borderRadius: 16, padding: "16px 20px" }}>
+                              <div style={{ fontSize: 40, fontWeight: 900, color: examRedactionScore.note >= 14 ? "#2D45B0" : examRedactionScore.note >= 10 ? "#2D45B0" : "#B91C1C" }}>{examRedactionScore.note}<span style={{ fontSize: 20 }}>/{examRedactionScore.sur}</span></div>
                               <div>
-                                <div style={{ fontWeight: 800, fontSize: 16, color: examRedactionScore.note >= 14 ? "#047857" : examRedactionScore.note >= 10 ? "#B45309" : "#B91C1C" }}>{examRedactionScore.verdict}</div>
+                                <div style={{ fontWeight: 800, fontSize: 16, color: examRedactionScore.note >= 14 ? "#2D45B0" : examRedactionScore.note >= 10 ? "#2D45B0" : "#B91C1C" }}>{examRedactionScore.verdict}</div>
                               </div>
                             </div>
                             {/* Critères */}
@@ -5255,9 +5752,9 @@ ${langInstr}`,
                               ))}
                             </div>
                             {examRedactionScore.manque?.length > 0 && <div style={{ color: "#EF4444", fontSize: 13, marginBottom: 8 }}>❌ Manque : {examRedactionScore.manque.join(", ")}</div>}
-                            {examRedactionScore.correct?.length > 0 && <div style={{ color: "#10B981", fontSize: 13, marginBottom: 12 }}>✅ Correct : {examRedactionScore.correct.join(", ")}</div>}
+                            {examRedactionScore.correct?.length > 0 && <div style={{ color: "#4D6BFE", fontSize: 13, marginBottom: 12 }}>✅ Correct : {examRedactionScore.correct.join(", ")}</div>}
                             {examRedactionScore.conseils && <div style={{ color: theme.textMuted, fontSize: 12, fontStyle: "italic", marginBottom: 16 }}>💡 {examRedactionScore.conseils}</div>}
-                            <button onClick={() => { setExamRedactionInput(""); setExamRedactionScore(null); handleExamAnswer(examRedactionScore.note >= 14 ? 5 : examRedactionScore.note >= 10 ? 3 : 0); }} style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                            <button onClick={() => { setExamRedactionInput(""); setExamRedactionScore(null); handleExamAnswer(examRedactionScore.note >= 14 ? 5 : examRedactionScore.note >= 10 ? 3 : 0); }} style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
                               → Question suivante
                             </button>
                           </div>
@@ -5268,25 +5765,25 @@ ${langInstr}`,
                     {/* Mode classique / boss / survie / deathrun / duel */}
                     {!isQcmMode && !isRedactionMode && (
                       !examRevealed ? (
-                        <button className="hov btn-glow" onClick={() => { setExamRevealed(true); if (isDuelMode) generateIaDuelAnswer(card); }} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>👁️ Voir la réponse (Espace)</button>
+                        <button className="hov btn-glow" onClick={() => { setExamRevealed(true); if (isDuelMode) generateIaDuelAnswer(card); }} style={{ width: "100%", padding: "18px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>👁️ Voir la réponse (Espace)</button>
                       ) : (
                         <div style={{ animation: "slideIn 0.3s ease" }}>
-                          <div style={{ background: isDarkMode?"#1E293B":"#EFF6FF", border: `2px solid ${isDarkMode?"#334155":"#DBEAFE"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
-                            <div style={{ fontSize: 11, color: "#3B82F6", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div>
+                          <div style={{ background: isDarkMode?"#2A1400":"#FFFFFF", border: `2px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
+                            <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14 }}>RÉPONSE</div>
                             <div style={{ fontSize: 18, fontWeight: 600, color: theme.text, lineHeight: 1.6 }}>{card.back || card.answer}</div>
                           </div>
                           {/* Réponse IA (mode duel) */}
                           {isDuelMode && examIaDuelIaAnswer && (
-                            <div style={{ background: "#ECFEFF", borderRadius: 16, padding: "16px 20px", marginBottom: 16, border: "1px solid #A5F3FC" }}>
-                              <div style={{ fontSize: 11, color: "#06B6D4", fontWeight: 800, marginBottom: 6 }}>🤖 RÉPONSE DE L'IA</div>
-                              <div style={{ color: "#0E7490", fontWeight: 600, fontSize: 14 }}>{examIaDuelIaAnswer.text}</div>
-                              <div style={{ fontSize: 11, color: examIaDuelIaAnswer.correct ? "#10B981" : "#EF4444", marginTop: 6, fontWeight: 700 }}>{examIaDuelIaAnswer.correct ? "✅ L'IA avait raison" : "❌ L'IA s'est trompée"}</div>
+                            <div style={{ background: "#FFFFFF", borderRadius: 16, padding: "16px 20px", marginBottom: 16, border: "1px solid #C7D2FE" }}>
+                              <div style={{ fontSize: 11, color: "#7B93FF", fontWeight: 800, marginBottom: 6 }}>🤖 RÉPONSE DE L'IA</div>
+                              <div style={{ color: "#3451D1", fontWeight: 600, fontSize: 14 }}>{examIaDuelIaAnswer.text}</div>
+                              <div style={{ fontSize: 11, color: examIaDuelIaAnswer.correct ? "#4D6BFE" : "#EF4444", marginTop: 6, fontWeight: 700 }}>{examIaDuelIaAnswer.correct ? "✅ L'IA avait raison" : "❌ L'IA s'est trompée"}</div>
                             </div>
                           )}
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                             <button className="hov" onClick={() => handleExamAnswer(0)} style={{ padding: "16px 8px", background: "#FEE2E2", color: "#B91C1C", border: "1px solid #FECACA", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>😓 Pas su (1)</button>
-                            <button className="hov" onClick={() => handleExamAnswer(3)} style={{ padding: "16px 8px", background: "#FEF3C7", color: "#B45309", border: "1px solid #FDE68A", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🤔 Hésité (2)</button>
-                            <button className="hov" onClick={() => handleExamAnswer(5)} style={{ padding: "16px 8px", background: "#D1FAE5", color: "#047857", border: "1px solid #A7F3D0", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>⚡ Su ! (3)</button>
+                            <button className="hov" onClick={() => handleExamAnswer(3)} style={{ padding: "16px 8px", background: "#E8EEFF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🤔 Hésité (2)</button>
+                            <button className="hov" onClick={() => handleExamAnswer(5)} style={{ padding: "16px 8px", background: "#EEF2FF", color: "#2D45B0", border: "1px solid #C7D2FE", borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>⚡ Su ! (3)</button>
                           </div>
                         </div>
                       )
@@ -5303,17 +5800,17 @@ ${langInstr}`,
                   <button onClick={() => { clearInterval(examMatchingTimerRef.current); setExamSubView("home"); }} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>✕ Abandonner</button>
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div style={{ fontWeight: 800, color: theme.textMuted, fontFamily: "JetBrains Mono" }}>⏱ {examMatchingTime}s</div>
-                    <div style={{ fontWeight: 800, color: "#10B981" }}>{examMatchingDone.length}/{examMatchingPairs.length} paires</div>
+                    <div style={{ fontWeight: 800, color: "#4D6BFE" }}>{examMatchingDone.length}/{examMatchingPairs.length} paires</div>
                     {examMatchingWrong.length > 0 && <div style={{ color: "#EF4444", fontWeight: 700, fontSize: 13 }}>❌ {examMatchingWrong.length} erreurs</div>}
                   </div>
                 </div>
                 {examMatchingComplete ? (
-                  <div style={{ textAlign: "center", padding: "48px 24px", background: theme.cardBg, borderRadius: 24, border: "2px solid #10B981" }}>
+                  <div style={{ textAlign: "center", padding: "48px 24px", background: theme.cardBg, borderRadius: 24, border: "2px solid #4D6BFE" }}>
                     <div style={{ fontSize: 64, marginBottom: 16 }}>🎉</div>
-                    <div style={{ fontSize: 24, fontWeight: 900, color: "#10B981", marginBottom: 8 }}>Connexion complète !</div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: "#4D6BFE", marginBottom: 8 }}>Connexion complète !</div>
                     <div style={{ fontSize: 40, fontWeight: 900, color: theme.text, marginBottom: 8 }}>{Math.max(0, 100 - examMatchingWrong.length * 10)}%</div>
                     <div style={{ color: theme.textMuted, marginBottom: 24 }}>Terminé en {examMatchingTime}s · {examMatchingWrong.length} erreur(s)</div>
-                    <button onClick={() => setExamSubView("home")} style={{ padding: "14px 32px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>🏠 Retour</button>
+                    <button onClick={() => setExamSubView("home")} style={{ padding: "14px 32px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>🏠 Retour</button>
                   </div>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 720, margin: "0 auto" }}>
@@ -5324,7 +5821,7 @@ ${langInstr}`,
                           const isDone = examMatchingDone.includes(p.id);
                           const isSelected = examMatchingLeft?.id === p.id && examMatchingLeft?.side === "left";
                           return (
-                            <button key={p.id} onClick={() => !isDone && handleMatchingClick(p.id, "left")} disabled={isDone} style={{ padding: "14px 16px", borderRadius: 14, border: `2px solid ${isDone ? "#10B981" : isSelected ? "#3B82F6" : theme.border}`, background: isDone ? "#D1FAE5" : isSelected ? "#EFF6FF" : theme.inputBg, color: isDone ? "#047857" : isSelected ? "#1D4ED8" : theme.text, fontWeight: 700, cursor: isDone ? "default" : "pointer", textAlign: "left", fontSize: 13, opacity: isDone ? 0.7 : 1 }}>
+                            <button key={p.id} onClick={() => !isDone && handleMatchingClick(p.id, "left")} disabled={isDone} style={{ padding: "14px 16px", borderRadius: 14, border: `2px solid ${isDone ? "#4D6BFE" : isSelected ? "#4D6BFE" : theme.border}`, background: isDone ? "#EEF2FF" : isSelected ? "#FFFFFF" : theme.inputBg, color: isDone ? "#2D45B0" : isSelected ? "#3451D1" : theme.text, fontWeight: 700, cursor: isDone ? "default" : "pointer", textAlign: "left", fontSize: 13, opacity: isDone ? 0.7 : 1 }}>
                               {isDone ? "✅ " : isSelected ? "→ " : ""}{p.front}
                             </button>
                           );
@@ -5338,7 +5835,7 @@ ${langInstr}`,
                           const isDone = examMatchingDone.includes(p.id);
                           const isSelected = examMatchingLeft?.id === p.id && examMatchingLeft?.side === "right";
                           return (
-                            <button key={p.id} onClick={() => !isDone && handleMatchingClick(p.id, "right")} disabled={isDone} style={{ padding: "14px 16px", borderRadius: 14, border: `2px solid ${isDone ? "#10B981" : isSelected ? "#8B5CF6" : theme.border}`, background: isDone ? "#D1FAE5" : isSelected ? "#F5F3FF" : theme.inputBg, color: isDone ? "#047857" : isSelected ? "#7C3AED" : theme.text, fontWeight: 600, cursor: isDone ? "default" : "pointer", textAlign: "left", fontSize: 12, opacity: isDone ? 0.7 : 1 }}>
+                            <button key={p.id} onClick={() => !isDone && handleMatchingClick(p.id, "right")} disabled={isDone} style={{ padding: "14px 16px", borderRadius: 14, border: `2px solid ${isDone ? "#4D6BFE" : isSelected ? "#7B93FF" : theme.border}`, background: isDone ? "#EEF2FF" : isSelected ? "#FFFFFF" : theme.inputBg, color: isDone ? "#2D45B0" : isSelected ? "#3451D1" : theme.text, fontWeight: 600, cursor: isDone ? "default" : "pointer", textAlign: "left", fontSize: 12, opacity: isDone ? 0.7 : 1 }}>
                               {isDone ? "✅ " : ""}{p.back?.substring(0,80)}{p.back?.length > 80 ? "..." : ""}
                             </button>
                           );
@@ -5355,7 +5852,7 @@ ${langInstr}`,
               const correct = examAnswers.filter(a => a.q >= 3).length;
               const score = examConfig.mode === "deathrun" ? examDeathrunCurrent : Math.round((correct / examAnswers.length) * 100);
               const duration = examStartTime ? Math.round((Date.now() - examStartTime) / 1000) : 0;
-              const grade = score >= 90 ? { label: "LÉGENDAIRE", icon: "🏆", color: "#7B5FF5" } : score >= 70 ? { label: "BIEN", icon: "👍", color: "#3B82F6" } : score >= 50 ? { label: "PASSABLE", icon: "😐", color: "#F59E0B" } : { label: "À RETRAVAILLER", icon: "💪", color: "#EF4444" };
+              const grade = score >= 90 ? { label: "LÉGENDAIRE", icon: "🏆", color: "#4D6BFE" } : score >= 70 ? { label: "BIEN", icon: "👍", color: "#4D6BFE" } : score >= 50 ? { label: "PASSABLE", icon: "😐", color: "#6B82F5" } : { label: "À RETRAVAILLER", icon: "💪", color: "#EF4444" };
               const bossPenalty = examConfig.mode === "boss" && score < 100;
               return (
                 <div style={{ animation: "fadeUp 0.4s ease" }}>
@@ -5370,20 +5867,20 @@ ${langInstr}`,
                     {/* Score Duel */}
                     {examConfig.mode === "duel" && (
                       <div style={{ marginTop: 16, display: "flex", justifyContent: "center", gap: 24 }}>
-                        <div style={{ textAlign: "center" }}><div style={{ fontSize: 28 }}>😊</div><div style={{ fontWeight: 900, fontSize: 24, color: examIaDuelScore.user > examIaDuelScore.ia ? "#10B981" : "#EF4444" }}>{examIaDuelScore.user}</div><div style={{ fontSize: 12, color: theme.textMuted }}>Toi</div></div>
+                        <div style={{ textAlign: "center" }}><div style={{ fontSize: 28 }}>😊</div><div style={{ fontWeight: 900, fontSize: 24, color: examIaDuelScore.user > examIaDuelScore.ia ? "#4D6BFE" : "#EF4444" }}>{examIaDuelScore.user}</div><div style={{ fontSize: 12, color: theme.textMuted }}>Toi</div></div>
                         <div style={{ fontWeight: 900, fontSize: 28, color: theme.textMuted, display: "flex", alignItems: "center" }}>VS</div>
-                        <div style={{ textAlign: "center" }}><div style={{ fontSize: 28 }}>🤖</div><div style={{ fontWeight: 900, fontSize: 24, color: examIaDuelScore.ia > examIaDuelScore.user ? "#10B981" : "#EF4444" }}>{examIaDuelScore.ia}</div><div style={{ fontSize: 12, color: theme.textMuted }}>IA</div></div>
+                        <div style={{ textAlign: "center" }}><div style={{ fontSize: 28 }}>🤖</div><div style={{ fontWeight: 900, fontSize: 24, color: examIaDuelScore.ia > examIaDuelScore.user ? "#4D6BFE" : "#EF4444" }}>{examIaDuelScore.ia}</div><div style={{ fontSize: 12, color: theme.textMuted }}>IA</div></div>
                       </div>
                     )}
                   </div>
 
                   {/* Faux positifs (Precision Strike insight) */}
                   {examPrecisionErrors.length > 0 && (
-                    <div style={{ background: theme.cardBg, borderRadius: 18, padding: "20px 24px", marginBottom: 20, border: `2px solid #F59E0B` }}>
-                      <div style={{ fontWeight: 800, color: "#F59E0B", fontSize: 14, marginBottom: 8 }}>⚠️ Faux positifs détectés</div>
+                    <div style={{ background: theme.cardBg, borderRadius: 18, padding: "20px 24px", marginBottom: 20, border: `2px solid #6B82F5` }}>
+                      <div style={{ fontWeight: 800, color: "#6B82F5", fontSize: 14, marginBottom: 8 }}>⚠️ Faux positifs détectés</div>
                       <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 10 }}>Tu as répondu vite mais faux sur ces concepts — tu les croyais maîtrisés :</p>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {examPrecisionErrors.map((c, i) => <span key={i} style={{ background: "#FEF3C7", color: "#B45309", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600 }}>{c?.front}</span>)}
+                        {examPrecisionErrors.map((c, i) => <span key={i} style={{ background: "#E8EEFF", color: "#2D45B0", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600 }}>{c?.front}</span>)}
                       </div>
                     </div>
                   )}
@@ -5398,22 +5895,22 @@ ${langInstr}`,
                         <div>
                           <div style={{ fontWeight: 700, color: theme.text, fontSize: 16, marginBottom: 16, padding: "12px 16px", background: theme.inputBg, borderRadius: 12, fontStyle: "italic" }}>"{examAiReport.globalVerdict}"</div>
                           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-                            <div style={{ background: "#D1FAE5", borderRadius: 12, padding: "14px 16px" }}>
-                              <div style={{ fontSize: 11, color: "#047857", fontWeight: 800, marginBottom: 8 }}>💪 POINTS FORTS</div>
-                              {(examAiReport.strengths || []).map((s, i) => <div key={i} style={{ color: "#065F46", fontSize: 13, marginBottom: 4 }}>• {s}</div>)}
+                            <div style={{ background: "#EEF2FF", borderRadius: 12, padding: "14px 16px" }}>
+                              <div style={{ fontSize: 11, color: "#2D45B0", fontWeight: 800, marginBottom: 8 }}>💪 POINTS FORTS</div>
+                              {(examAiReport.strengths || []).map((s, i) => <div key={i} style={{ color: "#1E3A8A", fontSize: 13, marginBottom: 4 }}>• {s}</div>)}
                             </div>
                             <div style={{ background: "#FEE2E2", borderRadius: 12, padding: "14px 16px" }}>
                               <div style={{ fontSize: 11, color: "#B91C1C", fontWeight: 800, marginBottom: 8 }}>🎯 À TRAVAILLER</div>
                               {(examAiReport.weaknesses || []).map((w, i) => <div key={i} style={{ color: "#991B1B", fontSize: 13, marginBottom: 4 }}>• {w}</div>)}
                             </div>
                           </div>
-                          {examAiReport.behaviorPattern && <div style={{ background: "#FEF3C7", borderRadius: 12, padding: "12px 16px", marginBottom: 12, color: "#B45309", fontSize: 13, fontWeight: 600 }}>🧠 Pattern : {examAiReport.behaviorPattern}</div>}
+                          {examAiReport.behaviorPattern && <div style={{ background: "#E8EEFF", borderRadius: 12, padding: "12px 16px", marginBottom: 12, color: "#2D45B0", fontSize: 13, fontWeight: 600 }}>🧠 Pattern : {examAiReport.behaviorPattern}</div>}
                           {examAiReport.topPriority && <div style={{ background: "#FFF1F2", borderRadius: 12, padding: "12px 16px", marginBottom: 12, color: "#B91C1C", fontSize: 13, fontWeight: 700 }}>🚨 Priorité : {examAiReport.topPriority}</div>}
                           <div style={{ background: theme.inputBg, borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
                             <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 800, marginBottom: 8 }}>PLAN D'ACTION</div>
                             {(examAiReport.actionPlan || []).map((a, i) => <div key={i} style={{ color: theme.text, fontSize: 13, marginBottom: 6 }}>{i+1}. {a}</div>)}
                           </div>
-                          {examAiReport.motivationalMessage && <div style={{ textAlign: "center", color: "#7B5FF5", fontSize: 14, fontWeight: 700, fontStyle: "italic" }}>✨ {examAiReport.motivationalMessage}</div>}
+                          {examAiReport.motivationalMessage && <div style={{ textAlign: "center", color: "#4D6BFE", fontSize: 14, fontWeight: 700, fontStyle: "italic" }}>✨ {examAiReport.motivationalMessage}</div>}
                         </div>
                       ) : null}
                     </div>
@@ -5424,7 +5921,7 @@ ${langInstr}`,
                     <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 12 }}>📋 Détail question par question</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 280, overflowY: "auto" }}>
                       {examAnswers.map((a, i) => (
-                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: a.q >= 3 ? (isDarkMode?"#052e16":"#F0FDF4") : (isDarkMode?"#1c0a0a":"#FFF1F2"), borderRadius: 12, fontSize: 13 }}>
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: a.q >= 3 ? (isDarkMode?"#052e16":"#FFFFFF") : (isDarkMode?"#1c0a0a":"#FFF1F2"), borderRadius: 12, fontSize: 13 }}>
                           <span style={{ fontSize: 16 }}>{a.q >= 5 ? "⚡" : a.q >= 3 ? "🤔" : "❌"}</span>
                           <div style={{ flex: 1, fontWeight: 600, color: theme.text }}>{a.card?.front || a.card?.question}</div>
                           <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 700 }}>{a.timeSpent}s</div>
@@ -5434,7 +5931,7 @@ ${langInstr}`,
                   </div>
 
                   <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <button className="hov btn-glow" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamAiReport(null); setExamSubView("config"); }} style={{ flex: 1, padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>🔄 Recommencer</button>
+                    <button className="hov btn-glow" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamAiReport(null); setExamSubView("config"); }} style={{ flex: 1, padding: "16px", background: "#3451D1", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>🔄 Recommencer</button>
                     <button className="hov" onClick={() => { setExamAnswers([]); setExamQueue([]); setExamAiReport(null); setExamSubView("home"); }} style={{ flex: 1, padding: "16px", background: theme.cardBg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>🏠 Accueil Examens</button>
                   </div>
                 </div>
@@ -5446,18 +5943,18 @@ ${langInstr}`,
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 24 }}>
                   <button onClick={() => setExamSubView("home")} className="hov" style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontWeight: 600 }}>← Retour</button>
-                  <button onClick={() => { setNewCustomExam({ title: "", description: "", questions: [] }); setExamSubView("createCustom"); }} style={{ padding: "10px 20px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>+ Créer</button>
+                  <button onClick={() => { setNewCustomExam({ title: "", description: "", questions: [] }); setExamSubView("createCustom"); }} style={{ padding: "10px 20px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>+ Créer</button>
                 </div>
                 {customExams.length === 0
                   ? <div style={{ textAlign: "center", color: theme.textMuted, padding: "48px 0" }}>Aucun examen personnalisé. Crée le tien !</div>
                   : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
                       {customExams.map(exam => (
-                        <div key={exam.id} style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, borderTop: "4px solid #7B5FF5" }}>
+                        <div key={exam.id} style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, borderTop: "4px solid #4D6BFE" }}>
                           <div style={{ fontWeight: 900, color: theme.text, fontSize: 18, marginBottom: 6 }}>{exam.title}</div>
                           <div style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>{exam.description}</div>
-                          <div style={{ fontSize: 12, color: "#7B5FF5", fontWeight: 700, marginBottom: 16 }}>{exam.questions.length} questions</div>
+                          <div style={{ fontSize: 12, color: "#4D6BFE", fontWeight: 700, marginBottom: 16 }}>{exam.questions.length} questions</div>
                           <div style={{ display: "flex", gap: 8 }}>
-                            <button onClick={() => startExam(exam)} style={{ flex: 1, padding: "10px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>🚀 Passer</button>
+                            <button onClick={() => startExam(exam)} style={{ flex: 1, padding: "10px", background: "#3451D1", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>🚀 Passer</button>
                             <button onClick={() => setCustomExams(p => p.filter(e => e.id !== exam.id))} style={{ padding: "10px 14px", background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 10, cursor: "pointer" }}>🗑️</button>
                           </div>
                         </div>
@@ -5478,23 +5975,23 @@ ${langInstr}`,
                     </div>
                     <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}` }}>
                       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: false}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: !customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: !customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>🃏 Flashcard</button>
-                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: true}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: customExamEditQ.isQcm ? "#7B5FF5" : theme.inputBg, color: customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>📝 QCM</button>
+                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: false}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: !customExamEditQ.isQcm ? "#4D6BFE" : theme.inputBg, color: !customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>🃏 Flashcard</button>
+                        <button onClick={() => setCustomExamEditQ(q => ({...q, isQcm: true}))} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: customExamEditQ.isQcm ? "#4D6BFE" : theme.inputBg, color: customExamEditQ.isQcm ? "white" : theme.textMuted, fontWeight: 700, cursor: "pointer" }}>📝 QCM</button>
                       </div>
                       <input value={customExamEditQ.question} onChange={e => setCustomExamEditQ(q => ({...q, question: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 12 }} placeholder="Question" />
                       <input value={customExamEditQ.answer} onChange={e => setCustomExamEditQ(q => ({...q, answer: e.target.value}))} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: customExamEditQ.isQcm ? 12 : 20 }} placeholder="Réponse correcte" />
                       {customExamEditQ.isQcm && customExamEditQ.choices.slice(0,3).map((ch, ci) => <input key={ci} value={ch} onChange={e => { const c = [...customExamEditQ.choices]; c[ci] = e.target.value; setCustomExamEditQ(q => ({...q, choices: c})); }} style={{ width: "100%", padding: "14px", background: theme.inputBg, border: `2px solid ${theme.border}`, borderRadius: 12, color: theme.text, marginBottom: 8 }} placeholder={`Fausse réponse ${ci+1}`} />)}
-                      <button onClick={() => { if (!customExamEditQ.question || !customExamEditQ.answer) return; setNewCustomExam(ex => ({...ex, questions: [...ex.questions, { id: Date.now().toString(), question: customExamEditQ.question, answer: customExamEditQ.answer, isQcm: customExamEditQ.isQcm, choices: customExamEditQ.isQcm ? [...customExamEditQ.choices.slice(0,3), customExamEditQ.answer] : [] }]})); setCustomExamEditQ({ question: "", answer: "", choices: ["","","",""], isQcm: customExamEditQ.isQcm }); showToast("Question ajoutée"); }} style={{ width: "100%", padding: "14px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 12 }}>+ Ajouter la question</button>
+                      <button onClick={() => { if (!customExamEditQ.question || !customExamEditQ.answer) return; setNewCustomExam(ex => ({...ex, questions: [...ex.questions, { id: Date.now().toString(), question: customExamEditQ.question, answer: customExamEditQ.answer, isQcm: customExamEditQ.isQcm, choices: customExamEditQ.isQcm ? [...customExamEditQ.choices.slice(0,3), customExamEditQ.answer] : [] }]})); setCustomExamEditQ({ question: "", answer: "", choices: ["","","",""], isQcm: customExamEditQ.isQcm }); showToast("Question ajoutée"); }} style={{ width: "100%", padding: "14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 12 }}>+ Ajouter la question</button>
                     </div>
-                    <button onClick={() => { if (!newCustomExam.title || newCustomExam.questions.length === 0) return; setCustomExams(p => [...p, { ...newCustomExam, id: Date.now().toString(), createdAt: today() }]); setExamSubView("custom"); showToast("Examen sauvegardé !"); }} style={{ width: "100%", padding: "16px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 20 }}>💾 Sauvegarder l'examen</button>
+                    <button onClick={() => { if (!newCustomExam.title || newCustomExam.questions.length === 0) return; setCustomExams(p => [...p, { ...newCustomExam, id: Date.now().toString(), createdAt: today() }]); setExamSubView("custom"); showToast("Examen sauvegardé !"); }} style={{ width: "100%", padding: "16px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", marginTop: 20 }}>💾 Sauvegarder l'examen</button>
                   </div>
                   <div style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, maxHeight: 600, overflowY: "auto" }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: theme.textMuted, marginBottom: 16 }}>APERÇU ({newCustomExam.questions.length} questions)</div>
                     {newCustomExam.questions.map((q, i) => (
-                      <div key={q.id} style={{ background: theme.inputBg, padding: 14, borderRadius: 12, marginBottom: 10, borderLeft: `4px solid ${q.isQcm ? "#7B5FF5" : "#3B82F6"}` }}>
-                        <div style={{ fontSize: 11, color: q.isQcm ? "#7B5FF5" : "#3B82F6", fontWeight: 800, marginBottom: 4 }}>{q.isQcm ? "QCM" : "FLASHCARD"}</div>
+                      <div key={q.id} style={{ background: theme.inputBg, padding: 14, borderRadius: 12, marginBottom: 10, borderLeft: `4px solid ${q.isQcm ? "#4D6BFE" : "#4D6BFE"}` }}>
+                        <div style={{ fontSize: 11, color: q.isQcm ? "#4D6BFE" : "#4D6BFE", fontWeight: 800, marginBottom: 4 }}>{q.isQcm ? "QCM" : "FLASHCARD"}</div>
                         <div style={{ fontWeight: 700, color: theme.text }}>{q.question}</div>
-                        <div style={{ color: "#10B981", fontSize: 12 }}>✓ {q.answer}</div>
+                        <div style={{ color: "#4D6BFE", fontSize: 12 }}>✓ {q.answer}</div>
                       </div>
                     ))}
                   </div>
@@ -5507,11 +6004,11 @@ ${langInstr}`,
                        {view === "practice" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
             {/* HEADER */}
-            <div style={{ background: "linear-gradient(135deg, #0F172A 0%, #065F46 60%, #059669 100%)", borderRadius: 28, padding: "36px", marginBottom: 28, position: "relative", overflow: "hidden", boxShadow: "0 10px 40px rgba(5,150,105,0.2)" }}>
+            <div style={{ background: "linear-gradient(135deg, #1A0800 0%, #1E3A8A 60%, #3451D1 100%)", borderRadius: 28, padding: "36px", marginBottom: 28, position: "relative", overflow: "hidden", boxShadow: "0 10px 40px rgba(5,150,105,0.2)" }}>
               <div style={{ position: "absolute", top: -20, right: -20, fontSize: 160, opacity: 0.06 }}>🗣️</div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: "#6EE7B7", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>AI ENGLISH TRAINING CENTER</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: "#A5B4FC", letterSpacing: 3, marginBottom: 8, fontFamily: "JetBrains Mono" }}>AI ENGLISH TRAINING CENTER</div>
               <h1 style={{ fontSize: 30, fontWeight: 900, color: "white", marginBottom: 8 }}>{practiceImmersionMode ? "Full Immersion 🇬🇧" : "English Practice Room 🇬🇧"}</h1>
-              <p style={{ color: "#A7F3D0", fontSize: 14, marginBottom: 20 }}>Écrire, parler, simuler un examen, suivre sa progression.</p>
+              <p style={{ color: "#C7D2FE", fontSize: 14, marginBottom: 20 }}>Écrire, parler, simuler un examen, suivre sa progression.</p>
 
               {/* Navigation principale */}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
@@ -5539,9 +6036,9 @@ ${langInstr}`,
               {/* Barre d'options rapides (visible seulement pour chat) */}
               {practiceSubView === "chat" && (
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>TOPIC</span><select value={practiceTopic} onChange={e => setPracticeTopic(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 160 }}>{["Free conversation", "Job interview", "Technology & AI", "Daily life in Senegal", "Programming & coding"].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>LEVEL</span><select value={practiceLevel} onChange={e => setPracticeLevel(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="beginner">🟢 Beginner</option><option value="intermediate">🟡 Intermediate</option><option value="advanced">🔴 Advanced</option></select></div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#6EE7B7", fontWeight: 700 }}>PERSONA</span><select value={practicePersona} onChange={e => setPracticePersona(e.target.value)} style={{ padding: "10px 14px", background: "#064E3B", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="Standard">👨‍🏫 Standard</option><option value="MMA">🥊 MMA Fighter</option><option value="Recruteur">💼 Tech Recruiter</option></select></div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>TOPIC</span><select value={practiceTopic} onChange={e => setPracticeTopic(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer", minWidth: 160 }}>{["Free conversation", "Job interview", "Technology & AI", "Daily life in Senegal", "Programming & coding"].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>LEVEL</span><select value={practiceLevel} onChange={e => setPracticeLevel(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="beginner">🟢 Beginner</option><option value="intermediate">🟡 Intermediate</option><option value="advanced">🔴 Advanced</option></select></div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}><span style={{ fontSize: 11, color: "#A5B4FC", fontWeight: 700 }}>PERSONA</span><select value={practicePersona} onChange={e => setPracticePersona(e.target.value)} style={{ padding: "10px 14px", background: "#1E3A8A", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}><option value="Standard">👨‍🏫 Standard</option><option value="MMA">🥊 MMA Fighter</option><option value="Recruteur">💼 Tech Recruiter</option></select></div>
                   <button onClick={resetPracticeChat} className="hov" style={{ padding: "10px 18px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, cursor: "pointer" }}>🔄 New Session</button>
                 </div>
               )}
@@ -5549,24 +6046,24 @@ ${langInstr}`,
 
             {/* ══ CHAT (existant) ══ */}
             {practiceSubView === "chat" && (
-              <div style={{ background: theme.cardBg, border: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", height: 480 }}>
+              <div style={{ background: theme.cardBg, border: `1px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", height: 480 }}>
                 <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 16 }}>
                   {practiceMessages.map((msg, i) => (
                     <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
-                      {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div>}
-                      <div style={{ maxWidth: "75%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : (isDarkMode?"#334155":"#F0FDF4"), color: msg.role === "user" ? "white" : theme.text, fontSize: 15, lineHeight: 1.6 }}>
+                      {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div>}
+                      <div style={{ maxWidth: "75%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg, #3451D1, #4D6BFE)" : (isDarkMode?"#3D2000":"#FFFFFF"), color: msg.role === "user" ? "white" : theme.text, fontSize: 15, lineHeight: 1.6 }}>
                         {msg.text}
-                        {msg.role === "assistant" && <button onClick={() => speakText(msg.text)} style={{ display: "block", marginTop: 8, background: "none", border: "none", color: "#059669", cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>🔊 Listen</button>}
+                        {msg.role === "assistant" && <button onClick={() => speakText(msg.text)} style={{ display: "block", marginTop: 8, background: "none", border: "none", color: "#3451D1", cursor: "pointer", fontSize: 13, fontWeight: 700, padding: 0 }}>🔊 Listen</button>}
                       </div>
-                      {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#1D4ED8,#7B5FF5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>😊</div>}
+                      {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>😊</div>}
                     </div>
                   ))}
-                  {practiceLoading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#059669,#10B981)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div><div style={{ background: isDarkMode?"#334155":"#F0FDF4", borderRadius: "20px 20px 20px 4px", padding: "14px 18px", display: "flex", gap: 6 }}>{[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#059669", animation: `pulse 1.2s ${i*0.2}s infinite` }} />)}</div></div>}
+                  {practiceLoading && <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🤖</div><div style={{ background: isDarkMode?"#3D2000":"#FFFFFF", borderRadius: "20px 20px 20px 4px", padding: "14px 18px", display: "flex", gap: 6 }}>{[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#3451D1", animation: `pulse 1.2s ${i*0.2}s infinite` }} />)}</div></div>}
                   <div ref={practiceEndRef} />
                 </div>
                 {/* Correction (inchangée) */}
                 {practiceShowCorrection && practiceCorrections.length > 0 && (
-                  <div style={{ padding: "0 24px 12px", background: isDarkMode?"#1E293B":"#F0FDF4", borderTop: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}` }}>
+                  <div style={{ padding: "0 24px 12px", background: isDarkMode?"#2A1400":"#FFFFFF", borderTop: `1px solid ${isDarkMode?"#3D2000":"#EEF2FF"}` }}>
                     <div style={{ background: "#FFF3CD", borderRadius: 10, padding: "10px 14px", fontSize: 13 }}>
                       <div style={{ fontWeight:700, color:"#856404", marginBottom:4 }}>🔍 Correction</div>
                       <div style={{ color:"#856404" }}><s>{practiceCorrections[0].original}</s></div>
@@ -5576,10 +6073,10 @@ ${langInstr}`,
                     </div>
                   </div>
                 )}
-                <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode?"#334155":"#D1FAE5"}`, background: isDarkMode?"#1E293B":"#F0FDF4", display: "flex", gap: 10, alignItems: "center" }}>
-                  <button onClick={togglePracticeMic} style={{ width: 52, height: 52, borderRadius: 16, flexShrink: 0, background: practiceListening ? "linear-gradient(135deg, #EF4444, #F97316)" : "linear-gradient(135deg, #059669, #10B981)", border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", animation: practiceListening ? "pulse 0.8s infinite" : "none" }}>{practiceListening ? "⏹️" : "🎙️"}</button>
-                  <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPracticeMessage(practiceInput); } }} placeholder={practiceListening ? "🎙️ Listening... click ⏹️ when finished!" : "Type in English or use mic..."} style={{ flex: 1, padding: "14px 18px", background: theme.inputBg, border: `2px solid ${isDarkMode?"#334155":"#D1FAE5"}`, borderRadius: 14, fontSize: 15, color: theme.text }} disabled={practiceListening || practiceInput.includes("⏳")} />
-                  <button onClick={() => sendPracticeMessage(practiceInput)} disabled={!practiceInput.trim() || practiceLoading || practiceListening} style={{ width: 52, height: 52, borderRadius: 16, background: practiceInput.trim() ? "linear-gradient(135deg,#1D4ED8,#3B82F6)" : theme.inputBg, border: "none", cursor: practiceInput.trim() ? "pointer" : "default", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{practiceLoading ? "⏳" : "➤"}</button>
+                <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, background: isDarkMode?"#2A1400":"#FFFFFF", display: "flex", gap: 10, alignItems: "center" }}>
+                  <button onClick={togglePracticeMic} style={{ width: 52, height: 52, borderRadius: 16, flexShrink: 0, background: practiceListening ? "linear-gradient(135deg, #EF4444, #4D6BFE)" : "linear-gradient(135deg, #3451D1, #4D6BFE)", border: "none", cursor: "pointer", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", animation: practiceListening ? "pulse 0.8s infinite" : "none" }}>{practiceListening ? "⏹️" : "🎙️"}</button>
+                  <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPracticeMessage(practiceInput); } }} placeholder={practiceListening ? "🎙️ Listening... click ⏹️ when finished!" : "Type in English or use mic..."} style={{ flex: 1, padding: "14px 18px", background: theme.inputBg, border: `2px solid ${isDarkMode?"#3D2000":"#EEF2FF"}`, borderRadius: 14, fontSize: 15, color: theme.text }} disabled={practiceListening || practiceInput.includes("⏳")} />
+                  <button onClick={() => sendPracticeMessage(practiceInput)} disabled={!practiceInput.trim() || practiceLoading || practiceListening} style={{ width: 52, height: 52, borderRadius: 16, background: practiceInput.trim() ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.inputBg, border: "none", cursor: practiceInput.trim() ? "pointer" : "default", fontSize: 22, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{practiceLoading ? "⏳" : "➤"}</button>
                 </div>
               </div>
             )}
@@ -5590,9 +6087,9 @@ ${langInstr}`,
                 <h2 style={{ marginTop:0 }}>📝 Writing Lab</h2>
                 <input value={practiceWritingPrompt} onChange={e => setPracticeWritingPrompt(e.target.value)} placeholder="Sujet (ex: 'Some people think...')" style={{ width:"100%", padding:12, marginBottom:12, borderRadius:10, border:`1px solid ${theme.border}`, background:theme.inputBg, color:theme.text }} />
                 <textarea value={practiceWritingText} onChange={e => setPracticeWritingText(e.target.value)} rows={10} style={{ width:"100%", padding:14, borderRadius:12, border:`1px solid ${theme.border}`, background:theme.inputBg, color:theme.text, fontFamily:"'JetBrains Mono', monospace", fontSize:13 }} placeholder="Écris ton essai ici..." />
-                <button onClick={submitWriting} disabled={practiceWritingLoading || !practiceWritingText.trim()} style={{ marginTop:12, padding:"14px 28px", background:"linear-gradient(135deg,#1D4ED8,#3B82F6)", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>{practiceWritingLoading ? "Correction..." : "📝 Corriger"}</button>
+                <button onClick={submitWriting} disabled={practiceWritingLoading || !practiceWritingText.trim()} style={{ marginTop:12, padding:"14px 28px", background:"linear-gradient(135deg,#3451D1,#4D6BFE)", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>{practiceWritingLoading ? "Correction..." : "📝 Corriger"}</button>
                 {practiceWritingFeedback && (
-                  <div style={{ marginTop:20, background:isDarkMode?"#1E293B":"#F8FAFC", borderRadius:16, padding:20 }}>
+                  <div style={{ marginTop:20, background:isDarkMode?"#2A1400":"#F8FAFC", borderRadius:16, padding:20 }}>
                     <h3>Score : {practiceWritingFeedback.score}/9</h3>
                     <p><strong>Grammaire :</strong> {practiceWritingFeedback.grammarFeedback}</p>
                     <p><strong>Vocabulaire :</strong> {practiceWritingFeedback.vocabularyFeedback}</p>
@@ -5609,10 +6106,10 @@ ${langInstr}`,
               <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `1px solid ${theme.border}` }}>
                 <h2 style={{ marginTop:0 }}>🎙️ Speaking Lab</h2>
                 <input value={practiceSpeakingPrompt} onChange={e => setPracticeSpeakingPrompt(e.target.value)} placeholder="Phrase à prononcer (optionnel)" style={{ width:"100%", padding:12, marginBottom:12, borderRadius:10, border:`1px solid ${theme.border}`, background:theme.inputBg, color:theme.text }} />
-                <button onClick={startSpeakingRecording} disabled={practiceSpeakingLoading} style={{ padding:"14px 28px", background:"linear-gradient(135deg,#059669,#10B981)", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>🎤 Enregistrer (10s)</button>
+                <button onClick={startSpeakingRecording} disabled={practiceSpeakingLoading} style={{ padding:"14px 28px", background:"linear-gradient(135deg,#3451D1,#4D6BFE)", color:"white", border:"none", borderRadius:12, fontWeight:800, cursor:"pointer" }}>🎤 Enregistrer (10s)</button>
                 {practiceSpeakingTranscript && <div style={{ marginTop:16, background:theme.inputBg, padding:12, borderRadius:10 }}>Transcription : {practiceSpeakingTranscript}</div>}
                 {practiceSpeakingFeedback && (
-                  <div style={{ marginTop:16, background:isDarkMode?"#1E293B":"#F0FDF4", borderRadius:12, padding:16 }}>
+                  <div style={{ marginTop:16, background:isDarkMode?"#2A1400":"#FFFFFF", borderRadius:12, padding:16 }}>
                     <p>Score de prononciation : {practiceSpeakingFeedback.pronunciationScore}/100</p>
                     <p>Conseil : {practiceSpeakingFeedback.advice}</p>
                   </div>
@@ -5624,17 +6121,17 @@ ${langInstr}`,
             {practiceSubView === "ielts" && (
               <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `1px solid ${theme.border}` }}>
                 <h2 style={{ marginTop:0 }}>🎓 IELTS Speaking Simulation</h2>
-                <button onClick={startIeltsSimulation} style={{ padding:"12px 24px", background:"#7B5FF5", color:"white", border:"none", borderRadius:10, fontWeight:800, marginBottom:16 }}>Démarrer la simulation</button>
+                <button onClick={startIeltsSimulation} style={{ padding:"12px 24px", background:"#4D6BFE", color:"white", border:"none", borderRadius:10, fontWeight:800, marginBottom:16 }}>Démarrer la simulation</button>
                 <div style={{ maxHeight:400, overflowY:"auto", marginBottom:12 }}>
                   {practiceIeltsHistory.map((entry, i) => (
                     <div key={i} style={{ marginBottom:10, textAlign:entry.role==="candidate"?"right":"left" }}>
-                      <div style={{ display:"inline-block", padding:"10px 18px", borderRadius:16, background:entry.role==="candidate"?"linear-gradient(135deg,#1D4ED8,#3B82F6)":"#E5E7EB", color:entry.role==="candidate"?"white":"#1F2937", maxWidth:"80%" }}>{entry.text}</div>
+                      <div style={{ display:"inline-block", padding:"10px 18px", borderRadius:16, background:entry.role==="candidate"?"linear-gradient(135deg,#3451D1,#4D6BFE)":"#E5E7EB", color:entry.role==="candidate"?"white":"#1F2937", maxWidth:"80%" }}>{entry.text}</div>
                     </div>
                   ))}
                 </div>
                 <div style={{ display:"flex", gap:8 }}>
                   <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} placeholder="Your answer..." style={{ flex:1, padding:12, borderRadius:10, border:`1px solid ${theme.border}`, background:theme.inputBg, color:theme.text }} onKeyDown={e => { if(e.key==="Enter"){ answerIelts(practiceInput); setPracticeInput(""); }}} />
-                  <button onClick={() => { answerIelts(practiceInput); setPracticeInput(""); }} style={{ padding:"12px 20px", background:"#1D4ED8", color:"white", border:"none", borderRadius:10, fontWeight:800 }}>Envoyer</button>
+                  <button onClick={() => { answerIelts(practiceInput); setPracticeInput(""); }} style={{ padding:"12px 20px", background:"#3451D1", color:"white", border:"none", borderRadius:10, fontWeight:800 }}>Envoyer</button>
                 </div>
               </div>
             )}
@@ -5645,15 +6142,15 @@ ${langInstr}`,
                 <h2 style={{ marginTop:0 }}>📊 Progression</h2>
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(150px,1fr))", gap:16 }}>
                   <div style={{ background:theme.inputBg, borderRadius:12, padding:16, textAlign:"center" }}>
-                    <div style={{ fontSize:28, fontWeight:900, color:"#3B82F6" }}>{practiceStats.totalMessages}</div>
+                    <div style={{ fontSize:28, fontWeight:900, color:"#4D6BFE" }}>{practiceStats.totalMessages}</div>
                     <div>Messages</div>
                   </div>
                   <div style={{ background:theme.inputBg, borderRadius:12, padding:16, textAlign:"center" }}>
-                    <div style={{ fontSize:28, fontWeight:900, color:"#10B981" }}>{practiceStats.sessionsCompleted}</div>
+                    <div style={{ fontSize:28, fontWeight:900, color:"#4D6BFE" }}>{practiceStats.sessionsCompleted}</div>
                     <div>Sessions</div>
                   </div>
                   <div style={{ background:theme.inputBg, borderRadius:12, padding:16, textAlign:"center" }}>
-                    <div style={{ fontSize:28, fontWeight:900, color:"#F59E0B" }}>{practiceStats.levelEstimate}</div>
+                    <div style={{ fontSize:28, fontWeight:900, color:"#6B82F5" }}>{practiceStats.levelEstimate}</div>
                     <div>Niveau estimé</div>
                   </div>
                 </div>
@@ -5673,7 +6170,7 @@ ${langInstr}`,
                   ].map(a => {
                     const unlocked = practiceAchievements.includes(a.id);
                     return (
-                      <div key={a.id} style={{ background:unlocked?"#D1FAE5":"#F3F4F6", borderRadius:14, padding:16, opacity:unlocked?1:0.6 }}>
+                      <div key={a.id} style={{ background:unlocked?"#EEF2FF":"#F3F4F6", borderRadius:14, padding:16, opacity:unlocked?1:0.6 }}>
                         <div style={{ fontSize:24 }}>{a.icon}</div>
                         <div style={{ fontWeight:800 }}>{a.label}</div>
                         <div style={{ fontSize:12 }}>{a.desc}</div>
@@ -5699,15 +6196,15 @@ ${langInstr}`,
                     <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>🏫 MémoMaître Academy</h1>
                     <p style={{ color: theme.textMuted, marginTop: 6 }}>Université personnelle IA — roadmaps, leçons interactives, projets, éditeur de code.</p>
                   </div>
-                  <button onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }} className="btn-glow hov" style={{ padding: "12px 24px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 14 }}>✦ Nouveau cours</button>
+                  <button onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }} className="btn-glow hov" style={{ padding: "12px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 14 }}>✦ Nouveau cours</button>
                 </div>
                 {/* stats Academy */}
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 28 }}>
                   {[
-                    { label: "Cours créés", value: academyCourses.length, icon: "📚", color: "#3B82F6" },
-                    { label: "Terminés", value: academyCourses.filter(c => { const t=c.syllabus?.concepts?.length||0; const d=Object.values(c.progress||{}).filter(v=>v>=5).length; return t>0&&d===t; }).length, icon: "✅", color: "#10B981" },
-                    { label: "Niveau", value: academyLevel, icon: "⬆️", color: "#F59E0B" },
-                    { label: "XP", value: academyExperience, icon: "⚡", color: "#8B5CF6" },
+                    { label: "Cours créés", value: academyCourses.length, icon: "📚", color: "#4D6BFE" },
+                    { label: "Terminés", value: academyCourses.filter(c => { const t=c.syllabus?.concepts?.length||0; const d=Object.values(c.progress||{}).filter(v=>v>=5).length; return t>0&&d===t; }).length, icon: "✅", color: "#4D6BFE" },
+                    { label: "Niveau", value: academyLevel, icon: "⬆️", color: "#6B82F5" },
+                    { label: "XP", value: academyExperience, icon: "⚡", color: "#7B93FF" },
                   ].map(s => (
                     <div key={s.label} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, padding: "16px 18px", display: "flex", alignItems: "center", gap: 12 }}>
                       <span style={{ fontSize: 24 }}>{s.icon}</span>
@@ -5720,11 +6217,11 @@ ${langInstr}`,
                   <div style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>🚀 Parcours suggérés</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
                     {[
-                      { topic: "Python", icon: "🐍", color: "#3B82F6" },
-                      { topic: "Java Spring Boot", icon: "☕", color: "#F0A040" },
+                      { topic: "Python", icon: "🐍", color: "#4D6BFE" },
+                      { topic: "Java Spring Boot", icon: "☕", color: "#7B93FF" },
                       { topic: "JavaScript", icon: "🟨", color: "#F7DF1E" },
-                      { topic: "SQL", icon: "🗄️", color: "#8B5CF6" },
-                      { topic: "Docker", icon: "🐳", color: "#06B6D4" },
+                      { topic: "SQL", icon: "🗄️", color: "#7B93FF" },
+                      { topic: "Docker", icon: "🐳", color: "#7B93FF" },
                       { topic: "Machine Learning", icon: "🤖", color: "#EF4444" },
                     ].map(s => (
                       <button key={s.topic} onClick={() => { setAcademyTopic(s.topic); setAcademySyllabus(null); setAcademyView("new"); }} className="card-hov" style={{ padding: "14px 16px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
@@ -5740,7 +6237,7 @@ ${langInstr}`,
                     <div style={{ fontSize: 56, marginBottom: 16 }}>🎓</div>
                     <h3 style={{ color: theme.text, fontWeight: 800, margin: "0 0 8px" }}>Aucun cours pour l'instant</h3>
                     <p style={{ color: theme.textMuted, marginBottom: 24 }}>Génère ton premier cours avec l'IA en quelques secondes.</p>
-                    <button onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }} className="btn-glow hov" style={{ padding: "14px 32px", background: "linear-gradient(135deg, #1D4ED8, #3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>🗺️ Créer mon premier cours</button>
+                    <button onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }} className="btn-glow hov" style={{ padding: "14px 32px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>🗺️ Créer mon premier cours</button>
                   </div>
                 ) : (
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
@@ -5752,11 +6249,11 @@ ${langInstr}`,
                         <div key={course.id} style={{ background: theme.cardBg, borderRadius: 20, border: `1px solid ${theme.border}`, padding: 20 }} className="card-hov">
                           <h3 style={{ fontWeight: 900 }}>{course.topic}</h3>
                           <div style={{ height: 6, background: theme.inputBg, borderRadius: 3, margin: "12px 0" }}>
-                            <div style={{ height: "100%", width: `${pct}%`, background: "#3B82F6", borderRadius: 3 }} />
+                            <div style={{ height: "100%", width: `${pct}%`, background: "#4D6BFE", borderRadius: 3 }} />
                           </div>
                           <div style={{ fontSize: 12, color: theme.textMuted }}>{done}/{total} concepts</div>
                           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                            <button onClick={() => openCourse(course)} style={{ flex: 1, padding: 8, background: "#1D4ED8", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>▶️ Ouvrir</button>
+                            <button onClick={() => openCourse(course)} style={{ flex: 1, padding: 8, background: "#3451D1", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>▶️ Ouvrir</button>
                             <button onClick={() => deleteCourse(course.id)} style={{ padding: 8, background: "#FEF2F2", color: "#EF4444", border: "none", borderRadius: 8 }}>🗑️</button>
                           </div>
                         </div>
@@ -5775,7 +6272,7 @@ ${langInstr}`,
                   <h1 style={{ fontSize: 26, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>🗺️ Nouveau cours</h1>
                   <p style={{ color: theme.textMuted, marginBottom: 28 }}>L'IA va générer une roadmap complète pour ton sujet.</p>
                   <input value={academyTopic} onChange={e => setAcademyTopic(e.target.value)} placeholder="Ex: Python, Machine Learning, SQL..." style={{ width: "100%", padding: 16, marginBottom: 16, borderRadius: 12, border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
-                  <button onClick={generateSyllabus} disabled={academyLoading || !academyTopic.trim()} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800 }}>{academyLoading ? "Génération..." : "🗺️ Générer le syllabus"}</button>
+                  <button onClick={generateSyllabus} disabled={academyLoading || !academyTopic.trim()} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800 }}>{academyLoading ? "Génération..." : "🗺️ Générer le syllabus"}</button>
                 </div>
               </div>
             )}
@@ -5790,14 +6287,14 @@ ${langInstr}`,
                     <p style={{ color: theme.textMuted }}>{Object.values(academyProgress).filter(v => v >= 5).length} / {academySyllabus?.concepts?.length || 0} concepts maîtrisés</p>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={loadDailyCodingChallenge} style={{ padding: 10, background: "#F59E0B", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>📅 Défi du jour</button>
+                    <button onClick={loadDailyCodingChallenge} style={{ padding: 10, background: "#6B82F5", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>📅 Défi du jour</button>
                     <button onClick={startDuelWithIA} style={{ padding: 10, background: "#EF4444", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>⚔️ Duel IA</button>
-                    <button onClick={() => { setAcademySandbox(true); setAcademyEditorCode(""); setAcademyEditorOutput(""); }} style={{ padding: 10, background: "#10B981", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>🏖️ Sandbox</button>
+                    <button onClick={() => { setAcademySandbox(true); setAcademyEditorCode(""); setAcademyEditorOutput(""); }} style={{ padding: 10, background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>🏖️ Sandbox</button>
                   </div>
                 </div>
                 {/* Barre progression */}
                 <div style={{ height: 10, background: theme.inputBg, borderRadius: 5, marginBottom: 28, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${(Object.values(academyProgress).filter(v => v >= 5).length / (academySyllabus?.concepts?.length || 1)) * 100}%`, background: "#3B82F6", borderRadius: 5 }} />
+                  <div style={{ height: "100%", width: `${(Object.values(academyProgress).filter(v => v >= 5).length / (academySyllabus?.concepts?.length || 1)) * 100}%`, background: "#4D6BFE", borderRadius: 5 }} />
                 </div>
                 {/* Liste concepts (identique à l'ancien code, avec bouton "▶️ Apprendre" qui appelle startLesson */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -5805,23 +6302,23 @@ ${langInstr}`,
                     const mastered = (academyProgress[concept.title] || 0) >= 5;
                     const unlocked = canStartConcept(concept);
                     return (
-                      <div key={idx} style={{ background: theme.cardBg, borderRadius: 18, padding: "18px 22px", borderLeft: `5px solid ${mastered ? "#10B981" : unlocked ? "#3B82F6" : "#475569"}`, opacity: unlocked ? 1 : 0.55 }}>
+                      <div key={idx} style={{ background: theme.cardBg, borderRadius: 18, padding: "18px 22px", borderLeft: `5px solid ${mastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569"}`, opacity: unlocked ? 1 : 0.55 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                          <span style={{ width: 28, height: 28, borderRadius: "50%", background: mastered ? "#10B981" : unlocked ? "#3B82F6" : "#475569", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white", fontWeight: 900, flexShrink: 0 }}>{mastered ? "✓" : idx + 1}</span>
+                          <span style={{ width: 28, height: 28, borderRadius: "50%", background: mastered ? "#4D6BFE" : unlocked ? "#4D6BFE" : "#475569", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white", fontWeight: 900, flexShrink: 0 }}>{mastered ? "✓" : idx + 1}</span>
                           <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>{concept.title}</span>
-                          {mastered && <span style={{ fontSize: 11, background: "#D1FAE5", color: "#065F46", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>✅ Maîtrisé</span>}
+                          {mastered && <span style={{ fontSize: 11, background: "#EEF2FF", color: "#1E3A8A", padding: "2px 8px", borderRadius: 20, fontWeight: 700 }}>✅ Maîtrisé</span>}
                         </div>
-                        <button onClick={() => { if (unlocked) startLesson(concept); }} disabled={!unlocked} style={{ padding: "10px 20px", borderRadius: 12, border: "none", background: unlocked ? "linear-gradient(135deg, #1D4ED8, #3B82F6)" : "#E5E7EB", color: unlocked ? "white" : "#9CA3AF", fontWeight: 800, cursor: unlocked ? "pointer" : "not-allowed", marginTop: 8 }}>▶️ Apprendre</button>
+                        <button onClick={() => { if (unlocked) startLesson(concept); }} disabled={!unlocked} style={{ padding: "10px 20px", borderRadius: 12, border: "none", background: unlocked ? "linear-gradient(135deg, #3451D1, #4D6BFE)" : "#E5E7EB", color: unlocked ? "white" : "#9CA3AF", fontWeight: 800, cursor: unlocked ? "pointer" : "not-allowed", marginTop: 8 }}>▶️ Apprendre</button>
                       </div>
                     );
                   })}
                 </div>
                 {/* Certificat si terminé */}
                 {academySyllabus?.concepts?.length > 0 && Object.values(academyProgress).filter(v => v >= 5).length === academySyllabus.concepts.length && (
-                  <div style={{ marginTop: 28, textAlign: "center", background: "linear-gradient(135deg,#10B981,#059669)", borderRadius: 20, padding: 32, color: "white" }}>
+                  <div style={{ marginTop: 28, textAlign: "center", background: "linear-gradient(135deg,#4D6BFE,#3451D1)", borderRadius: 20, padding: 32, color: "white" }}>
                     <div style={{ fontSize: 52 }}>🏆</div>
                     <h2>Cours terminé !</h2>
-                    <button onClick={generateCertificate} style={{ padding: "12px 28px", background: "white", color: "#10B981", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer" }}>📜 Obtenir le certificat</button>
+                    <button onClick={generateCertificate} style={{ padding: "12px 28px", background: "white", color: "#4D6BFE", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer" }}>📜 Obtenir le certificat</button>
                   </div>
                 )}
                 {/* Certificats list */}
@@ -5843,7 +6340,7 @@ ${langInstr}`,
                   <button onClick={() => setAcademyView("home")} style={{ background: "none", border: "none", color: theme.highlight, cursor: "pointer", fontWeight: 700, fontSize: 14 }}>← Retour au cours</button>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     {quizTimerActive && quizTimer !== null && (
-                      <div style={{ background: quizTimer <= 10 ? "#EF4444" : "#F59E0B", color: "white", borderRadius: 20, padding: "4px 14px", fontWeight: 900, fontSize: 15 }}>⏱ {quizTimer}s</div>
+                      <div style={{ background: quizTimer <= 10 ? "#EF4444" : "#6B82F5", color: "white", borderRadius: 20, padding: "4px 14px", fontWeight: 900, fontSize: 15 }}>⏱ {quizTimer}s</div>
                     )}
                     <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 700, color: theme.textMuted }}>
                       {lessonState === "explain" ? "📖 Lecture" : lessonState === "quiz" ? "🎯 Quiz" : lessonState === "results" ? "🏆 Résultats" : "⏳"}
@@ -5870,7 +6367,7 @@ ${langInstr}`,
                   <div>
                     {/* Bloc explication */}
                     <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, marginBottom: 20, border: `1px solid ${theme.border}` }}>
-                      <div style={{ fontWeight: 800, color: "#3B82F6", marginBottom: 16, fontSize: 16 }}>📖 Explication</div>
+                      <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 16, fontSize: 16 }}>📖 Explication</div>
                       <div style={{ lineHeight: 1.8, color: theme.text, fontSize: 15 }}
                         dangerouslySetInnerHTML={{ __html: highlightCode(currentLesson.explanation?.replace(/\n/g, "<br/>") || "") }}
                       />
@@ -5884,38 +6381,38 @@ ${langInstr}`,
                           value={academyEditorCode}
                           onChange={e => setAcademyEditorCode(e.target.value)}
                           rows={8}
-                          style={{ width: "100%", padding: 14, background: isDarkMode ? "#1E293B" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
+                          style={{ width: "100%", padding: 14, background: isDarkMode ? "#2A1400" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13, resize: "vertical", boxSizing: "border-box" }}
                           placeholder="Écris ton code ici..."
                         />
                         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                          <button onClick={() => submitCode(currentLesson.title)} disabled={academyCorrectionLoading} style={{ padding: "12px 22px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
+                          <button onClick={() => submitCode(currentLesson.title)} disabled={academyCorrectionLoading} style={{ padding: "12px 22px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
                             {academyCorrectionLoading ? "🧠 Analyse..." : "✅ Soumettre pour correction"}
                           </button>
-                          <button onClick={runCode} style={{ padding: "12px 22px", background: "#10B981", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>▶️ Exécuter</button>
-                          <button onClick={getPairSuggestion} disabled={academyPairProgramming} style={{ padding: "12px 22px", background: "#8B5CF6", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🤝 Pair AI</button>
+                          <button onClick={runCode} style={{ padding: "12px 22px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>▶️ Exécuter</button>
+                          <button onClick={getPairSuggestion} disabled={academyPairProgramming} style={{ padding: "12px 22px", background: "#7B93FF", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🤝 Pair AI</button>
                         </div>
                         {academyPairSuggestion && (
-                          <div style={{ marginTop: 12, background: isDarkMode ? "#334155" : "#F5F3FF", borderRadius: 10, padding: 14 }}>
+                          <div style={{ marginTop: 12, background: isDarkMode ? "#3D2000" : "#FFFFFF", borderRadius: 10, padding: 14 }}>
                             <strong>🤖 Suggestion IA :</strong><br/>
                             <span style={{ color: theme.text }}>{academyPairSuggestion}</span>
                           </div>
                         )}
                         {academyEditorOutput && (
-                          <div style={{ marginTop: 12, background: isDarkMode ? "#0F172A" : "#F0FFF4", borderRadius: 10, padding: 14, border: `1px solid ${theme.border}` }}>
+                          <div style={{ marginTop: 12, background: isDarkMode ? "#0F1A3A" : "#F0FFF4", borderRadius: 10, padding: 14, border: `1px solid ${theme.border}` }}>
                             <strong>📤 Sortie :</strong>
                             <pre style={{ whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace", color: theme.text, margin: "6px 0 0" }}>{academyEditorOutput}</pre>
                           </div>
                         )}
                         {academyCorrection && (
-                          <div style={{ marginTop: 16, background: academyCorrection.correct ? "#D1FAE5" : "#FEF2F2", borderRadius: 16, padding: 20, border: `1px solid ${academyCorrection.correct ? "#10B981" : "#EF4444"}` }}>
-                            <div style={{ fontWeight: 800, fontSize: 17, color: academyCorrection.correct ? "#065F46" : "#991B1B" }}>
+                          <div style={{ marginTop: 16, background: academyCorrection.correct ? "#EEF2FF" : "#FEF2F2", borderRadius: 16, padding: 20, border: `1px solid ${academyCorrection.correct ? "#4D6BFE" : "#EF4444"}` }}>
+                            <div style={{ fontWeight: 800, fontSize: 17, color: academyCorrection.correct ? "#1E3A8A" : "#991B1B" }}>
                               {academyCorrection.correct ? "✅ Correct !" : "❌ À revoir"} — Score : {academyCorrection.score}/100
                             </div>
                             <p style={{ whiteSpace: "pre-wrap", color: theme.text }}>{academyCorrection.feedback}</p>
                             {academyCorrection.optimizedCode && (
                               <div style={{ marginTop: 12 }}>
                                 <strong>💡 Code optimisé :</strong>
-                                <pre style={{ background: isDarkMode ? "#1E293B" : "#F8FAFC", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace" }}>{academyCorrection.optimizedCode}</pre>
+                                <pre style={{ background: isDarkMode ? "#2A1400" : "#F8FAFC", padding: 12, borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "'JetBrains Mono', monospace" }}>{academyCorrection.optimizedCode}</pre>
                               </div>
                             )}
                           </div>
@@ -5939,11 +6436,11 @@ ${langInstr}`,
                       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
                         {/* Carte : Points clés */}
                         <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#3B82F6", marginBottom: 10, fontSize: 14 }}>🔑 Points clés à retenir</div>
+                          <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 10, fontSize: 14 }}>🔑 Points clés à retenir</div>
                           <div style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.7 }}>
                             {currentLesson.explanation?.split(". ").filter(Boolean).slice(0, 3).map((pt, i) => (
                               <div key={i} style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                                <span style={{ color: "#3B82F6", fontWeight: 900, flexShrink: 0 }}>›</span>
+                                <span style={{ color: "#4D6BFE", fontWeight: 900, flexShrink: 0 }}>›</span>
                                 <span>{pt.trim()}.</span>
                               </div>
                             ))}
@@ -5951,21 +6448,21 @@ ${langInstr}`,
                         </div>
                         {/* Carte : Générer des fiches */}
                         <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#10B981", marginBottom: 10, fontSize: 14 }}>🃏 Convertir en fiches</div>
+                          <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 10, fontSize: 14 }}>🃏 Convertir en fiches</div>
                           <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Génère des fiches FSRS à partir de cette leçon pour la révision spaced.</p>
-                          <button onClick={() => generateCardsFromLesson(currentLesson)} style={{ width: "100%", padding: "10px 16px", background: "#10B981", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                          <button onClick={() => generateCardsFromLesson(currentLesson)} style={{ width: "100%", padding: "10px 16px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
                             ✨ Générer les fiches
                           </button>
                         </div>
                         {/* Carte : Expliquer simplement */}
                         <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
-                          <div style={{ fontWeight: 800, color: "#F59E0B", marginBottom: 10, fontSize: 14 }}>🧒 Expliquer simplement</div>
+                          <div style={{ fontWeight: 800, color: "#6B82F5", marginBottom: 10, fontSize: 14 }}>🧒 Expliquer simplement</div>
                           <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 12 }}>Reformuler le concept comme si tu avais 10 ans.</p>
-                          <button onClick={() => explainLike5(currentLesson.explanation)} style={{ width: "100%", padding: "10px 16px", background: "#F59E0B", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                          <button onClick={() => explainLike5(currentLesson.explanation)} style={{ width: "100%", padding: "10px 16px", background: "#6B82F5", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
                             🧸 Simplifier
                           </button>
                           {labExplainLike5 && (
-                            <div style={{ marginTop: 10, padding: 12, background: isDarkMode ? "#1E293B" : "#FFFBEB", borderRadius: 10, fontSize: 13, color: theme.text }}>
+                            <div style={{ marginTop: 10, padding: 12, background: isDarkMode ? "#2A1400" : "#EFF3FF", borderRadius: 10, fontSize: 13, color: theme.text }}>
                               {labExplainLike5}
                             </div>
                           )}
@@ -5975,8 +6472,8 @@ ${langInstr}`,
 
                     {/* Prévisualisation des fiches générées */}
                     {showCardsPreview && generatedCards.length > 0 && (
-                      <div style={{ background: theme.cardBg, border: `1px solid #10B981`, borderRadius: 20, padding: 20, marginBottom: 20 }}>
-                        <div style={{ fontWeight: 800, color: "#10B981", marginBottom: 12 }}>🃏 {generatedCards.length} fiches prêtes</div>
+                      <div style={{ background: theme.cardBg, border: `1px solid #4D6BFE`, borderRadius: 20, padding: 20, marginBottom: 20 }}>
+                        <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 12 }}>🃏 {generatedCards.length} fiches prêtes</div>
                         {generatedCards.slice(0, 3).map((c, i) => (
                           <div key={i} style={{ background: theme.inputBg, borderRadius: 10, padding: 12, marginBottom: 8 }}>
                             <div style={{ fontWeight: 700, fontSize: 13 }}>Q: {c.front}</div>
@@ -5984,7 +6481,7 @@ ${langInstr}`,
                           </div>
                         ))}
                         {generatedCards.length > 3 && <div style={{ color: theme.textMuted, fontSize: 12, textAlign: "center" }}>+{generatedCards.length - 3} autres fiches...</div>}
-                        <button onClick={confirmBatch} style={{ marginTop: 12, width: "100%", padding: "10px 16px", background: "#10B981", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
+                        <button onClick={confirmBatch} style={{ marginTop: 12, width: "100%", padding: "10px 16px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
                           ✅ Sauvegarder les fiches
                         </button>
                       </div>
@@ -5992,7 +6489,7 @@ ${langInstr}`,
 
                     {/* Bouton passer au quiz */}
                     <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
-                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#7B5FF5,#A78BFA)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>
+                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "16px 24px", background: "linear-gradient(135deg,#4D6BFE,#A78BFA)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, cursor: "pointer", fontSize: 15 }}>
                         🎯 Passer au quiz →
                       </button>
                     </div>
@@ -6003,7 +6500,7 @@ ${langInstr}`,
                 {lessonState === "quiz" && lessonQuiz && (
                   <div style={{ background: theme.cardBg, borderRadius: 20, padding: 28, border: `1px solid ${theme.border}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                      <div style={{ fontWeight: 800, color: "#7B5FF5", fontSize: 16 }}>🎯 Quiz — {currentLesson.title}</div>
+                      <div style={{ fontWeight: 800, color: "#4D6BFE", fontSize: 16 }}>🎯 Quiz — {currentLesson.title}</div>
                       <div style={{ fontSize: 12, color: theme.textMuted }}>{lessonQuiz.length} questions</div>
                     </div>
                     {lessonQuiz.map((q, idx) => (
@@ -6017,7 +6514,7 @@ ${langInstr}`,
                         />
                       </div>
                     ))}
-                    <button onClick={submitQuiz} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
+                    <button onClick={submitQuiz} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>
                       ✅ Valider le quiz
                     </button>
                     <button onClick={() => setLessonState("explain")} style={{ width: "100%", marginTop: 8, padding: 12, background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.textMuted, fontWeight: 700, cursor: "pointer" }}>
@@ -6030,7 +6527,7 @@ ${langInstr}`,
                 {lessonState === "results" && quizResults && (
                   <div>
                     {/* Score global */}
-                    <div style={{ background: quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "linear-gradient(135deg,#10B981,#059669)" : "linear-gradient(135deg,#F59E0B,#D97706)", borderRadius: 24, padding: 28, textAlign: "center", color: "white", marginBottom: 20 }}>
+                    <div style={{ background: quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "linear-gradient(135deg,#4D6BFE,#3451D1)" : "linear-gradient(135deg,#6B82F5,#4D6BFE)", borderRadius: 24, padding: 28, textAlign: "center", color: "white", marginBottom: 20 }}>
                       <div style={{ fontSize: 48 }}>{quizResults.filter(r => r.isCorrect).length >= quizResults.length * 0.6 ? "🏆" : "💪"}</div>
                       <div style={{ fontSize: 32, fontWeight: 900, margin: "8px 0" }}>
                         {quizResults.filter(r => r.isCorrect).length} / {quizResults.length}
@@ -6042,10 +6539,10 @@ ${langInstr}`,
                     {/* Détail par question */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
                       {quizResults.map((r, i) => (
-                        <div key={i} style={{ background: theme.cardBg, borderRadius: 14, padding: 16, border: `1px solid ${r.isCorrect ? "#10B981" : "#EF4444"}` }}>
+                        <div key={i} style={{ background: theme.cardBg, borderRadius: 14, padding: 16, border: `1px solid ${r.isCorrect ? "#4D6BFE" : "#EF4444"}` }}>
                           <div style={{ fontWeight: 700, color: theme.text, marginBottom: 6, fontSize: 14 }}>{i + 1}. {r.question}</div>
-                          <div style={{ fontSize: 13, color: r.isCorrect ? "#10B981" : "#EF4444" }}>Ta réponse : {r.userAnswer || "(vide)"}</div>
-                          {!r.isCorrect && <div style={{ fontSize: 13, color: "#10B981", marginTop: 4 }}>✅ Bonne réponse : {r.correctAnswer}</div>}
+                          <div style={{ fontSize: 13, color: r.isCorrect ? "#4D6BFE" : "#EF4444" }}>Ta réponse : {r.userAnswer || "(vide)"}</div>
+                          {!r.isCorrect && <div style={{ fontSize: 13, color: "#4D6BFE", marginTop: 4 }}>✅ Bonne réponse : {r.correctAnswer}</div>}
                         </div>
                       ))}
                     </div>
@@ -6054,10 +6551,10 @@ ${langInstr}`,
                       <button onClick={() => { setLessonState("explain"); setQuizAnswers({}); setQuizResults(null); }} style={{ flex: 1, padding: "14px 20px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 14, color: theme.text, fontWeight: 800, cursor: "pointer" }}>
                         🔄 Relire la leçon
                       </button>
-                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "14px 20px", background: "#7B5FF5", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                      <button onClick={() => { setLessonState("quiz"); setQuizAnswers({}); setQuizResults(null); startQuizTimer(120); }} style={{ flex: 1, padding: "14px 20px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
                         🔁 Refaire le quiz
                       </button>
-                      <button onClick={() => setAcademyView("home")} style={{ flex: 1, padding: "14px 20px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
+                      <button onClick={() => setAcademyView("home")} style={{ flex: 1, padding: "14px 20px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>
                         📚 Concept suivant →
                       </button>
                     </div>
@@ -6078,11 +6575,11 @@ ${langInstr}`,
                     value={academyEditorCode}
                     onChange={e => setAcademyEditorCode(e.target.value)}
                     rows={12}
-                    style={{ width: "100%", padding: 14, background: isDarkMode ? "#1E293B" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13 }}
+                    style={{ width: "100%", padding: 14, background: isDarkMode ? "#2A1400" : "#F8FAFC", border: `1px solid ${theme.border}`, borderRadius: 12, fontFamily: "'JetBrains Mono', monospace", color: theme.text, fontSize: 13 }}
                   />
-                  <button onClick={runCode} style={{ marginTop: 12, padding: 12, background: "#10B981", color: "white", border: "none", borderRadius: 10, fontWeight: 800 }}>▶️ Exécuter</button>
+                  <button onClick={runCode} style={{ marginTop: 12, padding: 12, background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800 }}>▶️ Exécuter</button>
                   {academyEditorOutput && (
-                    <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", background: isDarkMode ? "#0F172A" : "#F0FFF4", padding: 14, borderRadius: 10 }}>{academyEditorOutput}</pre>
+                    <pre style={{ marginTop: 12, whiteSpace: "pre-wrap", background: isDarkMode ? "#0F1A3A" : "#F0FFF4", padding: 14, borderRadius: 10 }}>{academyEditorOutput}</pre>
                   )}
                 </div>
               </div>
@@ -6090,13 +6587,13 @@ ${langInstr}`,
 
             {/* ── DÉFI DU JOUR (modal ou intégré, ici rapide) ── */}
             {academyDailyChallenge && (
-              <div style={{ marginTop: 24, background: theme.cardBg, borderRadius: 20, padding: 24, border: `2px solid #F59E0B` }}>
+              <div style={{ marginTop: 24, background: theme.cardBg, borderRadius: 20, padding: 24, border: `2px solid #6B82F5` }}>
                 <h3>📅 Défi du jour</h3>
                 <p>{academyDailyChallenge.problem}</p>
                 <textarea value={academyDailyChallengeSolution} onChange={e => setAcademyDailyChallengeSolution(e.target.value)} rows={4} style={{ width: "100%", padding: 12, background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontFamily: "monospace" }} />
-                <button onClick={submitDailyChallenge} style={{ marginTop: 8, padding: "10px 20px", background: "#F59E0B", color: "white", border: "none", borderRadius: 10, fontWeight: 800 }}>Soumettre</button>
+                <button onClick={submitDailyChallenge} style={{ marginTop: 8, padding: "10px 20px", background: "#6B82F5", color: "white", border: "none", borderRadius: 10, fontWeight: 800 }}>Soumettre</button>
                 {academyDailyResult && (
-                  <div style={{ marginTop: 12, background: academyDailyResult.correct ? "#D1FAE5" : "#FEF2F2", borderRadius: 10, padding: 12 }}>
+                  <div style={{ marginTop: 12, background: academyDailyResult.correct ? "#EEF2FF" : "#FEF2F2", borderRadius: 10, padding: 12 }}>
                     {academyDailyResult.correct ? "✅ Correct !" : "❌ Incorrect"} — {academyDailyResult.feedback}
                   </div>
                 )}
@@ -6111,7 +6608,7 @@ ${langInstr}`,
                 <textarea value={academyDuelUserCode} onChange={e => setAcademyDuelUserCode(e.target.value)} rows={4} style={{ width: "100%", padding: 12, background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontFamily: "monospace" }} placeholder="Ta solution..." />
                 <button onClick={submitDuel} style={{ marginTop: 8, padding: "10px 20px", background: "#EF4444", color: "white", border: "none", borderRadius: 10, fontWeight: 800 }}>Battre l'IA</button>
                 {academyDuelResult && (
-                  <div style={{ marginTop: 12, background: "#FEF3C7", borderRadius: 10, padding: 12 }}>
+                  <div style={{ marginTop: 12, background: "#E8EEFF", borderRadius: 10, padding: 12 }}>
                     Résultat : {academyDuelResult.winner === "user" ? "Tu as gagné !" : academyDuelResult.winner === "ia" ? "L'IA a gagné !" : "Égalité"}<br/>
                     {academyDuelResult.feedback}
                   </div>
@@ -6144,7 +6641,7 @@ ${langInstr}`,
               ].map(tab => (
                 <button key={tab.id} onClick={() => setLabSubView(tab.id)} style={{
                   padding: "10px 18px", borderRadius: 12,
-                  background: labSubView === tab.id ? "linear-gradient(135deg,#1D4ED8,#3B82F6)" : theme.cardBg,
+                  background: labSubView === tab.id ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.cardBg,
                   color: labSubView === tab.id ? "white" : theme.textMuted,
                   border: `1px solid ${labSubView === tab.id ? "transparent" : theme.border}`,
                   fontWeight: 700, fontSize: 13, cursor: "pointer"
@@ -6157,14 +6654,14 @@ ${langInstr}`,
               <div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 28 }}>
                 {[
-                  { icon: "📄", title: "PDF → Fiches", desc: "Charge un PDF, génère des fiches en 1 clic", color: "#3B82F6", bg: "linear-gradient(135deg,#EFF6FF,#DBEAFE)", action: () => setLabSubView("pdf") },
-                  { icon: "📝", title: "Résumé de cours", desc: "Résumé IA : Complet, Flash ou Cornell", color: "#8B5CF6", bg: "linear-gradient(135deg,#F5F3FF,#EDE9FE)", action: () => setLabSubView("resume") },
-                  { icon: "📅", title: "Coach IA", desc: "Planning heure par heure basé sur tes révisions", color: "#10B981", bg: "linear-gradient(135deg,#ECFDF5,#D1FAE5)", action: () => setLabSubView("coach") },
-                  { icon: "🧠", title: "Graphe de savoirs", desc: "Visualise tes connexions de connaissances", color: "#F59E0B", bg: "linear-gradient(135deg,#FFFBEB,#FDE68A)", action: generateGraph },
+                  { icon: "📄", title: "PDF → Fiches", desc: "Charge un PDF, génère des fiches en 1 clic", color: "#4D6BFE", bg: "linear-gradient(135deg,#FFFFFF,#EEF2FF)", action: () => setLabSubView("pdf") },
+                  { icon: "📝", title: "Résumé de cours", desc: "Résumé IA : Complet, Flash ou Cornell", color: "#7B93FF", bg: "linear-gradient(135deg,#FFFFFF,#EEF2FF)", action: () => setLabSubView("resume") },
+                  { icon: "📅", title: "Coach IA", desc: "Planning heure par heure basé sur tes révisions", color: "#4D6BFE", bg: "linear-gradient(135deg,#FFFFFF,#EEF2FF)", action: () => setLabSubView("coach") },
+                  { icon: "🧠", title: "Graphe de savoirs", desc: "Visualise tes connexions de connaissances", color: "#6B82F5", bg: "linear-gradient(135deg,#EFF3FF,#C7D2FE)", action: generateGraph },
                   { icon: "🎯", title: "Anti-Confusion IA", desc: "Génère des fiches sur tes erreurs récentes", color: "#EF4444", bg: "linear-gradient(135deg,#FEF2F2,#FECACA)", action: generateConfusionDestroyer },
-                  { icon: "⚙️", title: "Outils Avancés", desc: "Prédiction, Boss RPG, Salle d'étude", color: "#06B6D4", bg: "linear-gradient(135deg,#ECFEFF,#CFFAFE)", action: () => setLabSubView("tools") },
-                  { icon: "🔬", title: "Analyse FSRS", desc: "Statistiques avancées de rétention par carte", color: "#7C3AED", bg: "linear-gradient(135deg,#F5F3FF,#DDD6FE)", action: () => setLabSubView("tools") },
-                  { icon: "🌐", title: "Exportation", desc: "Exporte tes fiches en JSON, CSV ou Anki", color: "#059669", bg: "linear-gradient(135deg,#ECFDF5,#A7F3D0)", action: () => { const data = JSON.stringify({ expressions, categories }, null, 2); const blob = new Blob([data], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `memomaitre_export_${today()}.json`; a.click(); showToast("📦 Export JSON téléchargé !"); } },
+                  { icon: "⚙️", title: "Outils Avancés", desc: "Prédiction, Boss RPG, Salle d'étude", color: "#7B93FF", bg: "linear-gradient(135deg,#FFFFFF,#CFFAFE)", action: () => setLabSubView("tools") },
+                  { icon: "🔬", title: "Analyse FSRS", desc: "Statistiques avancées de rétention par carte", color: "#3451D1", bg: "linear-gradient(135deg,#FFFFFF,#C7D2FE)", action: () => setLabSubView("tools") },
+                  { icon: "🌐", title: "Exportation", desc: "Exporte tes fiches en JSON, CSV ou Anki", color: "#3451D1", bg: "linear-gradient(135deg,#FFFFFF,#C7D2FE)", action: () => { const data = JSON.stringify({ expressions, categories }, null, 2); const blob = new Blob([data], { type: "application/json" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `memomaitre_export_${today()}.json`; a.click(); showToast("📦 Export JSON téléchargé !"); } },
                 ].map(t => (
                   <button key={t.title} onClick={t.action} className="card-hov" style={{ padding: "22px 20px", background: t.bg, border: `1px solid ${t.color}22`, borderRadius: 18, cursor: "pointer", textAlign: "left", transition: "all 0.2s" }}>
                     <div style={{ fontSize: 32, marginBottom: 10 }}>{t.icon}</div>
@@ -6201,16 +6698,16 @@ ${langInstr}`,
             {labSubView === "pdf" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 {/* ── Upload zone ── */}
-                <div style={{ background: theme.cardBg, borderRadius: 22, padding: "28px", border: `2px dashed ${pdfExtractedText ? "#10B981" : theme.border}` }}>
+                <div style={{ background: theme.cardBg, borderRadius: 22, padding: "28px", border: `2px dashed ${pdfExtractedText ? "#4D6BFE" : theme.border}` }}>
                   <div style={{ textAlign: "center", marginBottom: 20 }}>
                     <div style={{ fontSize: 40, marginBottom: 8 }}>{pdfExtractedText ? "✅" : "📄"}</div>
                     <h2 style={{ color: theme.text, margin: 0, fontSize: 20, fontWeight: 800 }}>
                       {pdfExtractedText ? `"${pdfFileName}" chargé` : "Charge ton cours PDF"}
                     </h2>
                     {pdfExtractedText && (
-                      <p style={{ color: "#10B981", fontWeight: 700, marginTop: 6, fontSize: 14 }}>
+                      <p style={{ color: "#4D6BFE", fontWeight: 700, marginTop: 6, fontSize: 14 }}>
                         {pdfPageCount} pages · {pdfExtractedText.split(" ").length.toLocaleString()} mots extraits
-                        {pdfLang === "ar" && <span style={{ marginLeft: 8, background: "#FEF3C7", color: "#D97706", borderRadius: 8, padding: "2px 8px", fontSize: 12 }}>🌍 Arabe détecté</span>}
+                        {pdfLang === "ar" && <span style={{ marginLeft: 8, background: "#E8EEFF", color: "#4D6BFE", borderRadius: 8, padding: "2px 8px", fontSize: 12 }}>🌍 Arabe détecté</span>}
                       </p>
                     )}
                     {!pdfExtractedText && <p style={{ color: theme.textMuted, fontSize: 13 }}>PDF, TXT, MD — texte extrait localement · Support arabe ✓ · Multi-fichiers possible ↓</p>}
@@ -6218,7 +6715,7 @@ ${langInstr}`,
                   <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                     <label style={{
                       display: "block", flex: 1, padding: "14px",
-                      background: pdfParsing ? theme.inputBg : "linear-gradient(135deg,#1D4ED8,#3B82F6)",
+                      background: pdfParsing ? theme.inputBg : "linear-gradient(135deg,#3451D1,#4D6BFE)",
                       color: "white", borderRadius: 14, fontWeight: 800, fontSize: 15,
                       textAlign: "center", cursor: pdfParsing ? "default" : "pointer"
                     }}>
@@ -6227,7 +6724,7 @@ ${langInstr}`,
                     </label>
                     <label style={{
                       flex: 1, padding: "14px",
-                      background: "linear-gradient(135deg,#7B5FF5,#8B5CF6)", color: "white",
+                      background: "linear-gradient(135deg,#4D6BFE,#7B93FF)", color: "white",
                       borderRadius: 14, fontWeight: 800, fontSize: 15, textAlign: "center", cursor: "pointer", display: "block"
                     }}>
                       📚 Multi-fichiers
@@ -6244,7 +6741,7 @@ ${langInstr}`,
                         </div>
                       ))}
                       <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                        <button onClick={crossAnalyze} disabled={labMultiFiles.length < 2} className="hov" style={{ padding: "6px 12px", background: "#1D4ED8", color: "white", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>🔀 Analyse croisée</button>
+                        <button onClick={crossAnalyze} disabled={labMultiFiles.length < 2} className="hov" style={{ padding: "6px 12px", background: "#3451D1", color: "white", border: "none", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>🔀 Analyse croisée</button>
                       </div>
                     </div>
                   )}
@@ -6267,7 +6764,7 @@ ${langInstr}`,
                               : matches.slice(0, 8).map((line, i) => (
                                 <div key={i} style={{ fontSize: 12, color: theme.text, marginBottom: 6, lineHeight: 1.5, direction: pdfLang === "ar" ? "rtl" : "ltr" }}>
                                   {line.replace(new RegExp(`(${pdfSearchQuery})`, "gi"), "**$1**").split("**").map((part, j) =>
-                                    j % 2 === 1 ? <mark key={j} style={{ background: "#FDE68A", borderRadius: 3, padding: "0 2px" }}>{part}</mark> : part
+                                    j % 2 === 1 ? <mark key={j} style={{ background: "#C7D2FE", borderRadius: 3, padding: "0 2px" }}>{part}</mark> : part
                                   )}
                                 </div>
                               ));
@@ -6280,8 +6777,8 @@ ${langInstr}`,
 
                 {/* Analyse croisée résultat */}
                 {labCrossAnalysis && (
-                  <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `2px solid #7B5FF5` }}>
-                    <h3 style={{ color: "#7B5FF5" }}>🔀 Analyse croisée</h3>
+                  <div style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `2px solid #4D6BFE` }}>
+                    <h3 style={{ color: "#4D6BFE" }}>🔀 Analyse croisée</h3>
                     <p>{labCrossAnalysis.synthesis}</p>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {labCrossAnalysis.fusionCards?.map((card, i) => (
@@ -6314,7 +6811,7 @@ ${langInstr}`,
                 )}
 
                 {/* Résultats des actions rapides */}
-                {labPrerequisites && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16, border: "2px solid #F59E0B" }}><strong>📋 Prérequis manquants :</strong> {labPrerequisites.missing?.join(", ")}<br/><small>{labPrerequisites.suggestion}</small></div>}
+                {labPrerequisites && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16, border: "2px solid #6B82F5" }}><strong>📋 Prérequis manquants :</strong> {labPrerequisites.missing?.join(", ")}<br/><small>{labPrerequisites.suggestion}</small></div>}
                 {labCitations.length > 0 && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>💬 Citations clés</strong><ul>{labCitations.map((q,i) => <li key={i}>{q.text}</li>)}</ul></div>}
                 {labLogicTree && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>🌳 Arbre logique</strong><div>{labLogicTree.mainThesis}</div></div>}
                 {labOnePager && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 20, whiteSpace: "pre-wrap" }}>{labOnePager}</div>}
@@ -6323,8 +6820,8 @@ ${langInstr}`,
                 {labMindMapEditable && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}>{renderMindMapSVG(labMindMapEditable)}</div>}
                 {labTechDiagram && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>📐 Diagramme technique</strong><pre>{labTechDiagram}</pre></div>}
                 {labTimeline && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>📅 Timeline</strong><ul>{labTimeline.map((e,i) => <li key={i}>{e.date}: {e.description}</li>)}</ul></div>}
-                {labWordCloud && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>☁️ Nuage de mots</strong><div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{labWordCloud.map((w,i) => <span key={i} style={{ fontSize: Math.max(12, w.weight/2), color: "#3B82F6" }}>{w.text} </span>)}</div></div>}
-                {labExplainLike5 && <div style={{ background: "#FFFBEB", borderRadius: 16, padding: 16, fontStyle: "italic" }}>🧸 {labExplainLike5}</div>}
+                {labWordCloud && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>☁️ Nuage de mots</strong><div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{labWordCloud.map((w,i) => <span key={i} style={{ fontSize: Math.max(12, w.weight/2), color: "#4D6BFE" }}>{w.text} </span>)}</div></div>}
+                {labExplainLike5 && <div style={{ background: "#EFF3FF", borderRadius: 16, padding: 16, fontStyle: "italic" }}>🧸 {labExplainLike5}</div>}
                 {labPracticeProblems.length > 0 && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 20 }}><strong>📝 Problèmes pratiques</strong><ol>{labPracticeProblems.map((p,i) => <li key={i}><strong>{p.question}</strong><br/><em>{p.solution}</em></li>)}</ol></div>}
                 {labRevisionPlan && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>📅 Plan de révision</strong><pre>{JSON.stringify(labRevisionPlan, null, 2)}</pre></div>}
                 {labImpactReport && <div style={{ background: theme.cardBg, borderRadius: 16, padding: 16 }}><strong>📊 Rapport d'impact</strong><br/>Temps estimé : {labImpactReport.estimatedHours}h<br/>Score prédit : {labImpactReport.predictedScore}/20</div>}
@@ -6337,7 +6834,7 @@ ${langInstr}`,
                         <input value={labSelfTestAnswers[i] || ""} onChange={e => setLabSelfTestAnswers(prev => ({...prev, [i]: e.target.value}))} style={{ width: "100%", padding: 8, borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.inputBg, color: theme.text }} />
                       </div>
                     ))}
-                    <button onClick={submitSelfTest} style={{ padding: "10px 20px", background: "#10B981", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Valider</button>
+                    <button onClick={submitSelfTest} style={{ padding: "10px 20px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Valider</button>
                     {labSelfTestScore !== null && <div style={{ marginTop: 10, fontSize: 18, fontWeight: 900 }}>Score : {labSelfTestScore}/{labSelfTest.length}</div>}
                   </div>
                 )}
@@ -6349,7 +6846,7 @@ ${langInstr}`,
                     <h3 style={{ color: theme.text, fontWeight: 800, margin: "0 0 8px" }}>Analyser le document d'abord</h3>
                     <p style={{ color: theme.textMuted, fontSize: 13, marginBottom: 16 }}>L'IA détecte le sujet, le niveau, les thèmes clés et génère une mind map — avant de créer les fiches.</p>
                     <button onClick={analyzePdf} disabled={pdfAnalysisLoading} className="btn-glow hov" style={{
-                      padding: "14px 32px", background: "linear-gradient(135deg,#7C3AED,#8B5CF6)",
+                      padding: "14px 32px", background: "linear-gradient(135deg,#3451D1,#7B93FF)",
                       color: "white", border: "none", borderRadius: 14, fontWeight: 800, fontSize: 15, cursor: "pointer"
                     }}>
                       {pdfAnalysisLoading ? "⏳ Analyse en cours..." : "🧠 Analyser le PDF"}
@@ -6360,7 +6857,7 @@ ${langInstr}`,
                 {/* Analyse, génération, cartes etc. (conserve tout le code existant pour pdfAnalysis, pdfBatchPreview, etc.) */}
                 {/* Ici on ne remplace pas le code d'analyse et de génération de fiches existant, il reste fonctionnel. On ajoute juste les nouvelles sections. */}
                 {pdfAnalysis && (
-                  <div style={{ background: theme.cardBg, borderRadius: 22, padding: "24px", border: `2px solid #7C3AED` }}>
+                  <div style={{ background: theme.cardBg, borderRadius: 22, padding: "24px", border: `2px solid #3451D1` }}>
                     {/* ... contenu d'analyse (inchangé) ... */}
                   </div>
                 )}
@@ -6402,10 +6899,10 @@ ${langInstr}`,
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={computeAllStats} className="hov" style={{ padding: "8px 16px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, fontWeight: 600 }}>🔄 Actualiser</button>
-                <button onClick={generateStatsAiReport} disabled={statsAiReportLoading} className="hov" style={{ padding: "8px 16px", background: "#7B5FF5", color: "white", border: "none", borderRadius: 10, fontWeight: 700 }}>
+                <button onClick={generateStatsAiReport} disabled={statsAiReportLoading} className="hov" style={{ padding: "8px 16px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 700 }}>
                   {statsAiReportLoading ? "🧠 Analyse..." : "🧠 Rapport IA"}
                 </button>
-                <button onClick={exportStatsAsImage} className="hov" style={{ padding: "8px 16px", background: "#059669", color: "white", border: "none", borderRadius: 10, fontWeight: 700 }}>📸 Exporter</button>
+                <button onClick={exportStatsAsImage} className="hov" style={{ padding: "8px 16px", background: "#3451D1", color: "white", border: "none", borderRadius: 10, fontWeight: 700 }}>📸 Exporter</button>
               </div>
             </div>
 
@@ -6415,19 +6912,19 @@ ${langInstr}`,
               <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}`, boxShadow: "0 4px 15px rgba(0,0,0,0.03)" }}>
                 <h3 style={{ margin: "0 0 16px", color: theme.text, fontWeight: 800 }}>⚡ Vue d'ensemble</h3>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div style={{ background: "linear-gradient(135deg, #F59E0B, #D97706)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
+                  <div style={{ background: "linear-gradient(135deg, #6B82F5, #4D6BFE)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
                     <div style={{ fontSize: 24, fontWeight: 900 }}>{stats.streak}</div>
                     <div style={{ fontSize: 12 }}>jours de streak</div>
                   </div>
-                  <div style={{ background: "linear-gradient(135deg, #10B981, #059669)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
+                  <div style={{ background: "linear-gradient(135deg, #4D6BFE, #3451D1)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
                     <div style={{ fontSize: 24, fontWeight: 900 }}>{masteredCount}/{expressions.length}</div>
                     <div style={{ fontSize: 12 }}>fiches maîtrisées</div>
                   </div>
-                  <div style={{ background: "linear-gradient(135deg, #3B82F6, #1D4ED8)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
+                  <div style={{ background: "linear-gradient(135deg, #4D6BFE, #3451D1)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
                     <div style={{ fontSize: 24, fontWeight: 900 }}>{stats.totalReviews}</div>
                     <div style={{ fontSize: 12 }}>révisions totales</div>
                   </div>
-                  <div style={{ background: "linear-gradient(135deg, #8B5CF6, #6D28D9)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
+                  <div style={{ background: "linear-gradient(135deg, #7B93FF, #6D28D9)", borderRadius: 12, padding: 14, color: "white", textAlign: "center" }}>
                     <div style={{ fontSize: 24, fontWeight: 900 }}>{stats.aiGenerated||0}</div>
                     <div style={{ fontSize: 12 }}>générées par IA</div>
                   </div>
@@ -6436,10 +6933,10 @@ ${langInstr}`,
                 <div style={{ marginTop: 20 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                     <span style={{ fontWeight: 700, color: theme.textMuted }}>Power Level</span>
-                    <span style={{ fontWeight: 800, color: "#F59E0B" }}>{powerLevel} XP</span>
+                    <span style={{ fontWeight: 800, color: "#6B82F5" }}>{powerLevel} XP</span>
                   </div>
                   <div style={{ height: 10, background: theme.inputBg, borderRadius: 5, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${Math.min(100, (powerLevel / 10000) * 100)}%`, background: "linear-gradient(90deg, #F59E0B, #EF4444)", borderRadius: 5 }} />
+                    <div style={{ height: "100%", width: `${Math.min(100, (powerLevel / 10000) * 100)}%`, background: "linear-gradient(90deg, #6B82F5, #EF4444)", borderRadius: 5 }} />
                   </div>
                 </div>
               </div>
@@ -6454,7 +6951,7 @@ ${langInstr}`,
                     return (
                       <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
                         <div style={{ fontSize: 9, fontWeight: 700, color: theme.textMuted, marginBottom: 2 }}>{day.count}</div>
-                        <div style={{ width: "100%", borderRadius: "3px 3px 0 0", background: day.count > 0 ? "#3B82F6" : theme.border, height: `${Math.max(2, h)}px` }} />
+                        <div style={{ width: "100%", borderRadius: "3px 3px 0 0", background: day.count > 0 ? "#4D6BFE" : theme.border, height: `${Math.max(2, h)}px` }} />
                         <div style={{ fontSize: 7, color: theme.textMuted, marginTop: 3 }}>{day.date.slice(5)}</div>
                       </div>
                     );
@@ -6470,7 +6967,7 @@ ${langInstr}`,
                     const h = (pt.retention / 100) * 60;
                     return (
                       <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                        <div style={{ width: "100%", borderRadius: "2px 2px 0 0", background: pt.retention > 70 ? "#10B981" : pt.retention > 50 ? "#F59E0B" : "#EF4444", height: `${Math.max(1, h)}px` }} />
+                        <div style={{ width: "100%", borderRadius: "2px 2px 0 0", background: pt.retention > 70 ? "#4D6BFE" : pt.retention > 50 ? "#6B82F5" : "#EF4444", height: `${Math.max(1, h)}px` }} />
                         {i % 5 === 0 && <div style={{ fontSize: 7, marginTop: 2 }}>{pt.day}</div>}
                       </div>
                     );
@@ -6489,7 +6986,7 @@ ${langInstr}`,
                       <span>{mod.mastered}/{mod.total} (Niv.{mod.avgLevel})</span>
                     </div>
                     <div style={{ height: 6, background: theme.inputBg, borderRadius: 3, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${mod.total ? (mod.mastered/mod.total)*100 : 0}%`, background: mod.color || "#3B82F6", borderRadius: 3 }} />
+                      <div style={{ height: "100%", width: `${mod.total ? (mod.mastered/mod.total)*100 : 0}%`, background: mod.color || "#4D6BFE", borderRadius: 3 }} />
                     </div>
                     {mod.due > 0 && <div style={{ fontSize: 11, color: "#EF4444", marginTop: 2 }}>{mod.due} en retard</div>}
                   </div>
@@ -6505,7 +7002,7 @@ ${langInstr}`,
                     const h = (d.count / max) * 40;
                     return (
                       <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                        <div style={{ width: "100%", background: i > 7 ? "#EF4444" : i > 4 ? "#F59E0B" : "#10B981", borderRadius: "2px 2px 0 0", height: `${Math.max(1, h)}px` }} />
+                        <div style={{ width: "100%", background: i > 7 ? "#EF4444" : i > 4 ? "#6B82F5" : "#4D6BFE", borderRadius: "2px 2px 0 0", height: `${Math.max(1, h)}px` }} />
                         <div style={{ fontSize: 8, marginTop: 2 }}>{i}</div>
                       </div>
                     );
@@ -6526,7 +7023,7 @@ ${langInstr}`,
                   <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                     <span style={{ width: 30, fontWeight: 700 }}>{d.name}</span>
                     <div style={{ flex: 1, height: 6, background: theme.inputBg, borderRadius: 3, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.min(100, d.reviews/10)}%`, background: "#3B82F6", borderRadius: 3 }} />
+                      <div style={{ height: "100%", width: `${Math.min(100, d.reviews/10)}%`, background: "#4D6BFE", borderRadius: 3 }} />
                     </div>
                     <span style={{ fontSize: 12 }}>{d.reviews} rév. (note moy. {d.avgScore})</span>
                   </div>
@@ -6535,12 +7032,12 @@ ${langInstr}`,
 
               {/* 7. Rapport IA */}
               {statsAiReport && (
-                <div style={{ background: "linear-gradient(135deg, #F5F3FF, #EDE9FE)", borderRadius: 20, padding: 24, border: "2px solid #7B5FF5", gridColumn: "1 / -1" }}>
-                  <h3 style={{ color: "#7B5FF5", marginTop: 0 }}>🧠 Rapport IA hebdomadaire</h3>
+                <div style={{ background: "linear-gradient(135deg, #FFFFFF, #EEF2FF)", borderRadius: 20, padding: 24, border: "2px solid #4D6BFE", gridColumn: "1 / -1" }}>
+                  <h3 style={{ color: "#4D6BFE", marginTop: 0 }}>🧠 Rapport IA hebdomadaire</h3>
                   <p style={{ fontStyle: "italic", color: theme.text }}>{statsAiReport.verdict}</p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                     <div>
-                      <h4 style={{ color: "#10B981" }}>💪 Forces</h4>
+                      <h4 style={{ color: "#4D6BFE" }}>💪 Forces</h4>
                       <ul>{statsAiReport.strengths?.map((s,i) => <li key={i}>{s}</li>)}</ul>
                     </div>
                     <div>
@@ -6576,10 +7073,10 @@ ${langInstr}`,
 
   // ── Système de rareté ──
   const RARITY = {
-    commun:    { label: "Commun",    color: "#94A3B8", bg: isDarkMode ? "#1E293B" : "#F1F5F9", glow: "none" },
-    rare:      { label: "Rare",      color: "#3B82F6", bg: isDarkMode ? "#1E3A5F" : "#DBEAFE", glow: "0 0 12px #3B82F640" },
-    epique:    { label: "Épique",    color: "#8B5CF6", bg: isDarkMode ? "#2E1B5B" : "#EDE9FE", glow: "0 0 16px #8B5CF650" },
-    legendaire:{ label: "Légendaire",color: "#F59E0B", bg: isDarkMode ? "#2D1F00" : "#FEF3C7", glow: "0 0 24px #F59E0B60" },
+    commun:    { label: "Commun",    color: "#94A3B8", bg: isDarkMode ? "#2A1400" : "#F1F5F9", glow: "none" },
+    rare:      { label: "Rare",      color: "#4D6BFE", bg: isDarkMode ? "#1E3A5F" : "#EEF2FF", glow: "0 0 12px #4D6BFE40" },
+    epique:    { label: "Épique",    color: "#7B93FF", bg: isDarkMode ? "#2E1B5B" : "#EEF2FF", glow: "0 0 16px #7B93FF50" },
+    legendaire:{ label: "Légendaire",color: "#6B82F5", bg: isDarkMode ? "#2D1F00" : "#E8EEFF", glow: "0 0 24px #6B82F560" },
   };
 
   // ── Badges God Level complets ──
@@ -6665,9 +7162,9 @@ ${langInstr}`,
       {/* ── Bandeau stats ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 32 }}>
         {[
-          { label: "Légendaires", count: rarityCount.legendaire, color: "#F59E0B", icon: "👑" },
-          { label: "Épiques",     count: rarityCount.epique,     color: "#8B5CF6", icon: "💜" },
-          { label: "Rares",       count: rarityCount.rare,       color: "#3B82F6", icon: "💙" },
+          { label: "Légendaires", count: rarityCount.legendaire, color: "#6B82F5", icon: "👑" },
+          { label: "Épiques",     count: rarityCount.epique,     color: "#7B93FF", icon: "💜" },
+          { label: "Rares",       count: rarityCount.rare,       color: "#4D6BFE", icon: "💙" },
           { label: "Communs",     count: rarityCount.commun,     color: "#94A3B8", icon: "⚪" },
         ].map(r => (
           <div key={r.label} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}>
@@ -6721,7 +7218,7 @@ ${langInstr}`,
                 // Badge déverrouillé : date (stockée dans unlockedBadges comme objet si tu veux, sinon on affiche juste ✨)
                 return (
                   <div key={badge.id} style={{
-                    background: isUnlocked ? rar.bg : (isDarkMode ? "#0F172A" : "#F8FAFC"),
+                    background: isUnlocked ? rar.bg : (isDarkMode ? "#0F1A3A" : "#F8FAFC"),
                     border: `2px solid ${isUnlocked ? rar.color : theme.border}`,
                     borderRadius: 20,
                     padding: "20px 18px",
@@ -6778,6 +7275,442 @@ ${langInstr}`,
 })()}
 
         {/* ══════════════════════════════════════════════════════════════════
+            VUE PROJETS — GOD MODE COMPLET
+        ══════════════════════════════════════════════════════════════════ */}
+        {view === "projects" && (
+          <div style={{ animation: "fadeUp 0.4s ease" }}>
+
+            {/* Header + Tabs */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>🗂️ Projets</h1>
+                <p style={{ color: theme.textMuted, marginTop: 4 }}>Gestion intelligente · IA · Planificateur anti-collision</p>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {["hub","planner","coach","fusion"].map(tab => (
+                  <button key={tab} onClick={() => setProjectSubView(tab)} style={{
+                    padding: "8px 16px", borderRadius: 10, fontWeight: 700, fontSize: 13, border: "none", cursor: "pointer",
+                    background: projectSubView === tab ? "#3451D1" : theme.cardBg,
+                    color: projectSubView === tab ? "white" : theme.textMuted,
+                    border: projectSubView !== tab ? `1px solid ${theme.border}` : "none",
+                  }}>
+                    {tab === "hub" ? "🗂️ Hub" : tab === "planner" ? "📅 Planificateur" : tab === "coach" ? "🤖 Coach IA" : "🎯 Fusion Pomodoro"}
+                  </button>
+                ))}
+                <button onClick={() => setShowProjectForm(true)} style={{ padding: "8px 18px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
+                  ＋ Nouveau projet
+                </button>
+              </div>
+            </div>
+
+            {/* ── Conflict Banner ── */}
+            {projectConflicts.length > 0 && (
+              <div style={{ background: projectConflicts.some(c => c.severity === "critique") ? "#FEF2F2" : "#EFF3FF", border: `2px solid ${projectConflicts.some(c => c.severity === "critique") ? "#EF4444" : "#6B82F5"}`, borderRadius: 16, padding: "16px 20px", marginBottom: 20 }}>
+                <div style={{ fontWeight: 800, color: projectConflicts.some(c => c.severity === "critique") ? "#991B1B" : "#1E3A8A", marginBottom: 8, fontSize: 15 }}>
+                  {projectConflicts.some(c => c.severity === "critique") ? "🚨" : "⚠️"} {projectConflicts.length} conflit{projectConflicts.length > 1 ? "s" : ""} détecté{projectConflicts.length > 1 ? "s" : ""}
+                </div>
+                {projectConflicts.map((c, i) => (
+                  <div key={i} style={{ fontSize: 13, color: c.severity === "critique" ? "#EF4444" : "#4D6BFE", marginBottom: 4 }}>{c.advice}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Modal nouveau projet */}
+            {showProjectForm && (
+              <div style={{ background: theme.cardBg, border: `2px solid #3451D1`, borderRadius: 20, padding: 28, marginBottom: 24 }}>
+                <h3 style={{ color: theme.highlight, margin: "0 0 20px" }}>✦ Nouveau projet</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Titre du projet *</label>
+                    <input value={projectForm.title} onChange={e => setProjectForm(f => ({...f, title: e.target.value}))} placeholder="Ex: Projet Java Spring Boot..." style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text, fontSize: 14 }} />
+                  </div>
+                  <div style={{ gridColumn: "1/-1" }}>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Description</label>
+                    <textarea value={projectForm.description} onChange={e => setProjectForm(f => ({...f, description: e.target.value}))} placeholder="Décris ton projet en quelques mots..." style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text, minHeight: 80, resize: "vertical" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Module lié</label>
+                    <select value={projectForm.category} onChange={e => setProjectForm(f => ({...f, category: e.target.value}))} style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text }}>
+                      <option value="">Aucun</option>
+                      {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Date de rendu</label>
+                    <input type="date" value={projectForm.dueDate} onChange={e => setProjectForm(f => ({...f, dueDate: e.target.value}))} style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Heures estimées</label>
+                    <input type="number" min="1" max="200" value={projectForm.estimatedHours} onChange={e => setProjectForm(f => ({...f, estimatedHours: +e.target.value}))} style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Priorité</label>
+                    <select value={projectForm.priority} onChange={e => setProjectForm(f => ({...f, priority: e.target.value}))} style={{ width: "100%", padding: "12px 16px", marginTop: 4, background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text }}>
+                      <option value="haute">🔴 Haute</option>
+                      <option value="normale">🟡 Normale</option>
+                      <option value="basse">🟢 Basse</option>
+                    </select>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>Couleur</label>
+                      <input type="color" value={projectForm.color} onChange={e => setProjectForm(f => ({...f, color: e.target.value}))} style={{ width: "100%", height: 46, marginTop: 4, borderRadius: 12, border: `1.5px solid ${theme.border}`, padding: 4 }} />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+                  <button onClick={createProject} disabled={!projectForm.title.trim()} style={{ padding: "12px 28px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>✦ Créer le projet</button>
+                  <button onClick={() => setShowProjectForm(false)} style={{ padding: "12px 20px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.textMuted, borderRadius: 12, cursor: "pointer" }}>Annuler</button>
+                </div>
+              </div>
+            )}
+
+            {/* ═══ HUB ═══ */}
+            {projectSubView === "hub" && (
+              <div>
+                {/* Stats rapides */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 24 }}>
+                  {[
+                    { label: "En cours", value: projects.filter(p => p.status === "en_cours").length, color: "#4D6BFE", icon: "🔵" },
+                    { label: "Terminés", value: projects.filter(p => p.status === "terminé").length, color: "#4D6BFE", icon: "✅" },
+                    { label: "Urgents (7j)", value: projects.filter(p => p.dueDate && getDaysUntil(p.dueDate) <= 7 && getDaysUntil(p.dueDate) >= 0).length, color: "#EF4444", icon: "🚨" },
+                    { label: "Tâches totales", value: projects.reduce((s, p) => s + (p.tasks?.length || 0), 0), color: "#7B93FF", icon: "📋" },
+                  ].map(s => (
+                    <div key={s.label} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 14, padding: "16px 18px" }}>
+                      <div style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</div>
+                      <div style={{ fontSize: 24, fontWeight: 900, color: s.color }}>{s.value}</div>
+                      <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Liste projets */}
+                {projects.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "60px 20px", background: theme.cardBg, borderRadius: 24, border: `2px dashed ${theme.border}` }}>
+                    <div style={{ fontSize: 56, marginBottom: 16 }}>🗂️</div>
+                    <h3 style={{ color: theme.text, margin: "0 0 8px" }}>Aucun projet pour l'instant</h3>
+                    <p style={{ color: theme.textMuted, marginBottom: 24 }}>Crée ton premier projet et laisse l'IA le décomposer automatiquement.</p>
+                    <button onClick={() => setShowProjectForm(true)} style={{ padding: "14px 32px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>＋ Créer un projet</button>
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
+                    {projects.map(proj => {
+                      const progress = getProjectProgress(proj);
+                      const daysLeft = getDaysUntil(proj.dueDate);
+                      const isUrgent = daysLeft !== null && daysLeft <= 7 && daysLeft >= 0;
+                      const doneTasks = proj.tasks.filter(t => t.done).length;
+                      return (
+                        <div key={proj.id} style={{
+                          background: theme.cardBg, borderRadius: 20, padding: 22,
+                          border: `1px solid ${isUrgent ? "#EF444460" : theme.border}`,
+                          borderTop: `4px solid ${proj.color || "#4D6BFE"}`,
+                          boxShadow: isUrgent ? "0 0 20px rgba(239,68,68,0.1)" : "none"
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: 900, fontSize: 16, color: theme.text, marginBottom: 4 }}>{proj.title}</div>
+                              {proj.description && <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 6 }}>{proj.description.slice(0, 80)}{proj.description.length > 80 ? "…" : ""}</div>}
+                              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                                {proj.category && <span style={{ fontSize: 11, background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 20, padding: "2px 8px", color: theme.textMuted }}>📚 {proj.category}</span>}
+                                <span style={{ fontSize: 11, background: proj.priority === "haute" ? "#FEE2E2" : proj.priority === "normale" ? "#E8EEFF" : "#EEF2FF", color: proj.priority === "haute" ? "#991B1B" : proj.priority === "normale" ? "#1E3A8A" : "#1E3A8A", borderRadius: 20, padding: "2px 8px" }}>
+                                  {proj.priority === "haute" ? "🔴" : proj.priority === "normale" ? "🟡" : "🟢"} {proj.priority}
+                                </span>
+                              </div>
+                            </div>
+                            <button onClick={() => deleteProject(proj.id)} style={{ background: "none", border: "none", color: "#EF4444", cursor: "pointer", fontSize: 16, padding: 4 }}>🗑️</button>
+                          </div>
+
+                          {/* Deadline */}
+                          {proj.dueDate && (
+                            <div style={{ fontSize: 12, fontWeight: 700, color: isUrgent ? "#EF4444" : theme.textMuted, marginBottom: 10 }}>
+                              🗓️ Rendu : {new Date(proj.dueDate).toLocaleDateString("fr-FR")}
+                              {daysLeft !== null && <span style={{ marginLeft: 6, background: isUrgent ? "#FEE2E2" : theme.inputBg, color: isUrgent ? "#EF4444" : theme.textMuted, borderRadius: 20, padding: "1px 7px" }}>J-{daysLeft}</span>}
+                            </div>
+                          )}
+
+                          {/* Progress */}
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme.textMuted, marginBottom: 4 }}>
+                              <span>{doneTasks}/{proj.tasks.length} tâches</span>
+                              <span style={{ fontWeight: 800, color: proj.color }}>{progress}%</span>
+                            </div>
+                            <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${progress}%`, background: progress >= 100 ? "#4D6BFE" : proj.color, borderRadius: 4, transition: "width 0.5s ease" }} />
+                            </div>
+                          </div>
+
+                          {/* Tasks preview (top 3) */}
+                          {proj.tasks.length > 0 && (
+                            <div style={{ marginBottom: 12 }}>
+                              {proj.tasks.slice(0, 3).map(task => (
+                                <div key={task.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+                                  <input type="checkbox" checked={task.done} onChange={() => toggleTask(proj.id, task.id)} style={{ accentColor: proj.color, cursor: "pointer" }} />
+                                  <span style={{ fontSize: 12, color: task.done ? theme.textMuted : theme.text, textDecoration: task.done ? "line-through" : "none" }}>{task.title}</span>
+                                </div>
+                              ))}
+                              {proj.tasks.length > 3 && <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 4 }}>+{proj.tasks.length - 3} autres tâches…</div>}
+                            </div>
+                          )}
+
+                          {/* Actions */}
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button onClick={() => { setActiveProject(proj); setProjectSubView("hub"); }} style={{ flex: 1, padding: "8px", background: "#3451D1", color: "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>📋 Détail</button>
+                            {!proj.decomposed ? (
+                              <button onClick={() => decomposeProject(proj)} disabled={projectDecomposing} style={{ flex: 1, padding: "8px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                                {projectDecomposing ? "⏳" : "🧠 IA Décompose"}
+                              </button>
+                            ) : (
+                              <button onClick={() => { setActiveProject(proj); setProjectSubView("coach"); }} style={{ flex: 1, padding: "8px", background: "#3451D1", color: "white", border: "none", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>🤖 Coach</button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Détail projet actif (tâches complètes) */}
+                {activeProject && (
+                  <div style={{ marginTop: 28, background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 22, padding: 28 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                      <div>
+                        <h2 style={{ color: theme.highlight, margin: 0 }}>{activeProject.title}</h2>
+                        {activeProject.decomposedData?.studyAdvice && (
+                          <div style={{ fontSize: 13, color: "#4D6BFE", marginTop: 6, fontStyle: "italic" }}>💡 {activeProject.decomposedData.studyAdvice}</div>
+                        )}
+                      </div>
+                      <button onClick={() => setActiveProject(null)} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 20 }}>✕</button>
+                    </div>
+
+                    {/* Risques IA */}
+                    {activeProject.decomposedData?.keyRisks?.length > 0 && (
+                      <div style={{ background: "#EFF3FF", borderRadius: 12, padding: "12px 16px", marginBottom: 16, border: "1px solid #C7D2FE" }}>
+                        <div style={{ fontWeight: 700, color: "#1E3A8A", fontSize: 13, marginBottom: 6 }}>⚠️ Risques identifiés par l'IA</div>
+                        {activeProject.decomposedData.keyRisks.map((r, i) => <div key={i} style={{ fontSize: 12, color: "#1E3558", marginBottom: 2 }}>• {r}</div>)}
+                      </div>
+                    )}
+
+                    {/* Tâches par phase */}
+                    {["analyse","conception","développement","test","rendu"].map(phase => {
+                      const phaseTasks = activeProject.tasks.filter(t => t.phase === phase);
+                      if (!phaseTasks.length) return null;
+                      const phaseColors = { analyse: "#4D6BFE", conception: "#7B93FF", développement: "#6B82F5", test: "#EF4444", rendu: "#4D6BFE" };
+                      return (
+                        <div key={phase} style={{ marginBottom: 16 }}>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: phaseColors[phase] || theme.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>{phase}</div>
+                          {phaseTasks.map(task => (
+                            <div key={task.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", background: theme.inputBg, borderRadius: 12, marginBottom: 6, borderLeft: `3px solid ${task.done ? "#4D6BFE" : phaseColors[phase] || "#4D6BFE"}` }}>
+                              <input type="checkbox" checked={task.done} onChange={() => toggleTask(activeProject.id, task.id)} style={{ marginTop: 2, accentColor: phaseColors[phase], cursor: "pointer", flexShrink: 0 }} />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: task.done ? theme.textMuted : theme.text, textDecoration: task.done ? "line-through" : "none" }}>{task.title}</div>
+                                {task.description && <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{task.description}</div>}
+                                <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                                  {task.estimatedHours && <span style={{ fontSize: 10, color: theme.textMuted }}>⏱ {task.estimatedHours}h</span>}
+                                  {task.suggestedDate && <span style={{ fontSize: 10, color: theme.textMuted }}>📅 {task.suggestedDate}</span>}
+                                  {task.cardConcepts?.length > 0 && task.cardConcepts.map(concept => (
+                                    <button key={concept} onClick={async () => {
+                                      try {
+                                        const raw = await callClaude(`Génère une fiche de révision JSON sur: "${concept}" dans le contexte du projet "${activeProject.title}". Format: {"front":"...","back":"...","example":"..."}`, "Génère la fiche.");
+                                        const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+                                        const newExp = { id: Date.now().toString() + Math.random(), front: parsed.front, back: parsed.back, example: parsed.example || "", category: activeProject.category || categories[0]?.name || "Projets", level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null };
+                                        setExpressions(prev => [newExp, ...prev]);
+                                        showToast(`✨ Fiche "${concept}" créée !`);
+                                      } catch { showToast("Erreur génération fiche", "error"); }
+                                    }} style={{ fontSize: 10, background: "#EEF2FF", color: "#5B21B6", border: "none", borderRadius: 20, padding: "2px 8px", cursor: "pointer", fontWeight: 700 }}>
+                                      + Fiche: {concept}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+
+                    {activeProject.tasks.length === 0 && (
+                      <button onClick={() => decomposeProject(activeProject)} disabled={projectDecomposing} style={{ width: "100%", padding: 16, background: "linear-gradient(135deg,#4D6BFE,#7B93FF)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
+                        {projectDecomposing ? "⏳ L'IA génère ton plan…" : "🧠 Décomposer avec l'IA"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ═══ PLANIFICATEUR CRUNCH MODE ═══ */}
+            {projectSubView === "planner" && (
+              <div>
+                <div style={{ background: "linear-gradient(135deg,#1A0800,#3451D1)", borderRadius: 22, padding: 28, marginBottom: 24, color: "white" }}>
+                  <h2 style={{ margin: "0 0 8px" }}>📅 Planificateur Crunch Mode</h2>
+                  <p style={{ color: "#EEF2FF", margin: "0 0 20px", fontSize: 14 }}>L'IA analyse tes projets + examens + révisions FSRS et génère un planning heure par heure sur 7 jours.</p>
+                  <button onClick={generateCrunchPlan} disabled={projectPlannerLoading} style={{ padding: "14px 28px", background: "white", color: "#3451D1", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
+                    {projectPlannerLoading ? "⏳ Génération…" : "⚡ Générer mon planning Crunch"}
+                  </button>
+                </div>
+
+                {/* Conflits détaillés */}
+                {projectConflicts.length > 0 && (
+                  <div style={{ background: theme.cardBg, borderRadius: 18, padding: 20, marginBottom: 20, border: `1px solid ${theme.border}` }}>
+                    <h3 style={{ color: theme.text, margin: "0 0 14px" }}>⚡ Détecteur de conflits</h3>
+                    {projectConflicts.map((c, i) => (
+                      <div key={i} style={{ background: c.severity === "critique" ? "#FEF2F2" : "#EFF3FF", borderRadius: 12, padding: "12px 16px", marginBottom: 8, borderLeft: `4px solid ${c.severity === "critique" ? "#EF4444" : "#6B82F5"}` }}>
+                        <div style={{ fontWeight: 700, color: c.severity === "critique" ? "#991B1B" : "#1E3A8A", fontSize: 13 }}>
+                          {c.severity === "critique" ? "🚨 CRITIQUE" : "⚠️ AVERTISSEMENT"}
+                        </div>
+                        <div style={{ fontSize: 13, color: c.severity === "critique" ? "#EF4444" : "#4D6BFE", marginTop: 4 }}>{c.advice}</div>
+                        <div style={{ display: "flex", gap: 12, marginTop: 6, fontSize: 11, color: theme.textMuted }}>
+                          <span>📋 Projet: {c.projectDate}</span>
+                          <span>🎓 Examen: {c.examDate}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Planning généré */}
+                {projectPlannerData && (
+                  <div>
+                    {projectPlannerData.warnings?.length > 0 && (
+                      <div style={{ background: "#EFF3FF", borderRadius: 14, padding: "14px 18px", marginBottom: 16, border: "1px solid #C7D2FE" }}>
+                        {projectPlannerData.warnings.map((w, i) => <div key={i} style={{ fontSize: 13, color: "#1E3A8A" }}>⚠️ {w}</div>)}
+                      </div>
+                    )}
+                    {projectPlannerData.weekSummary && (
+                      <div style={{ background: theme.cardBg, borderRadius: 14, padding: "16px 20px", marginBottom: 16, border: `1px solid ${theme.border}` }}>
+                        <div style={{ fontWeight: 700, color: theme.highlight, marginBottom: 4 }}>📊 Stratégie de la semaine</div>
+                        <div style={{ fontSize: 13, color: theme.text }}>{projectPlannerData.weekSummary}</div>
+                        {projectPlannerData.tip && <div style={{ fontSize: 13, color: "#4D6BFE", marginTop: 8, fontStyle: "italic" }}>💡 {projectPlannerData.tip}</div>}
+                      </div>
+                    )}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+                      {(projectPlannerData.days || []).map((day, di) => (
+                        <div key={di} style={{ background: theme.cardBg, borderRadius: 16, padding: 18, border: `1px solid ${theme.border}` }}>
+                          <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 12, fontSize: 14 }}>📅 {day.dayLabel || day.date}</div>
+                          {(day.slots || []).map((slot, si) => (
+                            <div key={si} style={{ display: "flex", gap: 10, marginBottom: 8, padding: "8px 10px", background: theme.inputBg, borderRadius: 10, borderLeft: `3px solid ${slot.type === "revision" ? "#4D6BFE" : slot.type === "projet" ? "#4D6BFE" : "#94A3B8"}` }}>
+                              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 800, color: theme.highlight, minWidth: 38 }}>{slot.time}</span>
+                              <div>
+                                <div style={{ fontSize: 12, color: theme.text, fontWeight: 600 }}>{slot.activity}</div>
+                                {slot.module && <div style={{ fontSize: 10, color: theme.textMuted }}>{slot.module}</div>}
+                              </div>
+                              <span style={{ marginLeft: "auto", fontSize: 9, background: slot.type === "revision" ? "#EEF2FF" : slot.type === "projet" ? "#EEF2FF" : "#F1F5F9", color: slot.type === "revision" ? "#3451D1" : slot.type === "projet" ? "#1E3A8A" : "#64748B", borderRadius: 20, padding: "2px 6px", fontWeight: 700, height: "fit-content" }}>{slot.type}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ═══ AI PROJECT COACH ═══ */}
+            {projectSubView === "coach" && (
+              <div style={{ display: "flex", flexDirection: "column", height: "70vh" }}>
+                <div style={{ background: "linear-gradient(135deg,#1E3A8A,#4D6BFE)", borderRadius: "18px 18px 0 0", padding: "20px 24px", color: "white" }}>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>🤖 AI Project Coach</div>
+                  <div style={{ fontSize: 12, color: "#C7D2FE", marginTop: 2 }}>
+                    {activeProject ? `Contexte: ${activeProject.title} (${getProjectProgress(activeProject)}%)` : "Pose n'importe quelle question sur tes projets."}
+                  </div>
+                  {activeProject && (
+                    <select onChange={e => setActiveProject(projects.find(p => p.id === e.target.value) || null)} value={activeProject?.id || ""} style={{ marginTop: 10, background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 8, padding: "6px 10px", color: "white", fontSize: 12 }}>
+                      {projects.map(p => <option key={p.id} value={p.id} style={{ color: "#000" }}>{p.title}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div style={{ flex: 1, overflowY: "auto", padding: 20, background: theme.inputBg, display: "flex", flexDirection: "column", gap: 12 }}>
+                  {projectCoachMessages.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "40px 20px", color: theme.textMuted }}>
+                      <div style={{ fontSize: 40, marginBottom: 12 }}>🤖</div>
+                      <p>Salut ! Je suis ton Coach Projets IA. Je connais tes projets, tes fiches et ton planning. Pose-moi n'importe quelle question !</p>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", marginTop: 16 }}>
+                        {["Comment avancer sur mon projet Java ?", "Explique-moi les annotations Spring Boot", "Quelles tâches faire en priorité ?", "Génère des fiches sur ce concept"].map(q => (
+                          <button key={q} onClick={() => sendProjectCoachMessage(q)} style={{ padding: "8px 14px", background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 20, fontSize: 12, color: theme.text, cursor: "pointer" }}>{q}</button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {projectCoachMessages.map((msg, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
+                      <div style={{ maxWidth: "80%", padding: "12px 16px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "#3451D1" : theme.cardBg, color: msg.role === "user" ? "white" : theme.text, fontSize: 14, border: msg.role === "assistant" ? `1px solid ${theme.border}` : "none" }}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  ))}
+                  {projectCoachLoading && (
+                    <div style={{ display: "flex", gap: 4, padding: "8px 14px", background: theme.cardBg, borderRadius: 18, width: "fit-content", border: `1px solid ${theme.border}` }}>
+                      {[0,1,2].map(i => <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: "#4D6BFE", animation: `pulse 1s ${i*0.2}s infinite` }} />)}
+                    </div>
+                  )}
+                </div>
+                <div style={{ padding: 16, background: theme.cardBg, borderRadius: "0 0 18px 18px", border: `1px solid ${theme.border}`, borderTop: "none", display: "flex", gap: 10 }}>
+                  <input value={projectCoachInput} onChange={e => setProjectCoachInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendProjectCoachMessage(projectCoachInput)} placeholder="Pose ta question au Coach IA…" style={{ flex: 1, padding: "12px 16px", background: theme.inputBg, border: `1.5px solid ${theme.border}`, borderRadius: 12, color: theme.text, fontSize: 14 }} />
+                  <button onClick={() => sendProjectCoachMessage(projectCoachInput)} disabled={projectCoachLoading || !projectCoachInput.trim()} style={{ padding: "12px 20px", background: "linear-gradient(135deg,#4D6BFE,#7B93FF)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Envoyer</button>
+                </div>
+              </div>
+            )}
+
+            {/* ═══ FUSION SESSIONS POMODORO ═══ */}
+            {projectSubView === "fusion" && (
+              <div>
+                <div style={{ background: "linear-gradient(135deg,#1E3A8A,#3451D1,#4D6BFE)", borderRadius: 22, padding: 28, marginBottom: 24, color: "white", textAlign: "center" }}>
+                  <div style={{ fontSize: 72, fontFamily: "'JetBrains Mono',monospace", fontWeight: 900, letterSpacing: -2, marginBottom: 8 }}>{formatPomodoro(projectPomodoroTime)}</div>
+                  <div style={{ fontSize: 14, color: "#C7D2FE", marginBottom: 20 }}>
+                    Mode : {projectPomodoroMode === "study" ? "📚 Révision FSRS" : projectPomodoroMode === "project" ? "🗂️ Session Projet" : "☕ Pause"}
+                  </div>
+                  <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+                    <button onClick={() => setProjectPomodoroActive(a => !a)} style={{ padding: "14px 32px", background: "white", color: "#3451D1", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 18, cursor: "pointer" }}>
+                      {projectPomodoroActive ? "⏸ Pause" : "▶ Démarrer"}
+                    </button>
+                    <button onClick={() => { setProjectPomodoroActive(false); setProjectPomodoroTime(25*60); setProjectPomodoroMode("study"); }} style={{ padding: "14px 20px", background: "rgba(255,255,255,0.2)", color: "white", border: "none", borderRadius: 14, fontWeight: 700, cursor: "pointer" }}>↺ Reset</button>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+                  {[
+                    { mode: "study", icon: "📚", label: "Révision FSRS", desc: "25 min de révision", duration: 25, color: "#4D6BFE" },
+                    { mode: "project", icon: "🗂️", label: "Session Projet", desc: "25 min de code/travail", duration: 25, color: "#4D6BFE" },
+                    { mode: "break", icon: "☕", label: "Pause", desc: "15 min de repos", duration: 15, color: "#6B82F5" },
+                  ].map(m => (
+                    <button key={m.mode} onClick={() => { setProjectPomodoroMode(m.mode); setProjectPomodoroTime(m.duration * 60); setProjectPomodoroActive(false); }} style={{ padding: 20, background: projectPomodoroMode === m.mode ? m.color + "20" : theme.cardBg, border: `2px solid ${projectPomodoroMode === m.mode ? m.color : theme.border}`, borderRadius: 16, cursor: "pointer", textAlign: "left" }}>
+                      <div style={{ fontSize: 28, marginBottom: 6 }}>{m.icon}</div>
+                      <div style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>{m.label}</div>
+                      <div style={{ fontSize: 12, color: theme.textMuted }}>{m.desc}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Projet actif pour la session */}
+                <div style={{ background: theme.cardBg, borderRadius: 18, padding: 20, border: `1px solid ${theme.border}` }}>
+                  <h3 style={{ color: theme.text, margin: "0 0 14px" }}>🎯 Tâche de la session</h3>
+                  <select value={activeProject?.id || ""} onChange={e => setActiveProject(projects.find(p => p.id === e.target.value) || null)} style={{ width: "100%", padding: "10px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.text, marginBottom: 12 }}>
+                    <option value="">Sélectionne un projet…</option>
+                    {projects.filter(p => p.status !== "terminé").map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                  </select>
+                  {activeProject && activeProject.tasks.filter(t => !t.done).length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {activeProject.tasks.filter(t => !t.done).slice(0, 4).map(task => (
+                        <div key={task.id} onClick={() => setProjectPomodoroTask(task)} style={{ padding: "10px 14px", background: projectPomodoroTask?.id === task.id ? "#EEF2FF" : theme.inputBg, border: `1px solid ${projectPomodoroTask?.id === task.id ? "#4D6BFE" : theme.border}`, borderRadius: 10, cursor: "pointer", fontSize: 13, color: theme.text, fontWeight: projectPomodoroTask?.id === task.id ? 700 : 400 }}>
+                          {task.title}
+                          {task.estimatedHours && <span style={{ float: "right", fontSize: 11, color: theme.textMuted }}>⏱ {task.estimatedHours}h</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {projectPomodoroTask && (
+                    <button onClick={() => { toggleTask(activeProject.id, projectPomodoroTask.id); setProjectPomodoroTask(null); showToast("✅ Tâche marquée comme faite !"); }} style={{ marginTop: 12, width: "100%", padding: "10px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer" }}>
+                      ✅ Marquer "{projectPomodoroTask.title}" comme faite
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════════════
             VUE CATEGORIES
         ══════════════════════════════════════════════════════════════════ */}
                 {view === "categories" && (
@@ -6792,7 +7725,7 @@ ${langInstr}`,
                 <button onClick={() => { setCatsViewMode("table"); computeCatsStats(); }} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode==="table"?theme.highlight:theme.cardBg, color: catsViewMode==="table"?"white":theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>📊 Tableau</button>
                 <button onClick={generateTimeline} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode==="timeline"?theme.highlight:theme.cardBg, color: catsViewMode==="timeline"?"white":theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>📅 Timeline</button>
                 <button onClick={detectPrerequisites} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: theme.cardBg, color: theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>🔗 Prérequis</button>
-                <button onClick={() => { computeCatsStats(); checkModuleAlerts(); generateModuleReport(); }} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: "#7B5FF5", color: "white", border: "none", fontWeight: 700, fontSize: 13 }}>
+                <button onClick={() => { computeCatsStats(); checkModuleAlerts(); generateModuleReport(); }} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: "#4D6BFE", color: "white", border: "none", fontWeight: 700, fontSize: 13 }}>
                   🧠 Analyse IA
                 </button>
               </div>
@@ -6805,7 +7738,7 @@ ${langInstr}`,
                 {catsAlerts.map((alert, i) => (
                   <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
                     <span style={{ fontWeight: 700 }}>{alert.module}</span>
-                    <span style={{ color: alert.type==="danger"?"#EF4444":"#D97706" }}>{alert.message}</span>
+                    <span style={{ color: alert.type==="danger"?"#EF4444":"#4D6BFE" }}>{alert.message}</span>
                   </div>
                 ))}
               </div>
@@ -6813,8 +7746,8 @@ ${langInstr}`,
 
             {/* Rapport IA */}
             {catsAiReport && (
-              <div style={{ background: theme.cardBg, borderRadius: 16, padding: 20, marginBottom: 20, border: "2px solid #7B5FF5" }}>
-                <h3 style={{ margin: "0 0 8px", color: "#7B5FF5" }}>🧠 Plan d'action IA</h3>
+              <div style={{ background: theme.cardBg, borderRadius: 16, padding: 20, marginBottom: 20, border: "2px solid #4D6BFE" }}>
+                <h3 style={{ margin: "0 0 8px", color: "#4D6BFE" }}>🧠 Plan d'action IA</h3>
                 <p><strong>Module critique :</strong> {catsAiReport.criticalModule}</p>
                 <ul>{catsAiReport.recommendations?.map((r,i) => <li key={i}>{r}</li>)}</ul>
                 <button onClick={() => setCatsAiReport(null)} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer" }}>✕</button>
@@ -6833,7 +7766,7 @@ ${langInstr}`,
                   <option value="normale">Normale</option>
                   <option value="basse">Basse</option>
                 </select>
-                <button onClick={handleAddCat} disabled={!newCat.name.trim()} style={{ padding: "10px 18px", background: "linear-gradient(135deg,#1D4ED8,#3B82F6)", color: "white", border: "none", borderRadius: 8, fontWeight: 800 }}>Créer</button>
+                <button onClick={handleAddCat} disabled={!newCat.name.trim()} style={{ padding: "10px 18px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 8, fontWeight: 800 }}>Créer</button>
               </div>
             </div>
 
@@ -6850,7 +7783,7 @@ ${langInstr}`,
                   <option value="">Cible...</option>
                   {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                 </select>
-                <button onClick={mergeModules} disabled={!catsMergeSource || !catsMergeTarget} style={{ padding: "8px 16px", background: "#F59E0B", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Fusionner</button>
+                <button onClick={mergeModules} disabled={!catsMergeSource || !catsMergeTarget} style={{ padding: "8px 16px", background: "#6B82F5", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Fusionner</button>
               </div>
             </div>
 
@@ -6868,28 +7801,28 @@ ${langInstr}`,
                   const mastered = catExps.filter(e => e.level >= 7).length;
                   const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
                   const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
-                  const catColor = cat.color || "#3B82F6";
+                  const catColor = cat.color || "#4D6BFE";
                   return (
                     <div key={cat.name} style={{
                       background: theme.cardBg, borderRadius: 22, padding: "22px", border: `1px solid ${theme.border}`,
-                      borderTop: `4px solid ${catColor}`, boxShadow: isFav ? "0 0 15px rgba(59,130,246,0.3)" : "0 2px 8px rgba(0,0,0,0.02)"
+                      borderTop: `4px solid ${catColor}`, boxShadow: isFav ? "0 0 15px rgba(77,107,254,0.3)" : "0 2px 8px rgba(0,0,0,0.02)"
                     }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                         <span style={{ fontWeight: 900, fontSize: 18, color: theme.text }}>{cat.name}</span>
                         <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={() => toggleFavorite(cat.name)} style={{ background: "none", border: "none", color: isFav ? "#F59E0B" : theme.textMuted, cursor: "pointer", fontSize: 18 }}>{isFav ? "★" : "☆"}</button>
+                          <button onClick={() => toggleFavorite(cat.name)} style={{ background: "none", border: "none", color: isFav ? "#6B82F5" : theme.textMuted, cursor: "pointer", fontSize: 18 }}>{isFav ? "★" : "☆"}</button>
                           <button onClick={() => exportModule(cat.name)} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer" }}>📥</button>
                           <button onClick={() => deleteCategory(cat.name)} style={{ background: "none", border: "none", color: "#EF4444", cursor: "pointer" }}>🗑️</button>
                         </div>
                       </div>
                       {cat.examDate && (
-                        <div style={{ fontSize: 12, fontWeight: 600, color: daysToExam <= 7 ? "#EF4444" : "#D97706", marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: daysToExam <= 7 ? "#EF4444" : "#4D6BFE", marginBottom: 8 }}>
                           🗓️ Examen : {new Date(cat.examDate).toLocaleDateString("fr-FR")} {daysToExam !== null && `(J-${daysToExam})`}
                         </div>
                       )}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                         <div style={{ flex: 1, height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
-                          <div style={{ height: "100%", borderRadius: 4, width: `${pct}%`, background: pct >= 80 ? "#10B981" : catColor }} />
+                          <div style={{ height: "100%", borderRadius: 4, width: `${pct}%`, background: pct >= 80 ? "#4D6BFE" : catColor }} />
                         </div>
                         <span style={{ fontSize: 13, fontWeight: 800, color: catColor, minWidth: 40 }}>{pct}%</span>
                       </div>
@@ -6899,7 +7832,7 @@ ${langInstr}`,
                         <span style={{ color: dueCount > 0 ? "#EF4444" : theme.textMuted }}>{dueCount} en retard</span>
                       </div>
                       <div style={{ marginTop: 12 }}>
-                        <button onClick={() => { startReview(cat.name); }} className="hov" style={{ marginRight: 8, padding: "6px 14px", background: "#3B82F6", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Réviser</button>
+                        <button onClick={() => { startReview(cat.name); }} className="hov" style={{ marginRight: 8, padding: "6px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Réviser</button>
                         <button onClick={() => analyzeLearningCurve(cat.name)} className="hov" style={{ padding: "6px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 8, fontWeight: 700 }}>📈 Courbe</button>
                       </div>
                       {/* Courbe mini */}
@@ -6907,7 +7840,7 @@ ${langInstr}`,
                         <div style={{ marginTop: 12, display: "flex", alignItems: "flex-end", gap: 2, height: 40 }}>
                           {catsLearningCurve[cat.name].map((point, i) => (
                             <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
-                              <div style={{ width: "100%", background: "#3B82F6", borderRadius: "2px 2px 0 0", height: `${point.avgLevel * 8}px` }} />
+                              <div style={{ width: "100%", background: "#4D6BFE", borderRadius: "2px 2px 0 0", height: `${point.avgLevel * 8}px` }} />
                               <span style={{ fontSize: 8, marginTop: 2, color: theme.textMuted }}>{point.week.slice(5)}</span>
                             </div>
                           ))}
@@ -6961,7 +7894,7 @@ ${langInstr}`,
                 {catsTimelineData.length === 0 ? <p style={{ color: theme.textMuted }}>Aucun examen programmé.</p> :
                   <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     {catsTimelineData.map((event, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 16px", background: theme.inputBg, borderRadius: 12, borderLeft: `4px solid ${categories.find(c => c.name === event.module)?.color || "#3B82F6"}` }}>
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 16, padding: "12px 16px", background: theme.inputBg, borderRadius: 12, borderLeft: `4px solid ${categories.find(c => c.name === event.module)?.color || "#4D6BFE"}` }}>
                         <div style={{ minWidth: 90, fontWeight: 800, color: theme.highlight }}>{new Date(event.date).toLocaleDateString("fr-FR")}</div>
                         <div>{event.label}</div>
                       </div>
@@ -6974,8 +7907,9 @@ ${langInstr}`,
         )}
 
       </main>
-      <footer style={{ textAlign: "center", padding: "24px", color: theme.textMuted, fontSize: 12, borderTop: `1px solid ${theme.border}`, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5 }}>
-        MémoMaître GOD LEVEL v7 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 × DeepSeek Powered
+      </div>{/* fin flex sidebar+content */}
+      <footer style={{ textAlign: "center", padding: "12px 24px", color: "rgba(255,255,255,0.85)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5, position: "fixed", bottom: 0, left: sidebarCollapsed ? 64 : 220, right: 0, zIndex: 49, background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}`, backdropFilter: "blur(12px)", transition: "left 0.3s cubic-bezier(0.4,0,0.2,1)" }}>
+        MémoMaître GOD LEVEL v8 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 × DeepSeek Powered
       </footer>
     </div>
   );
