@@ -726,6 +726,15 @@ export default function MemoMaster() {
   const [sidebarHoveredItem, setSidebarHoveredItem] = useState(null);
   const [sidebarRipple, setSidebarRipple] = useState(null);
 
+  // ── MOBILE DETECTION ───────────────────────────────────────────────────────
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   useEffect(() => {
     const tick = () => {
       const now = new Date();
@@ -4270,6 +4279,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         @keyframes orb2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-20px,25px) scale(1.08); } }
         @keyframes rippleFade { from { opacity: 0.5; transform: scale(1); } to { opacity: 0; transform: scale(1.5); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes drawerUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         .hov:hover { transform: translateY(-2px); transition: all 0.22s cubic-bezier(0.34,1.56,0.64,1); }
         .card-hov:hover { transform: translateY(-5px); box-shadow: 0 20px 50px rgba(249,115,22,0.1) !important; transition: all 0.28s cubic-bezier(0.34,1.56,0.64,1); }
         .btn-glow:hover { animation: glow 1.5s infinite; transition: all 0.3s; }
@@ -4278,6 +4288,25 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         input:focus, textarea:focus, select:focus { border-color: #4D6BFE !important; box-shadow: 0 0 0 3px rgba(77,107,254,0.15) !important; }
         .tab-active { background: rgba(255,255,255,0.22) !important; font-weight: 700 !important; color: white !important; }
         .code-block { background: ${isDarkMode ? "#060B18" : "#EEF2FF"}; border: 1px solid ${theme.border}; border-radius: 12px; padding: 14px; font-family: 'Fira Code', monospace; white-space: pre-wrap; }
+        /* ── MOBILE RESPONSIVE ── */
+        @media (max-width: 767px) {
+          .desktop-sidebar { display: none !important; }
+          .desktop-sidebar-spacer { display: none !important; }
+          .main-content { padding: 16px 14px 90px !important; }
+          .nav-top { padding: 0 14px !important; min-height: 56px !important; }
+          .nav-title-sub { display: none !important; }
+          .nav-logo-text { font-size: 16px !important; }
+          .card-grid-auto { grid-template-columns: 1fr !important; }
+          .card-grid-2col { grid-template-columns: repeat(2, 1fr) !important; }
+          .english-btns { display: grid !important; grid-template-columns: repeat(2, 1fr) !important; gap: 10px !important; }
+          .english-btn-item { display: flex !important; flex-direction: column !important; align-items: center !important; justify-content: center !important; gap: 4px !important; padding: 14px 8px !important; min-height: 64px !important; }
+          .table-overflow { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+          .hide-mobile { display: none !important; }
+        }
+        @media (min-width: 768px) {
+          .mobile-bottom-nav { display: none !important; }
+          .mobile-drawer-overlay { display: none !important; }
+        }
         ${isDarkMode ? `
           .app-orb-1 { position: fixed; top: -180px; left: -120px; width: 580px; height: 580px; background: radial-gradient(circle, rgba(77,107,254,0.08) 0%, transparent 65%); border-radius: 50%; pointer-events: none; z-index: 0; animation: orb1 12s ease-in-out infinite; }
           .app-orb-2 { position: fixed; bottom: -160px; right: -100px; width: 500px; height: 500px; background: radial-gradient(circle, rgba(77,107,254,0.06) 0%, transparent 65%); border-radius: 50%; pointer-events: none; z-index: 0; animation: orb2 15s ease-in-out infinite; }
@@ -4298,14 +4327,17 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         </div>
       )}
 
-      <nav style={{ background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 68, width: "100%", borderBottom: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}` }}>
+      <nav className="nav-top" style={{ background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", padding: "0 28px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, flexWrap: "wrap", gap: 8, minHeight: 68, width: "100%", borderBottom: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{ width: 40, height: 40, background: "rgba(255,255,255,0.22)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900, color: "white", fontFamily: "'Fira Code', monospace", boxShadow: "0 2px 12px rgba(0,0,0,0.2)" }}>M²</div>
-          <div><div style={{ fontSize: 19, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div><div style={{ fontSize: 10, color: "rgba(199,210,254,0.85)", fontFamily: "'Fira Code', monospace", letterSpacing: 1.2 }}>GOD LEVEL v8 × AI</div></div>
+          <div>
+            <div className="nav-logo-text" style={{ fontSize: 19, fontWeight: 800, color: "white", letterSpacing: "-0.5px" }}>MémoMaître</div>
+            <div className="nav-title-sub" style={{ fontSize: 10, color: "rgba(199,210,254,0.85)", fontFamily: "'Fira Code', monospace", letterSpacing: 1.2 }}>GOD LEVEL v8 × AI</div>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900 }}>⚡ {todayReviews.length} fiches</span>}
-          {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900 }}>🚨 {projectConflicts.filter(c => c.severity === "critique").length} conflits</span>}
+          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900 }}>⚡ {todayReviews.length}</span>}
+          {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 900 }}>🚨</span>}
           <button onClick={() => setLofiPlaying(!lofiPlaying)} style={{ padding: "8px", borderRadius: 10, background: lofiPlaying ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.15)", color: "white", border: "none", cursor: "pointer", fontSize: 14 }} title="Lo-Fi Focus">🎧</button>
           <button onClick={() => setIsDarkMode(!isDarkMode)} style={{ padding: "8px", borderRadius: 10, background: "rgba(255,255,255,0.15)", color: "white", border: "none", cursor: "pointer", fontSize: 14 }}>{isDarkMode ? "☀️" : "🌙"}</button>
         </div>
@@ -4316,10 +4348,10 @@ ${history ? `Historique récent:\n${history}` : ""}`,
       <div style={{ display: "flex", minHeight: "calc(100vh - 68px)" }}>
 
         {/* Spacer pour compenser la sidebar fixe */}
-        <div style={{ width: sidebarCollapsed ? 64 : 220, minWidth: sidebarCollapsed ? 64 : 220, flexShrink: 0, transition: "width 0.3s cubic-bezier(0.4,0,0.2,1), min-width 0.3s cubic-bezier(0.4,0,0.2,1)" }} />
+        <div className="desktop-sidebar-spacer" style={{ width: sidebarCollapsed ? 64 : 220, minWidth: sidebarCollapsed ? 64 : 220, flexShrink: 0, transition: "width 0.3s cubic-bezier(0.4,0,0.2,1), min-width 0.3s cubic-bezier(0.4,0,0.2,1)" }} />
 
-        {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) ═══ */}
-        <aside style={{
+        {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) – desktop only ═══ */}
+        <aside className="desktop-sidebar" style={{
           width: sidebarCollapsed ? 64 : 220,
           minWidth: sidebarCollapsed ? 64 : 220,
           background: isDarkMode ? "#060B18" : "#3451D1",
@@ -4528,7 +4560,168 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           </div>
         </aside>
 
-      <main style={{ flex: 1, width: 0, minWidth: 0, padding: "32px 36px 80px", paddingBottom: "80px", position: "relative", zIndex: 1 }}>
+        {/* ═══ MOBILE BOTTOM NAV BAR ═══ */}
+        {(() => {
+          const dueCount = expressions.filter(e => e.nextReview <= today() && e.level < 7).length;
+          const BOTTOM_TABS = [
+            { id: "dashboard", icon: "⚡", label: "Accueil", badge: todayReviews.length > 0 ? todayReviews.length : null },
+            { id: "list",      icon: "◈",  label: "Fiches",  badge: dueCount > 0 ? dueCount : null },
+            { id: "add",       icon: "✦",  label: "Ajouter", center: true },
+            { id: "exam",      icon: "🎯", label: "Examen",  badge: null },
+            { id: "more",      icon: "☰",  label: "Plus",    badge: null },
+          ];
+          return (
+            <nav className="mobile-bottom-nav" style={{
+              position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 200,
+              background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)",
+              borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(255,255,255,0.2)"}`,
+              backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+              display: "flex", alignItems: "center", justifyContent: "space-around",
+              padding: "0 4px", paddingBottom: "env(safe-area-inset-bottom)",
+              height: 60,
+            }}>
+              {BOTTOM_TABS.map(tab => {
+                const isActive = tab.id === "more" ? mobileDrawerOpen : (view === tab.id && !mobileDrawerOpen);
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => {
+                      if (tab.id === "more") {
+                        setMobileDrawerOpen(d => !d);
+                      } else {
+                        setMobileDrawerOpen(false);
+                        setView(tab.id);
+                        if (tab.id === "exam") setExamSubView("home");
+                      }
+                    }}
+                    style={{
+                      flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      background: tab.center ? "rgba(255,255,255,0.22)" : "transparent",
+                      border: tab.center ? "2px solid rgba(255,255,255,0.4)" : "none",
+                      borderRadius: tab.center ? 14 : 0,
+                      color: isActive ? "white" : "rgba(255,255,255,0.55)",
+                      cursor: "pointer", padding: "6px 2px", position: "relative",
+                      minHeight: tab.center ? 46 : 50, maxWidth: tab.center ? 56 : "100%",
+                      marginTop: tab.center ? -8 : 0,
+                      transition: "all 0.18s",
+                    }}
+                  >
+                    <span style={{ fontSize: tab.center ? 20 : 18, lineHeight: 1 }}>{tab.icon}</span>
+                    <span style={{ fontSize: 9, fontWeight: isActive ? 700 : 400, marginTop: 2 }}>{tab.label}</span>
+                    {tab.badge && (
+                      <span style={{
+                        position: "absolute", top: 2, right: "50%", transform: "translateX(10px)",
+                        background: "#EF4444", color: "white", borderRadius: 20,
+                        padding: "1px 5px", fontSize: 8, fontWeight: 900, minWidth: 14, textAlign: "center",
+                      }}>{tab.badge}</span>
+                    )}
+                    {isActive && !tab.center && (
+                      <span style={{ position: "absolute", bottom: 0, left: "50%", transform: "translateX(-50%)", width: 20, height: 3, background: "white", borderRadius: 2 }} />
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+          );
+        })()}
+
+        {/* ═══ MOBILE DRAWER (section "Plus") ═══ */}
+        {mobileDrawerOpen && (
+          <>
+            <div
+              className="mobile-drawer-overlay"
+              onClick={() => setMobileDrawerOpen(false)}
+              style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 198, backdropFilter: "blur(4px)" }}
+            />
+            <div
+              className="mobile-drawer-overlay"
+              style={{
+                position: "fixed", bottom: 60, left: 0, right: 0, zIndex: 199,
+                background: isDarkMode ? "#060B18" : "#3451D1",
+                borderRadius: "24px 24px 0 0", padding: "20px 16px 16px",
+                animation: "drawerUp 0.28s cubic-bezier(0.34,1.56,0.64,1)",
+                maxHeight: "70vh", overflowY: "auto",
+              }}
+            >
+              {/* Handle */}
+              <div style={{ width: 36, height: 4, background: "rgba(255,255,255,0.3)", borderRadius: 2, margin: "0 auto 20px" }} />
+
+              {/* Section Apprentissage */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10, paddingLeft: 4 }}>Apprentissage</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
+                {[
+                  { id: "practice", icon: "🗣️", label: "English" },
+                  { id: "academy",  icon: "🏫", label: "Academy" },
+                  { id: "projects", icon: "🗂️", label: "Projets" },
+                ].map(item => (
+                  <button key={item.id} onClick={() => { setView(item.id); setMobileDrawerOpen(false); if (item.id === "academy") setAcademyView("library"); if (item.id === "projects") setProjectSubView("hub"); }} style={{
+                    background: view === item.id ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.15)", borderRadius: 14,
+                    color: "white", padding: "14px 8px", cursor: "pointer",
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                    fontSize: 13, fontWeight: 600,
+                  }}>
+                    <span style={{ fontSize: 22 }}>{item.icon}</span>
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Section Analyse */}
+              <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", letterSpacing: 1.5, textTransform: "uppercase", marginBottom: 10, paddingLeft: 4 }}>Analyse</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
+                {[
+                  { id: "categories", icon: "◉",  label: "Modules" },
+                  { id: "stats",      icon: "▣",  label: "Stats" },
+                  { id: "badges",     icon: "🏆", label: "Badges", badge: unlockedBadges.length },
+                  { id: "lab",        icon: "🧪", label: "Lab" },
+                ].map(item => (
+                  <button key={item.id} onClick={() => { setView(item.id); setMobileDrawerOpen(false); }} style={{
+                    background: view === item.id ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)",
+                    border: "1px solid rgba(255,255,255,0.15)", borderRadius: 14,
+                    color: "white", padding: "14px 8px", cursor: "pointer",
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                    fontSize: 13, fontWeight: 600, position: "relative",
+                  }}>
+                    <span style={{ fontSize: 22 }}>{item.icon}</span>
+                    {item.label}
+                    {item.badge > 0 && <span style={{ position: "absolute", top: 6, right: 6, background: "#6B82F5", color: "white", borderRadius: 20, padding: "1px 5px", fontSize: 8, fontWeight: 900 }}>{item.badge}</span>}
+                  </button>
+                ))}
+              </div>
+
+              {/* Maîtrise globale mini */}
+              {expressions.length > 0 && (
+                <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 14, padding: "12px 16px", marginBottom: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", fontWeight: 600 }}>MAÎTRISE GLOBALE</span>
+                    <span style={{ fontSize: 13, fontWeight: 900, color: "#93A8FF" }}>
+                      {Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100)}%
+                    </span>
+                  </div>
+                  <div style={{ height: 4, background: "rgba(255,255,255,0.1)", borderRadius: 2 }}>
+                    <div style={{ height: "100%", width: `${Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100)}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 2 }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 10, color: "rgba(255,255,255,0.35)" }}>
+                    <span>{expressions.filter(e => e.level >= 7).length} maîtrisées</span>
+                    <span>{expressions.filter(e => e.nextReview <= today() && e.level < 7).length} en retard</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Pomodoro dans drawer si actif */}
+              {(projectPomodoroTime < 25 * 60 || projectPomodoroActive) && (
+                <div style={{ background: "rgba(77,107,254,0.2)", borderRadius: 14, padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 16 }}>{projectPomodoroMode === "study" ? "📚" : projectPomodoroMode === "project" ? "🗂️" : "☕"}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#C7D2FE", fontWeight: 700, flex: 1 }}>{formatPomodoro(projectPomodoroTime)}</span>
+                  <button onClick={() => setProjectPomodoroActive(a => !a)} style={{ background: "none", border: "none", color: "#C7D2FE", cursor: "pointer", fontSize: 18 }}>{projectPomodoroActive ? "⏸" : "▶"}</button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+      <main className="main-content" style={{ flex: 1, width: 0, minWidth: 0, padding: "32px 36px 80px", paddingBottom: isMobile ? "80px" : "80px", position: "relative", zIndex: 1 }}>
 
                 {view === "dashboard" && (
           <div style={{ animation: "fadeUp 0.4s ease" }}>
@@ -4582,7 +4775,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
             {/* Grille de widgets */}
             {!dashFocusMode && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 20 }}>
 
                 {/* Widget 1 – Mission du jour (existant amélioré) */}
                 <div style={{ background: isDarkMode ? "linear-gradient(135deg, #2A1400, #1A0800)" : "linear-gradient(135deg, #ffffff, #F8FAFF)", padding: "28px", borderRadius: 24, border: `2px solid ${theme.border}`, gridColumn: "1 / -1" }} className="card-hov">
@@ -4689,7 +4882,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {/* Widget 7 – Modules (déjà présent mais réduit) */}
                 <div style={{ background: theme.cardBg, borderRadius: 22, padding: 20, border: `1px solid ${theme.border}`, gridColumn: "1 / -1" }}>
                   <h3 style={{ margin: "0 0 12px", color: theme.text, fontWeight: 800 }}>⚡ État des modules</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(260px, 100%), 1fr))", gap: 16 }}>
                     {categories.map((cat) => {
                       const catExps = expressions.filter((e) => e.category === cat.name);
                       const dueCount = catExps.filter((e) => e.nextReview <= today() && e.level < 7).length;
@@ -5032,7 +5225,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             )}
 
             {/* FORMULAIRE PRINCIPAL */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))", gap: 32, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(340px, 100%), 1fr))", gap: 32, alignItems: "start" }}>
               <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 24, padding: "32px", boxShadow: "0 10px 40px rgba(0,0,0,0.04)" }}>
                 <div style={{ marginBottom: 20 }}>
                   <label style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, marginBottom: 8, display: "block" }}>Module de destination</label>
@@ -5346,7 +5539,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <button onClick={() => setView("add")} className="btn-glow hov" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>⚡ Créer une fiche</button>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(310px, 1fr))", gap: 24 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(310px, 100%), 1fr))", gap: 24 }}>
                     {filteredExps.map((exp) => {
                       const lvl = exp.level || 0;
                       const lvlColor = lvl >= 7 ? "#4D6BFE" : lvl >= 5 ? "#4D6BFE" : lvl >= 3 ? "#7B93FF" : lvl >= 1 ? "#6B82F5" : "#9CA3AF";
@@ -5413,7 +5606,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {cardsFakeCards.length > 0 && (
                   <div style={{ marginTop: 32, background: "#FFF7ED", borderRadius: 20, padding: "20px 24px", border: "2px solid #4D6BFE" }}>
                     <h3 style={{ color: "#4D6BFE", marginTop: 0 }}>🧪 Fiches pièges — Trouve les erreurs !</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))", gap: 16 }}>
                       {cardsFakeCards.map((fc, i) => (
                         <div key={i} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #C7D2FE" }}>
                           <div style={{ fontWeight: 800, color: "#1E3A8A" }}>{fc.front}</div>
@@ -5429,7 +5622,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {cardsCommunity.length > 0 && (
                   <div style={{ marginTop: 32, background: "#FFFFFF", borderRadius: 20, padding: "20px 24px", border: "2px solid #4D6BFE" }}>
                     <h3 style={{ color: "#1E3A8A", marginTop: 0 }}>🏛️ Bibliothèque communautaire</h3>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))", gap: 16 }}>
                       {cardsCommunity.map(card => (
                         <div key={card.id} style={{ background: "white", borderRadius: 14, padding: "16px", border: "1px solid #C7D2FE" }}>
                           <div style={{ fontWeight: 800, color: "#1E3A8A" }}>{card.front}</div>
@@ -5547,7 +5740,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 )}
 
                 <h2 style={{ fontSize: 14, fontWeight: 700, color: theme.highlight, marginBottom: 16, fontFamily: "JetBrains Mono", letterSpacing: 1 }}>CHOISIR UN MODE</h2>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16, marginBottom: 36 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 16, marginBottom: 36 }}>
                   {[
                     { mode: "flashcard", icon: "🃏", title: "Classique", sub: "Auto-évaluation", desc: "Recto/verso avec timer. Les bases, mais indispensables.", color: "#3451D1", bg: isDarkMode?"linear-gradient(135deg,#1e293b,#1e3a5f)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#3451D1":"#BFDBFE" },
                     { mode: "qcm", icon: "📝", title: "QCM IA", sub: "L'IA te piège", desc: "3 fausses réponses ultra-crédibles générées par l'IA.", color: "#4D6BFE", bg: isDarkMode?"linear-gradient(135deg,#1e1b4b,#2e1065)":"linear-gradient(135deg,#FFFFFF,#EEF2FF)", border: isDarkMode?"#4D6BFE":"#C7D2FE" },
@@ -5961,7 +6154,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 </div>
                 {customExams.length === 0
                   ? <div style={{ textAlign: "center", color: theme.textMuted, padding: "48px 0" }}>Aucun examen personnalisé. Crée le tien !</div>
-                  : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+                  : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(300px, 100%), 1fr))", gap: 20 }}>
                       {customExams.map(exam => (
                         <div key={exam.id} style={{ background: theme.cardBg, padding: 24, borderRadius: 20, border: `1px solid ${theme.border}`, borderTop: "4px solid #4D6BFE" }}>
                           <div style={{ fontWeight: 900, color: theme.text, fontSize: 18, marginBottom: 6 }}>{exam.title}</div>
@@ -6025,7 +6218,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               <p style={{ color: "#C7D2FE", fontSize: 14, marginBottom: 20 }}>Écrire, parler, simuler un examen, suivre sa progression.</p>
 
               {/* Navigation principale */}
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              <div className="english-btns" style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
                 {[
                   { id: "chat", icon: "💬", label: "Chat" },
                   { id: "debate", icon: "⚖️", label: "Débat" },
@@ -6037,14 +6230,14 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   { id: "dashboard", icon: "📊", label: "Progrès" },
                   { id: "achievements", icon: "🏆", label: "Succès" },
                 ].map(tab => (
-                  <button key={tab.id} onClick={() => setPracticeSubView(tab.id)} className="hov" style={{
+                  <button key={tab.id} onClick={() => setPracticeSubView(tab.id)} className="hov english-btn-item" style={{
                     padding: "8px 16px", borderRadius: 12,
                     background: practiceSubView === tab.id ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.05)",
                     color: "white", border: "1px solid rgba(255,255,255,0.25)",
                     fontWeight: 700, fontSize: 13, cursor: "pointer"
                   }}>{tab.icon} {tab.label}</button>
                 ))}
-                <button onClick={() => setPracticeImmersionMode(!practiceImmersionMode)} className="hov" style={{ padding:"8px 16px", borderRadius:12, background: practiceImmersionMode ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.05)", color:"white", border:"1px solid rgba(255,255,255,0.25)", fontWeight:700, cursor:"pointer" }}>{practiceImmersionMode ? "🌐 ON" : "🌐 OFF"} Immersion</button>
+                <button onClick={() => setPracticeImmersionMode(!practiceImmersionMode)} className="hov english-btn-item" style={{ padding:"8px 16px", borderRadius:12, background: practiceImmersionMode ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.05)", color:"white", border:"1px solid rgba(255,255,255,0.25)", fontWeight:700, cursor:"pointer" }}>{practiceImmersionMode ? "🌐 ON" : "🌐 OFF"} Immersion</button>
               </div>
 
               {/* Barre d'options rapides (visible seulement pour chat) */}
@@ -6195,7 +6388,189 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               </div>
             )}
 
-            {/* Les autres onglets (debate, roleplay, dictation, daily, stats) sont conservés via la navigation existante, mais on peut les réintégrer de façon similaire si nécessaire. */}
+            {/* ══ DÉBAT ══ */}
+            {practiceSubView === "debate" && (
+              <div style={{ background: theme.cardBg, borderRadius: 24, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
+                {/* Header */}
+                <div style={{ background: "linear-gradient(135deg,#1E3A8A,#3451D1)", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>⚖️ Débat en anglais</div>
+                    {practiceDebateTopic && <div style={{ fontSize: 12, color: "#C7D2FE", marginTop: 2 }}>Topic : {practiceDebateTopic}</div>}
+                  </div>
+                  <button onClick={() => { setPracticeDebateTopic(""); setPracticeDebateHistory([]); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, padding: "6px 12px", color: "white", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
+                </div>
+
+                {/* Setup (si pas encore lancé) */}
+                {practiceDebateHistory.length === 0 && (
+                  <div style={{ padding: 28 }}>
+                    <p style={{ color: theme.textMuted, marginTop: 0, marginBottom: 20, fontSize: 14 }}>Choisis un sujet de débat, l'IA va lancer la discussion et te challenger en anglais.</p>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+                      {["Social media does more harm than good", "AI will replace human jobs", "Remote work is better than office", "Climate change is the biggest threat", "Video games improve cognitive skills"].map(topic => (
+                        <button key={topic} onClick={() => setPracticeDebateTopic(topic)} style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${practiceDebateTopic === topic ? "#4D6BFE" : theme.border}`, background: practiceDebateTopic === topic ? "#EEF2FF" : theme.inputBg, color: practiceDebateTopic === topic ? "#3451D1" : theme.text, fontWeight: 600, cursor: "pointer", fontSize: 13 }}>{topic}</button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <input value={practiceDebateTopic} onChange={e => setPracticeDebateTopic(e.target.value)} placeholder="Ou tape ton propre sujet…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} onKeyDown={e => e.key === "Enter" && startDebate()} />
+                      <button onClick={startDebate} disabled={!practiceDebateTopic.trim()} style={{ padding: "12px 24px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>⚖️ Lancer</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Conversation */}
+                {practiceDebateHistory.length > 0 && (
+                  <>
+                    <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+                      {practiceDebateHistory.map((msg, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
+                          {msg.role === "assistant" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#1E3A8A,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>⚖️</div>}
+                          <div style={{ maxWidth: "78%", padding: "12px 16px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.inputBg, color: msg.role === "user" ? "white" : theme.text, fontSize: 14, lineHeight: 1.6 }}>{msg.text}</div>
+                          {msg.role === "user" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>😊</div>}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ padding: "14px 20px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
+                      <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && practiceInput.trim()) { sendDebateMessage(practiceInput); setPracticeInput(""); } }} placeholder="Argue your point in English…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} />
+                      <button onClick={() => { sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim()} style={{ padding: "12px 20px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>➤</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ══ ROLEPLAY ══ */}
+            {practiceSubView === "roleplay" && (
+              <div style={{ background: theme.cardBg, borderRadius: 24, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
+                {/* Header */}
+                <div style={{ background: "linear-gradient(135deg,#4A0080,#7B2FBE)", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>🎭 Roleplay en anglais</div>
+                    {practiceRoleplayScenario && <div style={{ fontSize: 12, color: "#E9D5FF", marginTop: 2 }}>Scénario : {practiceRoleplayScenario}</div>}
+                  </div>
+                  <button onClick={() => { setPracticeRoleplayScenario(""); setPracticeRoleplayHistory([]); }} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, padding: "6px 12px", color: "white", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
+                </div>
+
+                {/* Setup */}
+                {practiceRoleplayHistory.length === 0 && (
+                  <div style={{ padding: 28 }}>
+                    <p style={{ color: theme.textMuted, marginTop: 0, marginBottom: 20, fontSize: 14 }}>Choisis un scénario. L'IA joue le rôle de l'autre personnage. Tu pratiques l'anglais en situation réelle.</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))", gap: 12, marginBottom: 20 }}>
+                      {[
+                        { scenario: "Job interview at a tech company", icon: "💼", label: "Entretien tech" },
+                        { scenario: "At the doctor's office", icon: "🏥", label: "Chez le médecin" },
+                        { scenario: "Negotiating a salary raise", icon: "💰", label: "Négociation salaire" },
+                        { scenario: "Ordering at a restaurant", icon: "🍽️", label: "Au restaurant" },
+                        { scenario: "Presenting a project to a client", icon: "📊", label: "Présentation client" },
+                        { scenario: "Dealing with a difficult customer", icon: "😤", label: "Client difficile" },
+                      ].map(({ scenario, icon, label }) => (
+                        <button key={scenario} onClick={() => startRoleplay(scenario)} style={{ padding: "16px 14px", borderRadius: 14, border: `2px solid ${practiceRoleplayScenario === scenario ? "#7B2FBE" : theme.border}`, background: practiceRoleplayScenario === scenario ? "#F5F0FF" : theme.inputBg, color: theme.text, fontWeight: 700, cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: 6 }}>
+                          <span style={{ fontSize: 22 }}>{icon}</span>
+                          <span style={{ fontSize: 13 }}>{label}</span>
+                          <span style={{ fontSize: 11, color: theme.textMuted, fontWeight: 400 }}>{scenario}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <input value={practiceRoleplayScenario} onChange={e => setPracticeRoleplayScenario(e.target.value)} placeholder="Ou décris ton propre scénario…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} onKeyDown={e => e.key === "Enter" && practiceRoleplayScenario.trim() && startRoleplay(practiceRoleplayScenario)} />
+                      <button onClick={() => startRoleplay(practiceRoleplayScenario)} disabled={!practiceRoleplayScenario.trim()} style={{ padding: "12px 24px", background: "linear-gradient(135deg,#4A0080,#7B2FBE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>🎭 Lancer</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Conversation */}
+                {practiceRoleplayHistory.length > 0 && (
+                  <>
+                    <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+                      {practiceRoleplayHistory.map((msg, i) => (
+                        <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
+                          {msg.role === "assistant" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#4A0080,#7B2FBE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>🎭</div>}
+                          <div style={{ maxWidth: "78%", padding: "12px 16px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "linear-gradient(135deg,#3451D1,#4D6BFE)" : theme.inputBg, color: msg.role === "user" ? "white" : theme.text, fontSize: 14, lineHeight: 1.6 }}>{msg.text}</div>
+                          {msg.role === "user" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,#3451D1,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>😊</div>}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ padding: "14px 20px", borderTop: `1px solid ${theme.border}`, display: "flex", gap: 10 }}>
+                      <input value={practiceInput} onChange={e => setPracticeInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && practiceInput.trim()) { sendRoleplayMessage(practiceInput); setPracticeInput(""); } }} placeholder="Play your role in English…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14 }} />
+                      <button onClick={() => { sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim()} style={{ padding: "12px 20px", background: "linear-gradient(135deg,#4A0080,#7B2FBE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>➤</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* ══ DICTÉE ══ */}
+            {practiceSubView === "dictation" && (
+              <div style={{ background: theme.cardBg, borderRadius: 24, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
+                {/* Header */}
+                <div style={{ background: "linear-gradient(135deg,#064E3B,#059669)", padding: "20px 24px" }}>
+                  <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>✍️ Dictée anglaise</div>
+                  <div style={{ fontSize: 12, color: "#A7F3D0", marginTop: 2 }}>Écoute, transcris, et vérifie ta précision</div>
+                </div>
+
+                <div style={{ padding: 28 }}>
+                  {/* Niveau */}
+                  <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+                    {["beginner","intermediate","advanced"].map(lvl => (
+                      <button key={lvl} onClick={() => setPracticeLevel(lvl)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `2px solid ${practiceLevel === lvl ? "#059669" : theme.border}`, background: practiceLevel === lvl ? "#D1FAE5" : theme.inputBg, color: practiceLevel === lvl ? "#064E3B" : theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>
+                        {lvl === "beginner" ? "🟢 Débutant" : lvl === "intermediate" ? "🟡 Intermédiaire" : "🔴 Avancé"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Bouton générer */}
+                  <button onClick={startDictation} disabled={practiceDictationLoading} style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg,#064E3B,#059669)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, fontSize: 15, cursor: "pointer", marginBottom: 24 }}>
+                    {practiceDictationLoading ? "⏳ Génération en cours…" : "🎲 Générer une nouvelle dictée"}
+                  </button>
+
+                  {/* Texte à dicter (masqué) */}
+                  {practiceDictationText && (
+                    <>
+                      {/* Bouton écouter */}
+                      <div style={{ background: theme.inputBg, borderRadius: 16, padding: "16px 20px", marginBottom: 16, display: "flex", alignItems: "center", gap: 16 }}>
+                        <button onClick={() => speakText(practiceDictationText)} style={{ width: 52, height: 52, borderRadius: 14, background: "linear-gradient(135deg,#059669,#34D399)", border: "none", cursor: "pointer", fontSize: 24, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>🔊</button>
+                        <div>
+                          <div style={{ fontWeight: 700, color: theme.text }}>Écoute et transcris</div>
+                          <div style={{ fontSize: 12, color: theme.textMuted }}>Clique sur 🔊 pour entendre le texte, puis écris ce que tu as compris ci-dessous</div>
+                        </div>
+                      </div>
+
+                      {/* Zone de saisie */}
+                      <textarea
+                        value={practiceDictationUserInput}
+                        onChange={e => { setPracticeDictationUserInput(e.target.value); setPracticeDictationScore(null); }}
+                        rows={4}
+                        placeholder="Écris ici ce que tu as entendu…"
+                        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 15, fontFamily: "'Outfit', sans-serif", resize: "vertical", boxSizing: "border-box" }}
+                      />
+
+                      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                        <button onClick={checkDictation} disabled={!practiceDictationUserInput.trim()} style={{ flex: 1, padding: "14px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>✅ Vérifier</button>
+                        <button onClick={() => speakText(practiceDictationText)} style={{ padding: "14px 18px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.text, cursor: "pointer", fontWeight: 700 }}>🔊 Rejouer</button>
+                      </div>
+
+                      {/* Résultat */}
+                      {practiceDictationScore !== null && (
+                        <div style={{ marginTop: 20, borderRadius: 16, overflow: "hidden", border: `2px solid ${practiceDictationScore >= 80 ? "#059669" : practiceDictationScore >= 50 ? "#D97706" : "#DC2626"}` }}>
+                          <div style={{ padding: "16px 20px", background: practiceDictationScore >= 80 ? "#D1FAE5" : practiceDictationScore >= 50 ? "#FEF3C7" : "#FEE2E2", display: "flex", alignItems: "center", gap: 16 }}>
+                            <div style={{ fontSize: 40, fontWeight: 900, color: practiceDictationScore >= 80 ? "#064E3B" : practiceDictationScore >= 50 ? "#92400E" : "#991B1B" }}>{practiceDictationScore}%</div>
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: 15, color: practiceDictationScore >= 80 ? "#064E3B" : practiceDictationScore >= 50 ? "#92400E" : "#991B1B" }}>
+                                {practiceDictationScore >= 80 ? "🎉 Excellent !" : practiceDictationScore >= 50 ? "👍 Pas mal !" : "💪 Continue !"}
+                              </div>
+                              <div style={{ fontSize: 12, color: practiceDictationScore >= 80 ? "#065F46" : practiceDictationScore >= 50 ? "#B45309" : "#B91C1C" }}>Précision de transcription</div>
+                            </div>
+                          </div>
+                          <div style={{ padding: "16px 20px", background: theme.cardBg }}>
+                            <div style={{ fontWeight: 700, color: theme.text, marginBottom: 8, fontSize: 13 }}>Texte original :</div>
+                            <div style={{ background: theme.inputBg, padding: "12px 16px", borderRadius: 10, fontSize: 14, color: theme.text, lineHeight: 1.6 }}>{practiceDictationText}</div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -6254,7 +6629,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <button onClick={() => { setAcademyTopic(""); setAcademySyllabus(null); setAcademyView("new"); }} className="btn-glow hov" style={{ padding: "14px 32px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>🗺️ Créer mon premier cours</button>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(300px, 100%), 1fr))", gap: 20 }}>
                     {academyCourses.map((course) => {
                       const total = course.syllabus?.concepts?.length || 0;
                       const done = Object.values(course.progress || {}).filter(v => v >= 5).length;
@@ -6447,7 +6822,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
                     {/* ─── ACTIVITÉS THÉORIQUES : pour les cours non-code ─── */}
                     {activeCourse?.type !== "code" && (
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 14, marginBottom: 20 }}>
                         {/* Carte : Points clés */}
                         <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 18, padding: 20 }}>
                           <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 10, fontSize: 14 }}>🔑 Points clés à retenir</div>
@@ -6666,7 +7041,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             {/* ── HOME ────────────────────────────────────────────────── */}
             {labSubView === "home" && (
               <div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 28 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(220px, 100%), 1fr))", gap: 16, marginBottom: 28 }}>
                 {[
                   { icon: "📄", title: "PDF → Fiches", desc: "Charge un PDF, génère des fiches en 1 clic", color: "#4D6BFE", bg: "linear-gradient(135deg,#FFFFFF,#EEF2FF)", action: () => setLabSubView("pdf") },
                   { icon: "📝", title: "Résumé de cours", desc: "Résumé IA : Complet, Flash ou Cornell", color: "#7B93FF", bg: "linear-gradient(135deg,#FFFFFF,#EEF2FF)", action: () => setLabSubView("resume") },
@@ -6921,7 +7296,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             </div>
 
             {/* Widgets personnalisables (on les affiche tous) */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 20 }}>
               {/* 1. Vue d'ensemble */}
               <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}`, boxShadow: "0 4px 15px rgba(0,0,0,0.03)" }}>
                 <h3 style={{ margin: "0 0 16px", color: theme.text, fontWeight: 800 }}>⚡ Vue d'ensemble</h3>
@@ -7407,7 +7782,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <button onClick={() => setShowProjectForm(true)} style={{ padding: "14px 32px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer" }}>＋ Créer un projet</button>
                   </div>
                 ) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 20 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(320px, 100%), 1fr))", gap: 20 }}>
                     {projects.map(proj => {
                       const progress = getProjectProgress(proj);
                       const daysLeft = getDaysUntil(proj.dueDate);
@@ -7597,7 +7972,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                         {projectPlannerData.tip && <div style={{ fontSize: 13, color: "#4D6BFE", marginTop: 8, fontStyle: "italic" }}>💡 {projectPlannerData.tip}</div>}
                       </div>
                     )}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))", gap: 16 }}>
                       {(projectPlannerData.days || []).map((day, di) => (
                         <div key={di} style={{ background: theme.cardBg, borderRadius: 16, padding: 18, border: `1px solid ${theme.border}` }}>
                           <div style={{ fontWeight: 800, color: theme.highlight, marginBottom: 12, fontSize: 14 }}>📅 {day.dayLabel || day.date}</div>
@@ -7803,7 +8178,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
             {/* Vue cartes */}
             {catsViewMode === "cards" && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(300px, 100%), 1fr))", gap: 20 }}>
                 {categories.sort((a,b) => {
                   if (catsFavorites.includes(a.name)) return -1;
                   if (catsFavorites.includes(b.name)) return 1;
@@ -7922,7 +8297,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
       </main>
       </div>{/* fin flex sidebar+content */}
-      <footer style={{ textAlign: "center", padding: "12px 24px", color: "rgba(255,255,255,0.85)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5, position: "fixed", bottom: 0, left: sidebarCollapsed ? 64 : 220, right: 0, zIndex: 49, background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}`, backdropFilter: "blur(12px)", transition: "left 0.3s cubic-bezier(0.4,0,0.2,1)" }}>
+      <footer className="hide-mobile" style={{ textAlign: "center", padding: "12px 24px", color: "rgba(255,255,255,0.85)", fontSize: 11, fontFamily: "'JetBrains Mono', monospace", letterSpacing: 0.5, position: "fixed", bottom: 0, left: sidebarCollapsed ? 64 : 220, right: 0, zIndex: 49, background: isDarkMode ? "rgba(7,13,31,0.97)" : "linear-gradient(135deg, #3451D1 0%, #4D6BFE 100%)", borderTop: `1px solid ${isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.15)"}`, backdropFilter: "blur(12px)", transition: "left 0.3s cubic-bezier(0.4,0,0.2,1)" }}>
         MémoMaître GOD LEVEL v8 • Conçu avec 🩵 pour {FB_USER.replace(/_/g, ' ')} • FSRS v5 × DeepSeek Powered
       </footer>
     </div>
