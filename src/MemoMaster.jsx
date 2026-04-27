@@ -784,6 +784,7 @@ export default function MemoMaster() {
   useEffect(() => {
     (async () => {
       try {
+        // ✅ Toutes les données sont récupérées AVANT de toucher aux états
         const exps = (await storage.get("expressions_v3")) || [];
         const cats = (await storage.get("categories_v3")) || CATEGORIES_DEFAULT;
         const sess = (await storage.get("sessions_v3")) || [];
@@ -793,7 +794,10 @@ export default function MemoMaster() {
         const storedCustomExams = (await storage.get("customExams_v1")) || [];
         const storedLogs = (await storage.get("devLogs_v1")) || [];
         const storedRoadmap = (await storage.get("roadmap_v1")) || roadmap;
+        const storedCourses = (await storage.get("academyCourses_v1")) || [];
+        const storedProjects = (await storage.get("projects_v1")) || [];
 
+        // ✅ On applique tous les setState ensemble
         setExpressions(exps);
         setCategories(cats);
         setSessions(sess);
@@ -803,16 +807,18 @@ export default function MemoMaster() {
         setCustomExams(storedCustomExams);
         setDevLogs(storedLogs);
         setRoadmap(storedRoadmap);
-        const storedCourses = (await storage.get("academyCourses_v1")) || [];
         setAcademyCourses(storedCourses);
-        const storedProjects = (await storage.get("projects_v1")) || [];
         setProjects(storedProjects);
         setProjectsLoaded(true);
         setAddForm((f) => ({ ...f, category: cats[0]?.name || "" }));
         setDocCategory(cats[0]?.name || "");
-        setLoaded(true);
+
+        // ✅ On attend un tick React complet avant d'activer la sauvegarde
+        // pour éviter que les effets de sauvegarde ne s'exécutent avec les états vides
+        setTimeout(() => setLoaded(true), 100);
       } catch (error) {
         console.error("Erreur lors du chargement des données:", error);
+        setTimeout(() => setLoaded(true), 100); // on débloque quand même en cas d'erreur
       }
     })();
   }, []);
@@ -822,16 +828,24 @@ export default function MemoMaster() {
     setPowerLevel(calcPower);
   }, [expressions, stats, unlockedBadges]);
 
-  useEffect(() => { if (loaded) storage.set("expressions_v3", expressions); }, [expressions, loaded]);
-  useEffect(() => { if (loaded) storage.set("categories_v3", categories); }, [categories, loaded]);
-  useEffect(() => { if (loaded) storage.set("sessions_v3", sessions); }, [sessions, loaded]);
-  useEffect(() => { if (loaded) storage.set("stats_v3", stats); }, [stats, loaded]);
-  useEffect(() => { if (loaded) storage.set("badges_v3", unlockedBadges); }, [unlockedBadges, loaded]);
-  useEffect(() => { if (loaded) storage.set("customExams_v1", customExams); }, [customExams, loaded]);
-  useEffect(() => { if (loaded) storage.set("devLogs_v1", devLogs); }, [devLogs, loaded]);
-  useEffect(() => { if (loaded) storage.set("roadmap_v1", roadmap); }, [roadmap, loaded]);
-  useEffect(() => { if (loaded) storage.set("academyCourses_v1", academyCourses); }, [academyCourses, loaded]);
-  useEffect(() => { if (projectsLoaded) storage.set("projects_v1", projects); }, [projects, projectsLoaded]);
+  // ✅ Debounce : on attend 1.5s de stabilité avant d'écrire dans Firebase
+  // Cela évite d'écraser les données avec des états intermédiaires vides
+  const saveTimerRef = useRef({});
+  const debouncedSave = useCallback((key, val, delay = 1500) => {
+    if (saveTimerRef.current[key]) clearTimeout(saveTimerRef.current[key]);
+    saveTimerRef.current[key] = setTimeout(() => storage.set(key, val), delay);
+  }, []);
+
+  useEffect(() => { if (loaded) debouncedSave("expressions_v3", expressions); }, [expressions, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("categories_v3", categories); }, [categories, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("sessions_v3", sessions); }, [sessions, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("stats_v3", stats); }, [stats, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("badges_v3", unlockedBadges); }, [unlockedBadges, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("customExams_v1", customExams); }, [customExams, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("devLogs_v1", devLogs); }, [devLogs, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("roadmap_v1", roadmap); }, [roadmap, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("academyCourses_v1", academyCourses); }, [academyCourses, loaded]);
+  useEffect(() => { if (projectsLoaded) debouncedSave("projects_v1", projects); }, [projects, projectsLoaded]);
 
   const checkBadges = useCallback((exps, st, sess, currentBadges) => {
     const mastered = exps.filter((e) => e.level >= 7).length;
