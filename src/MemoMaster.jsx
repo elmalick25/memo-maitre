@@ -46,7 +46,53 @@ const CATEGORIES_DEFAULT = [
   { name: "🇬🇧 Anglais", examDate: "", targetScore: 90, priority: "haute", color: "#4D6BFE" },
   { name: "☕ Java / Spring Boot", examDate: "", targetScore: 85, priority: "haute", color: "#7B93FF" },
   { name: "🖥️ Informatique Générale", examDate: "", targetScore: 80, priority: "normale", color: "#4D6BFE" },
+  { name: "📊 Data Processing", examDate: "", targetScore: 80, priority: "normale", color: "#F59E0B" },
 ];
+
+// Fusionne les catégories par défaut manquantes dans la liste chargée depuis
+// le stockage. Utile après un déploiement qui ajoute un nouveau module par
+// défaut : les utilisateurs existants récupèrent automatiquement le module
+// (ex: "📊 Data Processing") sans écraser leurs catégories custom.
+function mergeDefaultCategories(stored) {
+  const list = Array.isArray(stored) ? [...stored] : [];
+  const existing = new Set(list.map(c => (c?.name || "").trim()));
+  for (const def of CATEGORIES_DEFAULT) {
+    if (!existing.has(def.name.trim())) list.push({ ...def });
+  }
+  return list;
+}
+
+// ── ANTI-RÉGRESSION "module invisible sur déployé" ──────────────────────────
+// Toute fiche référence une `category`. Si ce nom n'existe pas dans la liste
+// des modules (`categories`), le module devient invisible dans la vue Modules,
+// la Constellation, les Stats, etc. — même si les fiches, elles, sont bien
+// synchronisées. Ce cas arrive typiquement quand :
+//   • un module est créé sur un appareil A (dev) mais pas encore synchronisé
+//     vers l'appareil B (déployé) ;
+//   • un ancien export/import a perdu la liste des catégories ;
+//   • une catégorie a été supprimée par erreur alors que ses fiches existent.
+// Cette fonction reconstruit automatiquement les modules manquants à partir
+// des fiches. Résultat : impossible d'avoir des fiches "orphelines" sans
+// module visible. Idempotent, sans effet de bord sur les catégories custom.
+const CAT_PALETTE = ["#4D6BFE","#7B93FF","#A78BFA","#F472B6","#34D399","#FBBF24","#F97316","#22D3EE","#EF4444","#10B981"];
+function reconcileCategoriesWithExpressions(categories, expressions) {
+  const list = Array.isArray(categories) ? [...categories] : [];
+  const existing = new Set(list.map(c => (c?.name || "").trim()));
+  const seen = new Set();
+  for (const exp of (expressions || [])) {
+    const name = (exp?.category || "").trim();
+    if (!name || seen.has(name) || existing.has(name)) continue;
+    seen.add(name);
+    list.push({
+      name,
+      examDate: "",
+      targetScore: 80,
+      priority: "normale",
+      color: CAT_PALETTE[list.length % CAT_PALETTE.length],
+    });
+  }
+  return list;
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // API KEYS — Masquées via Cloud Functions (aiProxy)
@@ -1028,7 +1074,7 @@ export default function MemoMaster() {
         const { repaired: expsRepaired, count: dateFixCount } = repairCardDates(exps || []);
         if (dateFixCount > 0) console.info(`[dateRepair] ${dateFixCount} fiches avec dates anormales corrigées.`);
         setExpressions(expsRepaired);
-        setCategories(cats || CATEGORIES_DEFAULT);
+        setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats), expsRepaired));
         setSessions(sess || []);
         setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
         setUnlockedBadges(badges || []);
@@ -1040,7 +1086,7 @@ export default function MemoMaster() {
         setProjects(storedProjects || []);
         setProjectsLoaded(true);
         if (storedLivingMemory) setLivingMemory(storedLivingMemory);
-        const resolvedCats = cats || CATEGORIES_DEFAULT;
+        const resolvedCats = mergeDefaultCategories(cats);
         setAddForm((f) => ({ ...f, category: resolvedCats[0]?.name || "" }));
         setDocCategory(resolvedCats[0]?.name || "");
         // New Badges Notification Logic
@@ -1076,10 +1122,11 @@ export default function MemoMaster() {
             storage.get("projects_v1"),
             storage.get("badges_viewed_count"),
           ]);
-          setExpressions(repairCardDates(exps || []).repaired);
+           const expsRepaired2 = repairCardDates(exps || []).repaired;
+           setExpressions(expsRepaired2);
           // FIX : ne jamais passer `undefined` à setCategories — sinon les
           // composants qui appellent categories.map / .filter plantent.
-          setCategories((cats || []).length ? cats : CATEGORIES_DEFAULT);
+          setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats), expsRepaired2));
           setSessions(sess || []);
           setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
           setUnlockedBadges(badges || []);
@@ -1132,36 +1179,6 @@ export default function MemoMaster() {
     const calcPower = expressions.length * 10 + stats.streak * 50 + stats.examsDone * 100 + unlockedBadges.length * 200;
     setPowerLevel(calcPower);
   }, [expressions, stats, unlockedBadges]);
-
-  // ── FIX BUG : Auto-reconstruction des catégories manquantes (Sync & Load) ──
-  useEffect(() => {
-    if (!loaded || expressions.length === 0) return;
-    setCategories(prev => {
-      if (!prev) prev = [];
-      const existingNames = new Set(prev.map(c => c.name));
-      const missing = [];
-      const palette = ["#4D6BFE", "#7B93FF", "#A78BFA", "#F472B6", "#34D399", "#FBBF24", "#F97316", "#22D3EE"];
-      
-      expressions.forEach(exp => {
-        const name = (exp.category || "").trim();
-        if (!name || existingNames.has(name)) return;
-        existingNames.add(name);
-        missing.push({
-          name,
-          examDate: "",
-          targetScore: 80,
-          priority: "normale",
-          color: palette[(prev.length + missing.length) % palette.length],
-        });
-      });
-
-      if (missing.length > 0) {
-        console.info(`[auto-repair] ${missing.length} catégories créées automatiquement depuis les fiches.`);
-        return [...prev, ...missing];
-      }
-      return prev;
-    });
-  }, [expressions, loaded]);
 
   // ✅ Debounce : on attend 500ms de stabilité avant d'écrire dans Firebase
   // (réduit de 1500ms à 500ms pour limiter les pertes en cas d'actualisation rapide)
