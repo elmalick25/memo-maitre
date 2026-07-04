@@ -1,5 +1,5 @@
 // src/lib/fsrs.js
-import { addDays, today } from "./dateHelpers";
+import { addDays, today } from "../utils/dateUtils";
 
 const FSRS_PARAMS = [
   0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0589, 1.5330,
@@ -20,6 +20,7 @@ function fsrsNextInterval(S) {
 
 function toFSRSGrade(q) {
   if (q === 0) return 1;
+  if (q === 1) return 2;
   if (q === 3) return 3;
   if (q === 5) return 4;
   return 3;
@@ -52,20 +53,26 @@ function fsrsNextStabilityForgot(D, S, R) {
 
 export function fsrs(card, q) {
   const grade = toFSRSGrade(q);
-  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null } = card;
+  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null, easeFactor = null } = card;
   const t = elapsedDays ?? interval;
+
+  // Migration des anciennes fiches SM-2 (qui ont des répétitions mais pas de stabilité FSRS)
+  if (stability === null && repetitions > 0) {
+    stability = Math.max(0.1, interval);
+    difficulty = easeFactor ? Math.max(1, Math.min(10, 11 - (easeFactor - 1.3) * 4.16)) : 5;
+  }
 
   if (stability === null || repetitions === 0) {
     stability = fsrsInitStability(grade);
     difficulty = fsrsInitDifficulty(grade);
-    if (grade === 1) { interval = 1; repetitions = 0; }
+    if (grade === 1) { interval = 0; repetitions = 0; }
     else { interval = fsrsNextInterval(stability); repetitions = 1; }
   } else {
     const R = fsrsR(t, stability);
     difficulty = fsrsNextDifficulty(difficulty, grade);
     if (grade === 1) {
       stability = Math.max(0.1, fsrsNextStabilityForgot(difficulty, stability, R));
-      interval = 1; repetitions = 0;
+      interval = 0; repetitions = 0;
     } else {
       stability = Math.max(stability, fsrsNextStabilityRecall(difficulty, stability, R, grade));
       interval = fsrsNextInterval(stability); repetitions++;

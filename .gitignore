@@ -25,3 +25,24 @@ dist-ssr
 
 .env
 .env.local
+
+# Data & Executables
+pb_data/
+pocketbase.exe
+src.zip
+
+# Reports & Temp
+eslint_report.*
+report.json
+build_error.txt
+temp_step.txt
+
+# Firebase temp
+.firebase/
+
+# Scratch & Backups
+scratch/
+src_backup/
+src_extracted/
+*.cjs
+*.py

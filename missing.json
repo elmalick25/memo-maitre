@@ -1,0 +1,48 @@
+{
+  "C:\\Users\\LENOVO\\memo-app\\checkDepth.js": {
+    "require": 1
+  },
+  "C:\\Users\\LENOVO\\memo-app\\src\\Academie.jsx": {
+    "duckFeedback": 8,
+    "duckAnswer": 4,
+    "setDuckAnswer": 1,
+    "evaluerRubberDuck": 1,
+    "duckLoading": 4,
+    "setDuckFeedback": 1,
+    "deboguerAvecIA": 1,
+    "executerSandbox": 1
+  },
+  "C:\\Users\\LENOVO\\memo-app\\src\\ElevenLabsVoice.jsx": {
+    "agent": 1
+  },
+  "C:\\Users\\LENOVO\\memo-app\\src\\EnglishPractice.jsx": {
+    "userHasInteractedRef": 2,
+    "awardXP": 20,
+    "startGodModeVoiceChat": 2,
+    "agent": 80,
+    "MODE_CONFIGS": 6,
+    "agentConnectedRef": 1,
+    "setXrayRevealed": 3,
+    "accentRecorderRef": 5,
+    "accentChunksRef": 4,
+    "accentHistory": 8,
+    "setAccentHistory": 2,
+    "debateBalance": 5,
+    "debateShatter": 4,
+    "renderDraggableWord": 2,
+    "setDebateBalance": 1,
+    "setAccentTab": 2,
+    "accentTab": 4,
+    "xrayRevealed": 1
+  },
+  "C:\\Users\\LENOVO\\memo-app\\src\\MemoMaster.jsx": {
+    "startMatchingMode": 1,
+    "generateQcmChoices": 1,
+    "sessionInProgress": 2,
+    "lastFailed": 3,
+    "openCard": 1,
+    "lastLabDoc": 2,
+    "lastQuiz": 4,
+    "resumeQuiz": 1
+  }
+}

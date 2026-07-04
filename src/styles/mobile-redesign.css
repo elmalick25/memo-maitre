@@ -1,0 +1,393 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   mobile-redesign.css — refonte mobile complète
+   Charger APRÈS mobile-ux-fix.css et responsive.css pour overrider.
+   Principe : tuer les débordements horizontaux, condenser la home, agrandir
+   les zones tactiles, masquer les blocs lourds réservés au desktop.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Anti-débordement horizontal global ──────────────────────────────── */
+html, body, #root {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+@media (max-width: 768px) {
+  * { min-width: 0; }
+  /* Tout SVG enfant d'un conteneur fluide doit clipper, pas dépasser */
+  svg { overflow: hidden !important; }
+  /* Empêche les images de pousser la largeur */
+  img, video, iframe { max-width: 100%; height: auto; }
+  /* Empêche les pre/code de pousser la largeur */
+  pre, code { max-width: 100%; overflow-x: auto; word-break: break-word; }
+}
+
+/* ── 2. Topbar : largeurs fluides, plus de width:30% fixes ──────────────── */
+@media (max-width: 768px) {
+  .mm-topbar,
+  nav[class*="topbar"],
+  header[class*="topbar"] {
+    padding: 8px 12px !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+  }
+  .mm-topbar > * { min-width: 0 !important; }
+  .mm-topbar > *:first-child,
+  .mm-topbar > *:last-child {
+    width: auto !important;
+    flex: 0 0 auto !important;
+  }
+  .mm-topbar > *:nth-child(2) {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+  /* Barre de recherche : largeur fluide */
+  .mm-topbar input[type="search"],
+  .mm-topbar input[type="text"] {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+}
+
+/* ── 3. Cacher les blocs lourds desktop sur mobile ──────────────────────── */
+@media (max-width: 768px) {
+  .desktop-only,
+  .mm-home-quote,
+  .mm-home-godhud,
+  .mm-home-recruiter,
+  .mm-home-oracle,
+  .mm-home-heatmap-block,
+  .mm-home-knowledgegraph-block,
+  .mm-home-diallo,
+  .mm-home-certbanner,
+  .mm-home-resume-carousel { display: none !important; }
+  /* Quand la home v2 est active, masque l'ancienne */
+  body.mobile-home-v2 .mm-home-legacy { display: none !important; }
+}
+
+/* ── 4. Mobile Home V2 : layout vertical fluide ─────────────────────────── */
+.mhv2 {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 14px 120px;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.mhv2-hero {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: #fff;
+  border-radius: 28px;
+  padding: 24px 20px 20px;
+  box-shadow: 0 16px 40px rgba(124,58,237,0.4), inset 0 1px 1px rgba(255,255,255,0.4);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.15);
+}
+.mhv2-hero::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 80% -20%, rgba(255,255,255,0.3), transparent 50%),
+    radial-gradient(circle at -10% 120%, rgba(124,58,237,0.6), transparent 60%);
+  pointer-events: none;
+}
+.mhv2-hero-greet {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin: 0 0 4px;
+  position: relative;
+}
+.mhv2-hero-name {
+  font-size: 1.5rem;
+  font-weight: 900;
+  margin: 0 0 14px;
+  line-height: 1.1;
+  position: relative;
+}
+.mhv2-hero-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  position: relative;
+}
+.mhv2-hero-stat { display: flex; align-items: center; gap: 4px; }
+.mhv2-hero-stat strong { font-size: 1rem; }
+
+.mhv2-cta {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  color: #0f172a;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 24px;
+  padding: 22px 24px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,1);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  width: 100%;
+  transition: transform .2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow .2s;
+}
+.mhv2-cta:active { transform: scale(0.96); box-shadow: 0 8px 20px rgba(0,0,0,0.1); }
+.mhv2-cta-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.3rem;
+  color: #4D6BFE;
+}
+.mhv2-cta-title { font-size: 1.1rem; font-weight: 900; color: #0f172a; }
+.mhv2-cta-sub { font-size: 0.82rem; font-weight: 600; color: #64748b; }
+
+.mhv2-tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+.mhv2-tile {
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px;
+  padding: 16px 10px;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all .2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1), inset 0 1px 1px rgba(255,255,255,0.05);
+}
+.mhv2-tile:active { background: rgba(139,92,246,0.2); transform: scale(0.96); }
+.mhv2-tile-value {
+  font-size: 1.6rem;
+  font-weight: 900;
+  color: #a78bfa;
+  line-height: 1;
+  margin-bottom: 6px;
+  text-shadow: 0 2px 10px rgba(167,139,250,0.4);
+}
+.mhv2-tile-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mm-fg-muted, #94a3b8);
+}
+
+.mhv2-section-title {
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--mm-fg-muted, #94a3b8);
+  margin: 6px 0 -4px 4px;
+}
+
+.mhv2-quests {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px;
+  padding: 14px;
+}
+.mhv2-quests-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.mhv2-quests-title { font-weight: 800; font-size: 0.95rem; }
+.mhv2-quests-count {
+  background: rgba(77,107,254,0.18); color: #4D6BFE;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 800;
+}
+.mhv2-quest-bar {
+  height: 6px; background: rgba(255,255,255,0.08);
+  border-radius: 3px; overflow: hidden; margin-bottom: 12px;
+}
+.mhv2-quest-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4D6BFE, #7c3aed);
+  border-radius: 3px;
+  transition: width .3s;
+}
+.mhv2-quest {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255,255,255,0.05);
+}
+.mhv2-quest:first-of-type { border-top: none; }
+.mhv2-quest-check {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; flex-shrink: 0;
+}
+.mhv2-quest-check.done { background: #22c55e; color: #fff; }
+.mhv2-quest-check.todo { background: rgba(255,255,255,0.08); color: #94a3b8; }
+.mhv2-quest-label {
+  flex: 1; font-size: 0.88rem; font-weight: 600;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.mhv2-quest.done .mhv2-quest-label { opacity: 0.5; text-decoration: line-through; }
+
+.mhv2-shortcuts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.mhv2-shortcut {
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px;
+  padding: 16px 14px;
+  display: flex; align-items: center; gap: 12px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: all .2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  min-height: 64px;
+  color: inherit;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.1), inset 0 1px 1px rgba(255,255,255,0.05);
+}
+.mhv2-shortcut:active { background: rgba(139,92,246,0.2); transform: scale(0.96); }
+.mhv2-shortcut-icon {
+  width: 36px; height: 36px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4D6BFE, #7c3aed);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.mhv2-shortcut-text { display: flex; flex-direction: column; min-width: 0; }
+.mhv2-shortcut-label {
+  font-size: 0.85rem; font-weight: 800; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mhv2-shortcut-sub {
+  font-size: 0.68rem; font-weight: 600; color: var(--mm-fg-muted, #94a3b8);
+  margin-top: 2px;
+}
+
+/* ── 5. AgentCardToast — placement mobile safe ──────────────────────────── */
+@media (max-width: 768px) {
+  .agent-card-toast,
+  [data-agent-card-toast] {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(90px + env(safe-area-inset-bottom, 0px)) !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+}
+
+/* ── 6. TechIntelView ───────────────────────────────────────────────────── */
+.tiv {
+  padding: 12px 14px 120px;
+  max-width: 100%;
+  box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.tiv-tabs {
+  display: flex; gap: 6px; overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tiv-tabs::-webkit-scrollbar { display: none; }
+.tiv-tab {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--mm-fg, #eaf2ff);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.tiv-tab.active {
+  background: linear-gradient(135deg, #4D6BFE, #7c3aed);
+  color: #fff;
+  border-color: transparent;
+}
+.tiv-digest {
+  background: linear-gradient(135deg, rgba(77,107,254,0.18), rgba(124,58,237,0.18));
+  border: 1px solid rgba(77,107,254,0.3);
+  border-radius: 18px;
+  padding: 16px;
+}
+.tiv-digest-title {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.6px;
+  text-transform: uppercase; color: #4D6BFE; margin-bottom: 8px;
+}
+.tiv-digest-body {
+  font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap;
+}
+.tiv-item {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 14px;
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background .15s;
+  color: inherit; text-decoration: none;
+}
+.tiv-item:active { background: rgba(77,107,254,0.12); }
+.tiv-item-meta {
+  display: flex; align-items: center; gap: 8px; font-size: 0.7rem;
+  font-weight: 700; color: var(--mm-fg-muted, #94a3b8);
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.tiv-item-source { color: #4D6BFE; }
+.tiv-item-title {
+  font-size: 0.95rem; font-weight: 700; line-height: 1.3;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tiv-item-summary {
+  font-size: 0.82rem; line-height: 1.4;
+  color: var(--mm-fg-muted, #94a3b8);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tiv-empty, .tiv-loading {
+  text-align: center; padding: 40px 20px;
+  color: var(--mm-fg-muted, #94a3b8);
+  font-size: 0.88rem;
+}
+.tiv-skel {
+  background: rgba(255,255,255,0.05);
+  border-radius: 14px;
+  height: 100px;
+  animation: tivPulse 1.4s ease-in-out infinite;
+}
+@keyframes tivPulse {
+  0%, 100% { opacity: 0.5; } 50% { opacity: 0.8; }
+}
+
+/* ── Overrides pour TechIntelView God Mode ── */
+@media (max-width: 576px) {
+  .tiv-card {
+    padding: 16px !important;
+    border-radius: 16px !important;
+  }
+  .tiv-article img {
+    width: 100% !important;
+    height: 140px !important;
+    object-fit: cover !important;
+    border-radius: 12px !important;
+  }
+  .tiv-tab {
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+  }
+}

@@ -1,0 +1,89 @@
+/* ════════════════════════════════════════════════════════════════════════════
+ * Mobile UX shim — tokens, keyboard handling, reduced motion.
+ * (Cleaned up: duplicate .mobile-bottom-nav / padding rules removed; the
+ * canonical mobile rules live in responsive.css.)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Unified bottom-nav clearance (Speed Dial = 64px button + 16px gap + label) */
+  --nav-h: 92px;
+
+  /* Stacking tokens — single source of truth */
+  --z-base:           1;
+  --z-sticky:         50;
+  --z-nav:            100;
+  --z-fab:            190;
+  --z-modal-backdrop: 180;
+  --z-modal:          200;
+  --z-toast:          9000;
+  --z-critical:       99999;
+}
+
+/* Safe touch defaults */
+html, body, #root {
+  width: 100%;
+  margin: 0;
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+  -webkit-text-size-adjust: 100%;
+}
+html { min-height: 100%; }
+body { min-height: 100%; touch-action: pan-y pinch-zoom; }
+#root { min-height: 100%; }
+
+button, [role="button"], a, input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+button, [role="button"], input[type="button"], input[type="submit"] {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+input, select, textarea { font-size: max(16px, 1rem); }
+
+.main-content {
+  touch-action: auto !important;
+  overscroll-behavior-x: none;
+}
+
+.review-session-card,
+.card-hov.review-session-card {
+  touch-action: pan-y pinch-zoom !important;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tabs scroll containers */
+.tabs-scroll,
+.academy-tabs,
+[style*="overflowX: auto"],
+[style*="overflow-x: auto"],
+[style*="overflowX:auto"],
+[style*="overflow-x:auto"] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+.tabs-scroll::-webkit-scrollbar,
+.academy-tabs::-webkit-scrollbar { display: none; }
+
+/* ── Virtual-keyboard handling ────────────────────────────────────────────── */
+/* When the soft keyboard opens we add body.keyboard-open via JS (main.jsx). */
+body.keyboard-open .speed-dial-trigger,
+body.keyboard-open .speed-dial-label,
+body.keyboard-open .speed-dial-fan,
+body.keyboard-open .speed-dial-backdrop,
+body.keyboard-open .ai-orb-container {
+  display: none !important;
+}
+
+/* ── Accessibility: respect reduced motion globally ──────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

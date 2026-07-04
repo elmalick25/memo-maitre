@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1.2 — Validation et throttling pour public_annotations
+    match /public_annotations/{annotationId} {
+      allow read: if true;
+      allow create: if request.auth != null 
+                    // Limiter la taille de l'annotation à 500 caractères environ (côté backend Firestore)
+                    && request.resource.data.text is string
+                    && request.resource.data.text.size() <= 500
+                    && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null; // Pour les votes
+      allow delete: if request.auth != null && request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3';
+    }
+
+    match /{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3';
+    }
+  }
+}

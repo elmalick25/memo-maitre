@@ -1,0 +1,462 @@
+/* ════════════════════════════════════════════════════════════════════════════
+ * 📱 RESPONSIVE GOD MODE — Astral English / MemoMaster
+ * Objectif : version mobile irréprochable, sans toucher au code des composants.
+ * Tout est piloté par classes existantes + sélecteurs d'attributs sur les
+ * styles inline déjà présents dans MemoMaster.jsx & co.
+ *
+ * Breakpoints :
+ *   - ≤ 1024px : tablette
+ *   - ≤ 768px  : mobile (référence principale)
+ *   - ≤ 480px  : petit mobile
+ *   - ≤ 380px  : très petit mobile (iPhone SE 1)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 0. Reset global mobile-safe ─────────────────────────────────────────── */
+html, body, #root {
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  /* overscroll-behavior-y: none; — retiré : bloquait le scroll souris sur desktop */
+  -webkit-tap-highlight-color: transparent;
+}
+img, video, canvas, svg {
+  max-width: 100%;
+  height: auto;
+}
+* { min-width: 0; }            /* anti-overflow flex/grid */
+
+/* Toujours afficher la bottom-nav par défaut (mobile), masquée en desktop plus bas */
+.mobile-bottom-nav { z-index: 95; }
+
+/* ── 1. ≤ 1024 px (tablette) ─────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .desktop-sidebar,
+  .desktop-sidebar-spacer { display: none !important; }
+
+  /* Conteneurs aux paddings de bureau trop larges */
+  [style*="padding: 40px"],
+  [style*="padding: 48px"],
+  [style*="padding: 56px"],
+  [style*="padding: 64px"] { padding: 24px !important; }
+
+  /* Grille 3 colonnes → 2 colonnes */
+  [style*="gridTemplateColumns: '1fr 1fr 1fr'"],
+  [style*='gridTemplateColumns: "1fr 1fr 1fr"'],
+  [style*="grid-template-columns: 1fr 1fr 1fr"] {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
+
+/* ── 2. ≤ 768 px (mobile) ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+  /* —— Layout général —— */
+  body, #root { font-size: 15px; }
+
+  .desktop-sidebar,
+  .desktop-sidebar-spacer { display: none !important; }
+
+  /* Navigation haute */
+  .nav-top {
+    padding: 0 12px !important;
+    min-height: 56px !important;
+    padding-top: calc(env(safe-area-inset-top, 0px)) !important;
+  }
+  .nav-logo-text,
+  .nav-title-sub,
+  .nav-text-container { font-size: 14px !important; }
+  .nav-title-sub { display: none !important; }
+
+  /* Réservation de hauteur pour la bottom-nav + safe-area iOS */
+  .main-content,
+  .main-content-area,
+  [style*="minHeight: calc(100vh - 68px)"],
+  [style*="minHeight:calc(100vh - 68px)"] {
+    padding: 12px 12px 110px !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+    padding-bottom: calc(var(--nav-h, 92px) + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* Masquer les indicateurs SRS / barres de progression latérales fixées à droite sur mobile */
+  .srs-progress-bar,
+  .srs-side-indicator,
+  .level-indicator-side,
+  .right-edge-indicator,
+  [data-srs-progress="side"] {
+    display: none !important;
+  }
+
+  /* —— Containers / cards —— */
+  .mm-card,
+  .dashboard-card,
+  .astral-glass,
+  .mm-glass {
+    border-radius: 16px !important;
+  }
+
+  /* Tous les paddings inline démesurés */
+  [style*="padding: 36px"],  [style*='padding: "36px"'],
+  [style*="padding: 32px"],  [style*='padding: "32px"'],
+  [style*="padding: 40px"],  [style*='padding: "40px"'],
+  [style*="padding: 48px"],  [style*='padding: "48px"'],
+  [style*="padding: 56px"],  [style*='padding: "56px"'],
+  [style*="padding: 64px"],  [style*='padding: "64px"'],
+  .section-header,
+  .academy-header {
+    padding: 16px !important;
+    border-radius: 18px !important;
+  }
+  [style*="padding: 24px"], [style*='padding: "24px"'] { padding: 14px !important; }
+  [style*="padding: 20px"], [style*='padding: "20px"'] { padding: 14px !important; }
+
+  /* Marges démesurées */
+  [style*="margin: 32px"], [style*="margin: 40px"], [style*="margin: 48px"] { margin: 16px 0 !important; }
+  [style*="marginBottom: 48"], [style*="marginBottom: 40"], [style*="marginBottom: 32"] { margin-bottom: 20px !important; }
+  [style*="marginTop: 48"], [style*="marginTop: 40"], [style*="marginTop: 32"] { margin-top: 20px !important; }
+
+  /* Gap démesurés */
+  [style*="gap: 32"], [style*="gap: 40"], [style*="gap: 48"], [style*="gap: 56"] { gap: 16px !important; }
+  [style*="gap: 24"] { gap: 12px !important; }
+
+  /* Hauteurs inline fixes (hero) → fluides */
+  [style*="height: 400px"], [style*="height: 500px"], [style*="height: 600px"] { height: auto !important; min-height: 260px; }
+  [style*="minHeight: 400"], [style*="minHeight: 500"], [style*="minHeight: 600"] { min-height: 260px !important; }
+
+  /* —— Typographie —— */
+  h1, [style*="fontSize: 48"], [style*="fontSize: 56"], [style*="fontSize: 64"], [style*="fontSize: 72"] {
+    font-size: 28px !important;
+    line-height: 1.15 !important;
+    letter-spacing: -0.5px !important;
+    word-break: break-word;
+  }
+  h2, [style*="fontSize: 32"], [style*="fontSize: 36"], [style*="fontSize: 40"] {
+    font-size: 22px !important;
+    line-height: 1.2 !important;
+  }
+  h3, [style*="fontSize: 24"], [style*="fontSize: 28"] {
+    font-size: 18px !important;
+    line-height: 1.25 !important;
+  }
+  [style*="fontSize: 20"] { font-size: 16px !important; }
+  [style*="fontSize: 18"] { font-size: 15px !important; }
+  p, li, span { word-break: break-word; overflow-wrap: anywhere; hyphens: auto; }
+
+  /* —— Grilles → 1 colonne —— */
+  [style*="gridTemplateColumns: '1fr 1fr'"],
+  [style*='gridTemplateColumns: "1fr 1fr"'],
+  [style*="gridTemplateColumns: '1fr 1fr 1fr'"],
+  [style*='gridTemplateColumns: "1fr 1fr 1fr"'],
+  [style*="gridTemplateColumns: '1fr 1fr 1fr 1fr'"],
+  [style*="gridTemplateColumns: 'repeat(2"],
+  [style*='gridTemplateColumns: "repeat(2'],
+  [style*="gridTemplateColumns: 'repeat(3"],
+  [style*='gridTemplateColumns: "repeat(3'],
+  [style*="gridTemplateColumns: 'repeat(4"],
+  [style*='gridTemplateColumns: "repeat(4'],
+  [style*="gridTemplateColumns: 'repeat(auto-fit"],
+  [style*='gridTemplateColumns: "repeat(auto-fit'],
+  [style*="gridTemplateColumns: 'repeat(auto-fill"],
+  [style*='gridTemplateColumns: "repeat(auto-fill'],
+  [style*="grid-template-columns: 1fr 1fr"],
+  [style*="grid-template-columns: repeat"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* —— Flex wrap forcé pour éviter les débordements —— */
+  [style*="display: flex"][style*="gap:"],
+  [style*="display:flex"][style*="gap:"] {
+    flex-wrap: wrap !important;
+  }
+  /* Sauf les barres d'actions courtes qui doivent rester sur 1 ligne */
+  .nav-top[style*="display: flex"] { flex-wrap: nowrap !important; }
+
+  /* Largeur min des cellules d'auto-fit cassées */
+  [style*="minmax(280"], [style*="minmax(300"], [style*="minmax(320"], [style*="minmax(360"], [style*="minmax(400"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* —— Forms / inputs : éviter le zoom iOS (font-size ≥ 16px) —— */
+  input, textarea, select, .mm-input, .mm-textarea {
+    font-size: 16px !important;
+    max-width: 100%;
+  }
+  input[type="checkbox"], input[type="radio"] { font-size: inherit !important; }
+  textarea { min-height: 90px; }
+
+  /* —— Tap targets ≥ 44px —— */
+  button, [role="button"], .mm-btn, .academy-tab-btn, .chat-send-btn, .coach-mic-btn {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+  .mm-btn { padding: .65rem 1rem !important; font-size: 15px !important; }
+
+  /* —— Tabs : scroll horizontal —— */
+  .academy-tabs,
+  [style*="display: flex"][style*="overflowX"],
+  [style*="overflow-x: auto"] {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .academy-tabs::-webkit-scrollbar { display: none; }
+  .academy-tab-btn { flex: 0 0 auto !important; white-space: nowrap; }
+
+  /* —— Tables → scroll horizontal —— */
+  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* —— Modals plein écran —— */
+  [style*="position: fixed"][style*="inset: 0"],
+  [style*="position:fixed"][style*="inset:0"] {
+    padding: 0 !important;
+  }
+  /* Conteneur interne d'un modal qui a un maxWidth → plein largeur */
+  [style*="maxWidth: 600"], [style*="maxWidth: 700"], [style*="maxWidth: 800"], [style*="maxWidth: 900"], [style*="maxWidth: 1000"], [style*="maxWidth: 1200"] {
+    max-width: 100% !important;
+  }
+
+  /* —— Barres flottantes (AgentVoiceBar) au-dessus de la bottom-nav —— */
+  [style*="position: fixed"][style*="bottom: 0"],
+  [style*="position: fixed"][style*="bottom: 8"],
+  [style*="position: fixed"][style*="bottom: 16"],
+  [style*="position: fixed"][style*="bottom: 24"] {
+    bottom: calc(var(--nav-h, 92px) + env(safe-area-inset-bottom, 0px)) !important;
+
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: calc(100vw - 16px) !important;
+  }
+
+  /* —— Cards listing : padding plus serré —— */
+  .mm-card { padding: 14px !important; }
+
+  /* —— Sidebar drawer ouverte → plein écran —— */
+  .sidebar {
+    width: 86vw !important;
+    max-width: 360px !important;
+    z-index: 200 !important;
+  }
+  .sidebar-nav-scroll { -webkit-overflow-scrolling: touch; }
+
+  /* —— Bottom nav : safe-area + style propre —— */
+  .mobile-bottom-nav {
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
+
+  /* —— Désactiver les transformations de hover lourdes (perf mobile) —— */
+  .astral-card-hover:hover,
+  .dashboard-card:hover { transform: none !important; }
+
+  /* —— Évite les éléments collants 100vh qui se chevauchent au clavier —— */
+  [style*="minHeight: 100vh"], [style*="min-height: 100vh"] {
+    min-height: 100svh !important;
+  }
+  [style*="height: 100vh"], [style*="height:100vh"] {
+    height: 100svh !important;
+  }
+
+  /* —— Empêche le hover sticky de bouger sur mobile —— */
+  [style*="position: sticky"][style*="top: 0"] { top: 0 !important; }
+}
+
+/* ── 3. ≤ 480 px (petit mobile) ──────────────────────────────────────────── */
+@media (max-width: 480px) {
+  body, #root { font-size: 14.5px; }
+
+  h1, [style*="fontSize: 48"], [style*="fontSize: 56"], [style*="fontSize: 64"], [style*="fontSize: 72"] {
+    font-size: 24px !important;
+  }
+  h2, [style*="fontSize: 32"], [style*="fontSize: 36"], [style*="fontSize: 40"] {
+    font-size: 19px !important;
+  }
+
+  [style*="padding: 16"], [style*='padding: "16px"'] { padding: 12px !important; }
+  [style*="padding: 20"], [style*='padding: "20px"'] { padding: 12px !important; }
+
+  .nav-top { min-height: 52px !important; }
+  .mm-btn { padding: .55rem .9rem !important; font-size: 14px !important; }
+  .mm-chip { font-size: .7rem !important; padding: .2rem .55rem !important; }
+
+  /* Cards & glass — radius plus doux */
+  .mm-card, .dashboard-card, .astral-glass, .mm-glass {
+    border-radius: 14px !important;
+  }
+
+  /* Empêcher les emojis géants de pousser le layout */
+  [style*="fontSize: 64"], [style*="fontSize: 72"], [style*="fontSize: 80"], [style*="fontSize: 96"] {
+    font-size: 40px !important;
+  }
+}
+
+/* ── 4. ≤ 380 px (iPhone SE & co) ────────────────────────────────────────── */
+@media (max-width: 380px) {
+  body, #root { font-size: 14px; }
+  h1 { font-size: 22px !important; }
+  h2 { font-size: 17px !important; }
+  .mm-btn { padding: .5rem .8rem !important; font-size: 13.5px !important; }
+  [style*="gap: 16"] { gap: 10px !important; }
+}
+
+/* ── 5. ≥ 769 px : masquer le mobile-only ────────────────────────────────── */
+@media (min-width: 769px) {
+  .mobile-bottom-nav,
+  .mobile-drawer-overlay,
+  .mobile-fab-overlay,
+  .show-mobile-only { display: none !important; }
+}
+
+/* ── 6. Animations préservées (compat existante) ─────────────────────────── */
+@keyframes pulseAstral {
+  0%   { transform: scale(1);    opacity: 0.2; }
+  50%  { transform: scale(1.05); opacity: 0.4; }
+  100% { transform: scale(1);    opacity: 0.2; }
+}
+@keyframes realityDistortHeader {
+  0%   { box-shadow: 0 20px 50px rgba(46,49,146,0.3),  0 0 80px  rgba(77,107,254,0.15); }
+  50%  { box-shadow: 0 25px 60px rgba(46,49,146,0.4),  0 0 100px rgba(77,107,254,0.25); }
+  100% { box-shadow: 0 20px 50px rgba(46,49,146,0.3),  0 0 80px  rgba(77,107,254,0.15); }
+}
+.battle-action-btn {
+  transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: translateY(0);
+}
+.battle-action-btn:hover  { transform: translateY(-4px) scale(1.02); box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+.battle-action-btn:active { transform: translateY(2px)  scale(0.98); }
+@media (max-width: 768px) {
+  .battle-action-btn:hover { transform: none; box-shadow: none; }
+}
+
+/* ── 7. Mode paysage mobile : éviter de couper la nav haute ──────────────── */
+@media (max-width: 900px) and (orientation: landscape) {
+  .nav-top { min-height: 48px !important; }
+  .main-content-area { padding-bottom: 80px !important; }
+}
+
+/* ── 8. Empêche tout débordement horizontal résiduel ─────────────────────── */
+@media (max-width: 768px) {
+  pre, code { white-space: pre-wrap !important; word-break: break-word !important; }
+  a { word-break: break-word; }
+}
+
+/* ── Mobile: collapse Fiches omnibar / English tabs / Add tabs / Chat cockpit ── */
+@media (max-width: 768px) {
+  /* Fiches — entire omnibar contents collapse behind ⚙ Vue button. Not sticky. */
+  .fiches-omnibar {
+    position: static !important;
+    top: auto !important;
+    padding: 8px 12px !important;
+    border-radius: 16px !important;
+    flex-wrap: wrap !important;
+  }
+  .fiches-actions-toggle { display: inline-flex !important; }
+  body:not(.fiches-actions-expanded) .fiches-omnibar > *:not(.fiches-actions-toggle) {
+    display: none !important;
+  }
+
+  /* English practice tabs */
+  .english-tabs-toggle { display: inline-flex !important; }
+  body:not(.english-tabs-expanded) .english-tabs-cluster { display: none !important; }
+
+  /* Chat cockpit (TOPIC / LEVEL / PERSONA / VOICE / SPEED) */
+  .chat-cockpit-toggle { display: inline-flex !important; }
+  body:not(.chat-cockpit-expanded) .chat-cockpit-cluster { display: none !important; }
+
+  /* Ajouter — open MobileAddSheet via the button instead of the inline cluster */
+  .add-tabs-toggle { display: inline-flex !important; }
+  .add-tabs-cluster { display: none !important; }
+
+  /* Nav top — keep logo + search + badges on one line and never overflow */
+  .nav-top {
+    flex-wrap: nowrap !important;
+    gap: 8px !important;
+  }
+  .nav-top > div:first-child { width: auto !important; min-width: 0; flex: 0 0 auto; }
+  .nav-top > div:nth-child(2),
+  .nav-top > div:nth-child(3) { width: auto !important; min-width: 0; }
+  .search-bar-mobile {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    padding: 8px 12px !important;
+  }
+  .search-bar-mobile > span,
+  .search-bar-mobile > kbd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nav-logo-text { font-size: 13px !important; }
+}
+
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 🩹 PATCH — Home cut-off / vertical color rail / chat voice
+ * ════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+  /* —— Anti débordement horizontal global, plus strict —— */
+  html, body, #root, .main-content, .main-content-area {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+  /* Tous les enfants directs des conteneurs principaux : interdiction de pousser */
+  .main-content > *, .main-content-area > * {
+    max-width: 100% !important;
+  }
+
+  /* —— Réserver assez de place en bas pour l'orb IA + le speed-dial flottant —— */
+  /* L'orb (bottom-right) et le bouton Accueil flottant montent au-dessus de la nav. */
+  .main-content {
+    padding-bottom: calc(var(--nav-h, 92px) + 88px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  /* —— Risque d'oubli : forcer 1 colonne pour éviter la coupe à droite —— */
+  .dash-widget-card [style*="grid-template-columns"],
+  .dash-widget-card [style*="display: flex"][style*="flex-wrap"] {
+    width: 100% !important;
+  }
+  .dash-widget-card [style*="maxWidth: 260"],
+  .dash-widget-card [style*="max-width: 260"] {
+    max-width: 100% !important;
+    flex: 1 1 100% !important;
+  }
+
+  /* —— Image 3 : la "barre rouge / arc-en-ciel" verticale à droite ——
+   * On masque sur mobile tout élément étroit, plein hauteur, collé à droite.
+   * Sélecteurs ciblés sans casser le reste. */
+  .srs-progress-bar,
+  .srs-side-indicator,
+  .level-indicator-side,
+  .right-edge-indicator,
+  .vertical-level-rail,
+  .card-srs-rail,
+  [data-srs-progress="side"],
+  [data-side-rail],
+  [class*="side-rail"],
+  [class*="level-rail"],
+  [class*="-side-bar"] {
+    display: none !important;
+  }
+  /* Anti-rail générique : div positionnée fixed/absolute, étroite (≤ 14px),
+     plein hauteur, sur le bord droit → masquée en mobile. */
+  body [style*="position: fixed"][style*="right: 0"][style*="top: 0"][style*="bottom: 0"],
+  body [style*="position:fixed"][style*="right:0"][style*="top:0"][style*="bottom:0"] {
+    display: none !important;
+  }
+}
+
+/* ── 9. Review Rating Buttons (FSRS) ─────────────────────────────────────── */
+.review-btns-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 8px;
+}
+@media (max-width: 600px) {
+  .review-btns-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+}
