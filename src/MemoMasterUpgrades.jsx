@@ -621,9 +621,17 @@ export function useSavedViews({ storage, key = "memo_saved_views" }) {
 function computeFsrsForecast(expressions, days = 30) {
   const buckets = new Map();
   const today = new Date(); today.setHours(0, 0, 0, 0);
+  // Utilise la date LOCALE (comme nextReview stocké via toLocalISODate),
+  // sinon décalage de fuseau → forecast à 0 alors que des fiches sont dues.
+  const toLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
   for (let i = 0; i <= days; i++) {
     const d = new Date(today); d.setDate(today.getDate() + i);
-    buckets.set(d.toISOString().slice(0, 10), 0);
+    buckets.set(toLocal(d), 0);
   }
   expressions.forEach(e => {
     const next = e.nextReview || e.dueDate;

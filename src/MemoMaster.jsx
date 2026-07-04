@@ -1998,6 +1998,35 @@ ${SPEECH_HYGIENE_PROMPT}`;
       reviewHistory: [],
       imageUrl: null
     }));
+
+    // ── FIX BUG "module créé via Lab invisible dans Modules / Constellation" ──
+    // Les fiches importées depuis Lab peuvent porter une `category` qui n'existe
+    // pas encore dans `categories` (ex: "📚 Lab Import" ou un nom saisi côté Lab).
+    // Sans entrée correspondante dans `categories`, le module est invisible dans
+    // la vue Modules ET dans la Constellation de connaissances (qui itèrent sur
+    // `categories`). On crée automatiquement les modules manquants ici.
+    const existingNames = new Set(categoriesRef.current.map(c => c.name));
+    const missing = [];
+    const palette = ["#4D6BFE", "#7B93FF", "#A78BFA", "#F472B6", "#34D399", "#FBBF24", "#F97316", "#22D3EE"];
+    for (const exp of newExps) {
+      const name = (exp.category || "").trim();
+      if (!name) continue;
+      if (existingNames.has(name)) continue;
+      existingNames.add(name);
+      missing.push({
+        name,
+        examDate: "",
+        targetScore: 80,
+        priority: "normale",
+        color: palette[(categoriesRef.current.length + missing.length) % palette.length],
+      });
+    }
+    if (missing.length > 0) {
+      setCategories(prev => {
+        const have = new Set(prev.map(c => c.name));
+        return [...prev, ...missing.filter(m => !have.has(m.name))];
+      });
+    }
     
     setExpressions(prev => [...newExps, ...prev]);
     setStats(prev => ({
@@ -8369,7 +8398,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               theme={theme}
               stats={stats}
               expressions={expressions}
-              statsSessionHistory={statsSessionHistory}
+              statsSessionHistory={sessions}
               computeAllStats={computeAllStats}
               generateStatsAiReport={generateStatsAiReport}
               statsAiReportLoading={statsAiReportLoading}
