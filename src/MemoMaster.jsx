@@ -1133,6 +1133,36 @@ export default function MemoMaster() {
     setPowerLevel(calcPower);
   }, [expressions, stats, unlockedBadges]);
 
+  // ── FIX BUG : Auto-reconstruction des catégories manquantes (Sync & Load) ──
+  useEffect(() => {
+    if (!loaded || expressions.length === 0) return;
+    setCategories(prev => {
+      if (!prev) prev = [];
+      const existingNames = new Set(prev.map(c => c.name));
+      const missing = [];
+      const palette = ["#4D6BFE", "#7B93FF", "#A78BFA", "#F472B6", "#34D399", "#FBBF24", "#F97316", "#22D3EE"];
+      
+      expressions.forEach(exp => {
+        const name = (exp.category || "").trim();
+        if (!name || existingNames.has(name)) return;
+        existingNames.add(name);
+        missing.push({
+          name,
+          examDate: "",
+          targetScore: 80,
+          priority: "normale",
+          color: palette[(prev.length + missing.length) % palette.length],
+        });
+      });
+
+      if (missing.length > 0) {
+        console.info(`[auto-repair] ${missing.length} catégories créées automatiquement depuis les fiches.`);
+        return [...prev, ...missing];
+      }
+      return prev;
+    });
+  }, [expressions, loaded]);
+
   // ✅ Debounce : on attend 500ms de stabilité avant d'écrire dans Firebase
   // (réduit de 1500ms à 500ms pour limiter les pertes en cas d'actualisation rapide)
   const saveTimerRef = useRef({});
