@@ -512,7 +512,6 @@ export default function MemoMaster() {
   const [addHistoryVersions, setAddHistoryVersions] = useState({}); // { cardId: [versions] }
   const [addCollabLink, setAddCollabLink] = useState(null);
   const [addZenMode, setAddZenMode] = useState(false);
-  const [addAutoInverted, setAddAutoInverted] = useState(true);
 
   // ── GOD LEVEL UX: Slash Commands & Selection Menu ──
   const [slashMenu, setSlashMenu] = useState({ open: false, field: null, query: "", selectedIndex: 0 });
@@ -2221,7 +2220,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
   };
   const stopVoice = () => { setListening(null); };
 
-  const handleAdd = (inverted = false) => {
+  const handleAdd = () => {
     if (!addForm.front.trim() || !addForm.back.trim()) { showToast("Recto et verso obligatoires !", "error"); return; }
 
     // Capturer les valeurs avant le reset
@@ -2316,22 +2315,8 @@ ${SPEECH_HYGIENE_PROMPT}`;
         };
         const newExps = [newExp];
 
-        if (inverted && addAutoInverted) {
-          const invertedExp = {
-            id: Date.now().toString() + '_inv',
-            front: backSnapshot.trim(),
-            back: frontSnapshot.trim(),
-            example: exampleSnapshot.trim() ? `(inversée) ${exampleSnapshot.trim()}` : "",
-            category: categorySnapshot,
-            type: typeSnapshot,
-            level: 0, nextReview: today(), createdAt: today(),
-            easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
-          };
-          newExps.push(invertedExp);
-        }
-
         setExpressions((prev) => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
-        showToast(inverted && addAutoInverted ? "✅ Fiche + Inversée ajoutées !" : "✅ Fiche ajoutée !");
+        showToast("✅ Fiche ajoutée !");
       }
 
       // Reset
@@ -2345,8 +2330,6 @@ ${SPEECH_HYGIENE_PROMPT}`;
       setForgeAnim(false);
     }, 450);
   };
-
-  const handleAddWithInverted = () => handleAdd(true);
 
   const startEdit = (exp) => { setAddForm({ front: exp.front, back: exp.back, example: exp.example || "", category: exp.category, imageUrl: exp.imageUrl || null, type: exp.type || "qa" }); setEditingId(exp.id); setView("add"); };
   const cancelEdit = () => {
@@ -6351,7 +6334,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {addDoublonCheck?.duplicate && <div style={{ background: "#E8EEFF", padding: 8, borderRadius: 8, marginBottom: 12, color: "#1E3A8A" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
                 <textarea value={addForm.back} onChange={e => setAddForm(f => ({ ...f, back: e.target.value }))} style={{ width: "100%", padding: "24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme.border}`, borderRadius: 20, color: theme.text, minHeight: 160, fontSize: 18, lineHeight: 1.6, resize: "vertical", outline: "none" }} placeholder="L'explication claire et détaillée..." />
                 <input value={addForm.example} onChange={e => setAddForm(f => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "20px 24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme.border}`, borderRadius: 20, color: theme.textMuted, fontSize: 16, fontStyle: "italic", outline: "none" }} placeholder="Mise en contexte ou exemple de code..." />
-                <button onClick={() => { handleAddWithInverted(); setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10, boxShadow: "0 10px 30px rgba(77,107,254,0.4)" }}>⚡ Forger la fiche</button>
+                <button onClick={() => { handleAdd(); setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,#3451D1,#4D6BFE)", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10, boxShadow: "0 10px 30px rgba(77,107,254,0.4)" }}>⚡ Forger la fiche</button>
               </div>
             </div>
           ) : (
@@ -7013,7 +6996,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   )}
 
                   <div style={{ display: "flex", gap: 12 }}>
-                    <button className="hov btn-glow" onClick={handleAddWithInverted} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 900, cursor: "pointer", boxShadow: "0 10px 30px rgba(77,107,254,0.3)" }}>{editingId ? "💾 Mettre à jour" : "⚡ Forger la fiche"}</button>
+                    <button className="hov btn-glow" onClick={handleAdd} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 900, cursor: "pointer", boxShadow: "0 10px 30px rgba(77,107,254,0.3)" }}>{editingId ? "💾 Mettre à jour" : "⚡ Forger la fiche"}</button>
                     {!editingId && <button className="hov" onClick={() => setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null }))} style={{ padding: "18px 24px", background: theme.cardBg, color: theme.textMuted, border: `1px solid ${theme.border}`, borderRadius: 16, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>Effacer</button>}
                   </div>
                 </div>
