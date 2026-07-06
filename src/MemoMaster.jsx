@@ -215,9 +215,8 @@ async function transcribeAudio(audioBlob, language = "fr") {
 
 // Lecteur audio de fiche : gère les fiches audio (data URL directe) ET les fiches
 // importées depuis le Lab (audioId → blob stocké en IndexedDB).
-function AudioFichePlayer({ card, autoPlay = false }) {
+function AudioFichePlayer({ card }) {
   const [src, setSrc] = useState(card?.audioUrl || null);
-  const audioRef = useRef(null);
   useEffect(() => {
     let revoked = null;
     let active = true;
@@ -233,13 +232,6 @@ function AudioFichePlayer({ card, autoPlay = false }) {
     return () => { active = false; if (revoked) URL.revokeObjectURL(revoked); };
   }, [card?.audioUrl, card?.audioId]);
 
-  // Auto-play lorsque le src est prêt et que autoPlay est demandé
-  useEffect(() => {
-    if (autoPlay && src && audioRef.current) {
-      audioRef.current.play().catch(() => {}); // ignore les erreurs de politique du navigateur
-    }
-  }, [autoPlay, src]);
-
   if (!src) {
     if (card?.audioId) {
       return <div style={{ marginTop: 16, fontSize: 12, color: "#EF4444", fontWeight: 700 }}>🎧 Audio introuvable (fichier perdu). Ré-importe la fiche audio depuis le Lab.</div>;
@@ -249,7 +241,7 @@ function AudioFichePlayer({ card, autoPlay = false }) {
   return (
     <div style={{ marginTop: 16, marginBottom: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, marginBottom: 6 }}>🎧 Fiche audio — écoute puis évalue</div>
-      <audio ref={audioRef} controls src={src} style={{ width: "100%" }} />
+      <audio controls src={src} style={{ width: "100%" }} />
     </div>
   );
 }
@@ -2085,9 +2077,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
       interval: 1,
       repetitions: 0,
       reviewHistory: [],
-      imageUrl: null,
-      audioId: c.audioId || null,   // ← FIX: conserver l'ID du blob audio IndexedDB
-      audioUrl: c.audioUrl || null, // ← FIX: conserver l'URL audio si présente
+      imageUrl: null
     }));
 
     // ── FIX BUG "module créé via Lab invisible dans Modules / Constellation" ──
@@ -6258,13 +6248,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       <div style={{ background: isDarkMode ? "#0F1A3A" : "#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
                         <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>{activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}</div>
                         <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{activeFacet ? activeFacet.front : currentCard.front}</div>
-                        {/* Cartes avec audio annexe (type != audio) */}
                         {(currentCard.audioUrl || currentCard.audioId) && currentCard.type !== "audio" && (
                           <AudioFichePlayer card={currentCard} />
-                        )}
-                        {/* Cartes de type audio : on montre le player SUR LE RECTO pour que l'utilisateur écoute AVANT de se noter */}
-                        {(currentCard.audioUrl || currentCard.audioId) && currentCard.type === "audio" && (
-                          <AudioFichePlayer card={currentCard} autoPlay={false} />
                         )}
                         {currentCard.imageUrl && (
                           <img src={currentCard.imageUrl} alt="support visuel" className={!revealed ? "occlusion-img" : ""} style={{ width: "100%", borderRadius: 16, border: `2px solid ${theme.border}` }} title={!revealed ? "Survole l'image pour l'apercevoir" : ""} />
@@ -6274,8 +6259,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       {!revealed ? (
                         currentCard.type === "audio" ? (
                           <div style={{ marginTop: 24, textAlign: "center" }}>
-                            <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 700, marginBottom: 16 }}>🎧 Écoute l'audio ci-dessus, puis évalue ta compréhension.</div>
-                            <button onClick={handleReveal} className="hov btn-glow" style={{ width: "100%", padding: "20px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 18, fontSize: 17, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(77,107,254,0.35)", minHeight: 56 }}>✅ J&apos;ai écouté → Me noter</button>
+                            <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 700, marginBottom: 16 }}>🎧 Clique pour écouter l'audio, puis donne ton avis.</div>
+                            <button onClick={handleReveal} className="hov btn-glow" style={{ width: "100%", padding: "20px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 18, fontSize: 17, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(77,107,254,0.35)", minHeight: 56 }}>▶️ Écouter la réponse</button>
                           </div>
                         ) : (
                         <div style={{ marginTop: 24 }}>
@@ -6316,20 +6301,17 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       ) : (
                         <div style={{ animation: "slideIn 0.3s ease" }}>
                           <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "#EEF2FF"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
-                            <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
-                            <div style={{ marginTop: 12 }}>
-                              {currentCard.type === "audio" ? (
-                                <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 600 }}>🎧 Réécoute l&apos;audio ci-dessous, puis évalue ta compréhension.</div>
-                              ) : (
+                             <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
+                            {currentCard.type === "audio" ? (
+                              <div style={{ marginTop: 12 }}>
+                                <AudioFichePlayer card={currentCard} />
+                              </div>
+                            ) : (
+                              <div style={{ marginTop: 12 }}>
                                 <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
-                              )}
-                            </div>
-                            {/* Player audio au verso — auto-play pour renforcer la mémorisation */}
-                            {(currentCard.audioUrl || currentCard.audioId) && currentCard.type === "audio" && (
-                              <AudioFichePlayer card={currentCard} autoPlay={true} />
+                              </div>
                             )}
-                            {/* Champ exemple : masqué pour les cartes audio (le nom de fichier n'est pas utile ici) */}
-                            {currentCard.example && currentCard.type !== "audio" && (
+                            {currentCard.example && (
                               <div style={{ background: theme.inputBg, padding: "16px 20px", borderRadius: 16, marginTop: 24, fontSize: 15, color: theme.textMuted, fontStyle: "italic", borderLeft: `4px solid ${theme.highlight}`, position: "relative" }}>
                                 <div style={{ position: "absolute", top: -10, left: 16, background: theme.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme.highlight, letterSpacing: 1 }}>EXEMPLE</div>
                                 <div style={{ marginTop: 8 }}>
@@ -8160,15 +8142,17 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             <div style={{ fontSize: 32, fontWeight: 900, color: theme.text, marginBottom: 16, lineHeight: 1.2 }}>{expandedCard.front}</div>
 
                             <div style={{ background: isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.5)", padding: 20, borderRadius: 20, marginBottom: 24, border: `1px solid ${theme.border}` }}>
-                              <div style={{ fontSize: 16, color: theme.text, lineHeight: 1.6 }}>
-                                {(expandedCard.type === "audio" && (expandedCard.audioUrl || expandedCard.audioId)) ? (
-                                  <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 600 }}>🎧 Fiche audio — écoute ci-dessous.</div>
-                                ) : (
-                                  <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
-                                )}
-                              </div>
-                              {(expandedCard.audioUrl || expandedCard.audioId) && (
+                              {(expandedCard.type === "audio" && (expandedCard.audioUrl || expandedCard.audioId)) ? (
                                 <AudioFichePlayer card={expandedCard} />
+                              ) : (
+                                <>
+                                  <div style={{ fontSize: 16, color: theme.text, lineHeight: 1.6 }}>
+                                    <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
+                                  </div>
+                                  {(expandedCard.audioUrl || expandedCard.audioId) && (
+                                    <AudioFichePlayer card={expandedCard} />
+                                  )}
+                                </>
                               )}
                               {expandedCard.example && (
                                 <div style={{ marginTop: 16, padding: "12px 16px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: `3px solid ${catColor}` }}>

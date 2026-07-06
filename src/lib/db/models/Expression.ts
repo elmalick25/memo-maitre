@@ -16,7 +16,6 @@ export default class Expression extends Model {
   @field('type') type
   @field('image_url') imageUrl
   @field('audio_url') audioUrl
-  @field('audio_id') audioId
   
   @json('layers', sanitizeJson) layers
   @field('level') level
