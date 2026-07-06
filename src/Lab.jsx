@@ -951,9 +951,10 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
   </div>
 );
 
-// ─── Composant interne : liste sélectionnable de la réserve ─────────────────
+// ─── Composant interne : réserve organisée en rayons (type BU) ──────────────
 function ReserveList({ reserveCards, addFromReserve, setShowReservePanel, theme, activeColor }) {
   const [reserveSelected, setReserveSelected] = useState(new Set());
+  const [openShelves, setOpenShelves] = useState({});
 
   const toggleReserveCard = (i) => {
     setReserveSelected(prev => {
@@ -962,26 +963,42 @@ function ReserveList({ reserveCards, addFromReserve, setShowReservePanel, theme,
       return next;
     });
   };
-  const toggleAllReserve = () => {
-    if (reserveSelected.size === reserveCards.length) setReserveSelected(new Set());
-    else setReserveSelected(new Set(reserveCards.map((_, i) => i)));
+
+  // Regrouper par module (rayon), en conservant l'index global d'origine
+  const shelves = useMemo(() => {
+    const map = {};
+    reserveCards.forEach((card, i) => {
+      const key = card.sourceDoc || `[Module] ${card.module || "Sans module"}`;
+      if (!map[key]) map[key] = [];
+      map[key].push({ card, i });
+    });
+    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [reserveCards]);
+
+  const toggleShelfOpen = (name) => setOpenShelves(prev => ({ ...prev, [name]: prev[name] === false ? true : false }));
+  const isShelfOpen = (name) => openShelves[name] !== false; // ouvert par défaut
+
+  const toggleShelfSelect = (items) => {
+    const idxs = items.map(it => it.i);
+    const allSelected = idxs.every(i => reserveSelected.has(i));
+    setReserveSelected(prev => {
+      const next = new Set(prev);
+      idxs.forEach(i => { if (allSelected) next.delete(i); else next.add(i); });
+      return next;
+    });
   };
 
   return (
     <>
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <button onClick={toggleAllReserve} style={{
-          padding: "8px 14px", background: theme.inputBg, color: theme.text,
-          border: `1px solid ${theme.border}`, borderRadius: 10, cursor: "pointer",
-          fontSize: 12, fontWeight: 700,
-        }}>
-          {reserveSelected.size === reserveCards.length ? "✅ Tout désélectionner" : "☑️ Tout sélectionner"}
-        </button>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>
+          📚 {shelves.length} rayon{shelves.length > 1 ? "s" : ""} · {reserveCards.length} fiche{reserveCards.length > 1 ? "s" : ""} en réserve
+        </span>
         {reserveSelected.size > 0 && (
           <button
             onClick={() => { addFromReserve(reserveSelected); setShowReservePanel(false); }}
             style={{
-              padding: "8px 16px", background: "linear-gradient(135deg,#059669,#10B981)",
+              marginLeft: "auto", padding: "8px 16px", background: "linear-gradient(135deg,#059669,#10B981)",
               color: "white", border: "none", borderRadius: 10,
               cursor: "pointer", fontWeight: 800, fontSize: 13,
             }}
@@ -990,44 +1007,83 @@ function ReserveList({ reserveCards, addFromReserve, setShowReservePanel, theme,
           </button>
         )}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {reserveCards.map((card, i) => (
-          <div
-            key={i}
-            onClick={() => toggleReserveCard(i)}
-            style={{
-              background: reserveSelected.has(i) ? `${activeColor}12` : theme.inputBg,
-              border: `1px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
-              borderRadius: 14, padding: "14px 16px", cursor: "pointer",
-              transition: "all 0.15s",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <div style={{
-                width: 18, height: 18, borderRadius: 5, flexShrink: 0, marginTop: 2,
-                border: `2px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
-                background: reserveSelected.has(i) ? activeColor : "transparent",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.15s",
-              }}>
-                {reserveSelected.has(i) && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {shelves.map(([shelfName, items]) => {
+          const selectedInShelf = items.filter(it => reserveSelected.has(it.i)).length;
+          const open = isShelfOpen(shelfName);
+          return (
+            <div key={shelfName} style={{ border: `1px solid ${theme.border}`, borderRadius: 16, overflow: "hidden", background: theme.cardBg }}>
+              {/* Étiquette du rayon */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: `${activeColor}10`, borderLeft: `4px solid ${activeColor}` }}>
+                <button onClick={() => toggleShelfOpen(shelfName)} style={{ background: "none", border: "none", cursor: "pointer", color: theme.text, fontSize: 14, fontWeight: 900 }}>
+                  {open ? "▾" : "▸"}
+                </button>
+                <span style={{ fontWeight: 900, color: theme.text, fontSize: 14, flex: 1 }}>
+                  📦 {shelfName}
+                  <span style={{ marginLeft: 8, fontSize: 11, color: theme.textMuted, fontWeight: 700 }}>
+                    {items.length} fiche{items.length > 1 ? "s" : ""}{selectedInShelf > 0 ? ` · ${selectedInShelf} sélectionnée${selectedInShelf > 1 ? "s" : ""}` : ""}
+                  </span>
+                </span>
+                <button onClick={() => toggleShelfSelect(items)} style={{
+                  padding: "6px 12px", background: theme.inputBg, color: theme.text,
+                  border: `1px solid ${theme.border}`, borderRadius: 8, cursor: "pointer",
+                  fontSize: 11, fontWeight: 700,
+                }}>
+                  {items.every(it => reserveSelected.has(it.i)) ? "Tout désélectionner" : "Tout le rayon"}
+                </button>
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{card.front}</div>
-                <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.5 }}>
-                  {(card.back || "").substring(0, 120)}{(card.back || "").length > 120 ? "..." : ""}
+
+              {open && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12 }}>
+                  {items.map(({ card, i }) => (
+                    <div
+                      key={i}
+                      onClick={() => toggleReserveCard(i)}
+                      style={{
+                        background: reserveSelected.has(i) ? `${activeColor}12` : theme.inputBg,
+                        border: `1px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
+                        borderRadius: 12, padding: "12px 14px", cursor: "pointer",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                        <div style={{
+                          width: 18, height: 18, borderRadius: 5, flexShrink: 0, marginTop: 2,
+                          border: `2px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
+                          background: reserveSelected.has(i) ? activeColor : "transparent",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "all 0.15s",
+                        }}>
+                          {reserveSelected.has(i) && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{card.front}</div>
+                          <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.5 }}>
+                            {(card.back || "").substring(0, 120)}{(card.back || "").length > 120 ? "..." : ""}
+                          </div>
+                          <div style={{ fontSize: 10, color: activeColor, marginTop: 6, fontWeight: 700 }}>
+                            {card.source ? `${card.source} · ` : ""}Ajouté le {card.reservedAt ? new Date(card.reservedAt).toLocaleDateString("fr-FR") : "—"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div style={{ fontSize: 10, color: activeColor, marginTop: 6, fontWeight: 700 }}>
-                  📦 {card.module} · Ajouté le {new Date(card.reservedAt).toLocaleDateString("fr-FR")}
-                </div>
-              </div>
+              )}
             </div>
+          );
+        })}
+        {shelves.length === 0 && (
+          <div style={{ textAlign: "center", color: theme.textMuted, fontSize: 13, padding: "40px 0" }}>
+            Aucune fiche en réserve pour l'instant.
           </div>
-        ))}
+        )}
       </div>
     </>
   );
 }
+
 
 export default function Lab({ theme, isDarkMode, categories = [], onAddCards, onShowToast }) {
   const [tab, setTab] = useState("pdf");
@@ -1067,6 +1123,10 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
   const [resText, setResText] = useState("");
   const [resPages, setResPages] = useState(0);
   const [resParsing, setResParsing] = useState(false);
+  const [photoItems, setPhotoItems] = useState([]);
+  const [photoModule, setPhotoModule] = useState("🧪 Lab Import");
+  const [photoDrag, setPhotoDrag] = useState(false);
+  const [pendingPhotoType, setPendingPhotoType] = useState("mixte");
   const [resSummary, setResSummary] = useState("");
   const [resLoading, setResLoading] = useState(false);
   const [resProgress, setResProgress] = useState("");
@@ -1122,6 +1182,36 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
     setExpandedAudioModules(prev => ({ ...prev, [moduleName]: !prev[moduleName] }));
   }, []);
 
+  const reserveAudioCard = (card) => {
+    setReserveCards(prev => [...prev, {
+      ...card, front: card.label, back: "Fiche Audio", example: card.fileName,
+      reservedAt: new Date().toISOString(), sourceDoc: card.sourceDoc || [Audio] , source: "🎙️ Audio"
+    }]);
+    setAudioCards(prev => prev.filter(c => c.id !== card.id));
+    toast("🎙️ Audio mis en réserve !");
+  };
+
+
+  // Restore audio URLs on mount
+  useEffect(() => {
+    const restoreAudio = async () => {
+      let changed = false;
+      const updated = await Promise.all(audioCards.map(async c => {
+        if (c.audioUrl && c.audioUrl.startsWith('blob:')) {
+           // We can't easily check if blob is alive, but usually on reload they aren't.
+           const newUrl = await getAudioObjectUrl(c.id);
+           if (newUrl && newUrl !== c.audioUrl) {
+             changed = true;
+             return { ...c, audioUrl: newUrl };
+           }
+        }
+        return c;
+      }));
+      if (changed) setAudioCards(updated);
+    };
+    if (audioCards.length > 0) restoreAudio();
+  }, []);
+
   // ── État de la session de révision audio ──────────────────────────────────
   const [audioReviewOpen, setAudioReviewOpen] = useState(false);
   const [audioReviewQueue, setAudioReviewQueue] = useState([]);
@@ -1132,9 +1222,6 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
   const audioRefs = useRef({});
 
   // ─── Photo state ───────────────────────────────────────────────────────────
-  const [photoItems, setPhotoItems] = useState([]);
-  const [photoModule, setPhotoModule] = useState("📚 Lab Import");
-  const [photoDrag, setPhotoDrag] = useState(false);
   const [photoExpanded, setPhotoExpanded] = useState(null);
   const photoInputRef = useRef(null);
 
@@ -1293,7 +1380,7 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
           ? pdfCards.filter((_, i) => selectedCardIndexes.has(i))
           : []);
     if (!toReserve.length) { toast("Sélectionne des fiches à mettre en réserve.", "error"); return; }
-    const reserveWithMeta = toReserve.map(c => ({ ...c, reservedAt: new Date().toISOString(), module: pdfModule }));
+    const reserveWithMeta = toReserve.map(c => ({ ...c, reservedAt: new Date().toISOString(), module: pdfModule, source: "📄 PDF" }));
     setReserveCards(prev => [...prev, ...reserveWithMeta]);
     // Retirer de pdfCards
     const reservedSet = new Set(toReserve.map(c => c.front));
@@ -1306,8 +1393,9 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
     const toAdd = reserveCards.filter((_, i) => indexes.has(i));
     if (!toAdd.length) return;
     if (onAddCards) onAddCards(toAdd.map(c => ({
-      front: c.front, back: c.back, example: c.hint || "",
+      front: c.front, back: c.back, example: c.hint || c.example || "",
       category: c.module || pdfModule, type: c.type || "qa",
+      audioId: c.audioId, imageUrl: c.imageUrl
     })), { source: 'reserve' });
     toast(`🚀 ${toAdd.length} fiche${toAdd.length > 1 ? "s" : ""} sorties de réserve et ajoutées !`);
     setReserveCards(prev => prev.filter((_, i) => !indexes.has(i)));
@@ -1623,11 +1711,12 @@ ${history}`;
     if (!audioModule) { toast("Sélectionne d'abord un module.", "error"); return; }
 
     const todayStr = localToday();
-    const newCards = arr.map(file => ({
-      id: `audio_`,
+    const newCards = arr.map((file, i) => ({
+      id: `audio_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 8)}`,
       label: file.name.replace(/\.[^.]+$/, ""),
       fileName: file.name,
       module: audioModule,
+      sourceDoc: `[Audio] ${file.name}`,
       audioUrl: URL.createObjectURL(file),
       createdAt: todayStr,
       // Cycle SRS — identique aux fiches texte
@@ -1729,7 +1818,7 @@ ${history}`;
   // ══════════════════════════════════════════════════════════════════════════
   // PHOTO → FICHE : Vision IA — détecte type + extrait texte + génère fiches
   // ══════════════════════════════════════════════════════════════════════════
-  const handlePhotoFiles = async (files) => {
+  const handlePhotoFiles = async (files, mode = "mixte") => {
     const arr = Array.from(files).filter(f => f.type.startsWith("image/"));
     if (!arr.length) { toast("Aucune image valide.", "error"); return; }
     if (!photoModule) { toast("Sélectionne d'abord un module.", "error"); return; }
@@ -1739,10 +1828,11 @@ ${history}`;
       try {
         const { base64, dataUrl, mimeType } = await fileToBase64(file);
         newItems.push({
-          id: `photo_`,
+          id: `photo_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
           name: file.name, dataUrl, base64, mimeType,
           module: photoModule,
-          status: "idle", imageType: null,
+          sourceDoc: `[Photo] ${file.name}`,
+          status: "idle", imageType: mode,
           extractedText: "", cards: [], summary: "", error: null,
         });
       } catch { toast(`Erreur lecture ${file.name}`, "error"); }
@@ -1763,12 +1853,19 @@ ${history}`;
     updatePhoto(photo.id, { status: "loading" });
     try {
       // Étape 1 : Détection type + extraction texte
-      const step1 = await callGeminiVision(
-        `Tu es un expert OCR et pédagogique. Analyse cette image de cours.
-Réponds UNIQUEMENT en JSON (sans markdown) :
-{"imageType":"notes_manuscrites|cours_imprime|schema|diagramme|tableau|graphe|formules|mind_map|mixte","subject":"matière détectée","extractedText":"TOUT le texte visible mot pour mot","summary":"résumé 1-2 phrases de l'image"}`,
-        "Analyse cette image.", photo.base64, photo.mimeType
-      );
+      const mode = photo.imageType;
+      let promptOcr = `Tu es un expert OCR et pédagogique. Analyse cette image de cours.\nRéponds UNIQUEMENT en JSON (sans markdown) :\n{"imageType":"mixte","subject":"matière","extractedText":"TOUT le texte","summary":"résumé"}`;
+      if (mode === "Tableau de cours") {
+         promptOcr = `Tu es un expert OCR. Extrais TOUT le tableau de cette image sous forme de TABLEAU MARKDOWN STRICT (GFM).\nRéponds UNIQUEMENT en JSON (sans markdown) :\n{"imageType":"tableau","subject":"matière","extractedText":"| Col 1 |...\\n","summary":"résumé"}`;
+      } else if (mode === "Notes manuscrites") {
+         promptOcr = `Tu es un expert OCR pour déchiffrer l'écriture manuscrite. Extrais fidèlement le texte de ces notes.\nRéponds UNIQUEMENT en JSON (sans markdown) :\n{"imageType":"notes","subject":"matière","extractedText":"texte exact","summary":"résumé"}`;
+      } else if (mode === "Formules & maths") {
+         promptOcr = `Tu es un expert en mathématiques. Extrais toutes les formules de l'image en format LaTeX strict encadré par $$.\nRéponds UNIQUEMENT en JSON (sans markdown) :\n{"imageType":"formules","subject":"maths","extractedText":"texte avec $$formules$$","summary":"résumé"}`;
+      } else if (mode === "Schémas & diagrammes") {
+         promptOcr = `Tu es un expert OCR. Identifie chaque élément, label et relation de ce schéma.\nRéponds UNIQUEMENT en JSON (sans markdown) :\n{"imageType":"schema","subject":"matière","extractedText":"description de tous les éléments du schéma","summary":"résumé"}`;
+      }
+      
+      const step1 = await callGeminiVision(promptOcr, "Analyse cette image.", photo.base64, photo.mimeType);
       const info = safeJsonParse(step1);
 
       // Étape 2 : génération texte-seul (pas de 2e appel vision → économise le quota Gemini)
@@ -1824,6 +1921,19 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       category: c.category, imageUrl: c.image || null, type: c.type || "qa",
     })));
     toast(`🚀 ${photo.cards.length} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" !`);
+  };
+
+  const reserveAllPhotoCards = () => {
+    const all = photoItems.filter(p => p.status === "done" && p.cards.length > 0).flatMap(p => 
+      p.cards.map(c => ({
+        front: c.front, back: c.back, example: c.hint || "",
+        category: c.category, imageUrl: c.image || null, type: c.type || "qa",
+        reservedAt: new Date().toISOString(), module: p.module, sourceDoc: p.sourceDoc || [Photo] , source: "📸 Photo"
+      }))
+    );
+    if (!all.length) { toast("Aucune fiche à mettre en réserve.", "error"); return; }
+    setReserveCards(prev => [...prev, ...all]);
+    toast("📦  fiches photos mises en réserve !");
   };
 
   const addAllPhotoCards = () => {
@@ -2799,7 +2909,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               subtitle={<>Notes manuscrites · Tableaux · Schémas · Formules<br /><span style={{ fontSize: 12, marginTop: 4, display: "block" }}>JPG · PNG · WEBP — L'IA lit le texte automatiquement</span></>}
               theme={theme}
             />
-            <input ref={photoInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => handlePhotoFiles(e.target.files)} />
+            <input ref={photoInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => handlePhotoFiles(e.target.files, pendingPhotoType)} />
 
             {photoItems.some(p => p.status === "done" && p.cards.length > 0) && (
               <button
@@ -3062,7 +3172,11 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               ].map(t => (
                 <HoloCard theme={theme} glowColor={activeColor}
                   key={t.title}
-                  onClick={() => photoModule ? photoInputRef.current?.click() : toast("Sélectionne d'abord un module.", "error")}
+                  onClick={() => {
+                    if (!photoModule) { toast("Sélectionne d'abord un module.", "error"); return; }
+                    setPendingPhotoType(t.title);
+                    photoInputRef.current?.click();
+                  }}
                   style={{
                     background: theme.cardBg, borderRadius: 16, padding: 18,
                     border: `1px solid ${theme.border}`, cursor: "pointer", textAlign: "center",

@@ -94,12 +94,7 @@ export default defineConfig({
       'onnxruntime-web',
       '@ricky0123/vad-web',
       '@ricky0123/vad-react',
-    ],
-    rolldownOptions: {
-      output: {
-        target: 'esnext',
-      }
-    }
+    ]
   },
   build: {
     target: 'esnext'

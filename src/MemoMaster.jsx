@@ -10,6 +10,7 @@ import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUt
 import { repairCardDates } from "./lib/dateRepair";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 import { fsrs, fsrsR } from "./lib/fsrs";
+import { getAudioObjectUrl } from "./lib/audioStore";
 import useAudioFeedback from "./hooks/useAudioFeedback";
 import useConfetti from "./hooks/useConfetti";
 import useHighlight from "./hooks/useHighlight";
@@ -211,6 +212,40 @@ async function transcribeAudio(audioBlob, language = "fr") {
   }
   throw lastErr || new Error("Le service de transcription est temporairement indisponible.");
 }
+
+// Lecteur audio de fiche : gère les fiches audio (data URL directe) ET les fiches
+// importées depuis le Lab (audioId → blob stocké en IndexedDB).
+function AudioFichePlayer({ card }) {
+  const [src, setSrc] = useState(card?.audioUrl || null);
+  useEffect(() => {
+    let revoked = null;
+    let active = true;
+    if (card?.audioUrl) {
+      setSrc(card.audioUrl);
+    } else if (card?.audioId) {
+      getAudioObjectUrl(card.audioId).then((url) => {
+        if (active && url) { setSrc(url); revoked = url; }
+      });
+    } else {
+      setSrc(null);
+    }
+    return () => { active = false; if (revoked) URL.revokeObjectURL(revoked); };
+  }, [card?.audioUrl, card?.audioId]);
+
+  if (!src) {
+    if (card?.audioId) {
+      return <div style={{ marginTop: 16, fontSize: 12, color: "#EF4444", fontWeight: 700 }}>🎧 Audio introuvable (fichier perdu). Ré-importe la fiche audio depuis le Lab.</div>;
+    }
+    return null;
+  }
+  return (
+    <div style={{ marginTop: 16, marginBottom: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, marginBottom: 6 }}>🎧 Fiche audio — écoute puis évalue</div>
+      <audio controls src={src} style={{ width: "100%" }} />
+    </div>
+  );
+}
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 // ── HOOK DE NAVIGATION CENTRALISÉ ──────────────────────────────────────────────
@@ -2244,6 +2279,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
     setForgeAnim(true);
 
     setTimeout(() => {
+      const wasEditingId = editingId;
       if (editingId) {
         // Sauvegarder l'ancienne version
         saveVersion(editingId);
@@ -2328,6 +2364,25 @@ ${SPEECH_HYGIENE_PROMPT}`;
       setAddReformulations({});
       setAddMetaphoreText("");
       setForgeAnim(false);
+
+      // ⏎ Après une édition (hors session de révision) : rediriger vers la fiche mise à jour dans la vue Fiches
+      if (wasEditingId) {
+        const editedCard = expressions.find(e => e.id === wasEditingId);
+        setFilterCat(categorySnapshot || "Toutes");
+        setView("list");
+        if (editedCard) {
+          setExpandedCard({
+            ...editedCard,
+            front: frontSnapshot.trim(),
+            back: backSnapshot.trim(),
+            example: exampleSnapshot?.trim() || "",
+            category: categorySnapshot,
+            type: typeSnapshot,
+            imageUrl: addForm.imageUrl,
+            audioUrl: addAudioUrl,
+          });
+        }
+      }
     }, 450);
   };
 
@@ -2373,23 +2428,35 @@ ${SPEECH_HYGIENE_PROMPT}`;
     if (fixedQueue && fixedQueue.length > 0) {
       // Session ciblée : on utilise exactement les fiches fournies (ex: fiches urgentes)
       queue = getSmartQueue([...fixedQueue]);
+    } else if (mode === "exam" && catFilter) {
+      // Révision pour examen : TOUTES les fiches du module (pas seulement celles dues) pour du bachotage
+      queue = getSmartQueue(expressions.filter((e) => e.category === catFilter));
     } else {
-      queue = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
-      if (mode === "interleaving" || mode === "flow") {
-        const byCat = {};
-        queue.forEach(e => {
-          if (!byCat[e.category]) byCat[e.category] = [];
-          byCat[e.category].push(e);
-        });
-        queue = [];
-        const maxLen = Math.max(...Object.values(byCat).map(a => a.length));
-        for (let i = 0; i < maxLen; i++) {
-          for (const cat in byCat) {
-            if (byCat[cat][i]) queue.push(byCat[cat][i]);
-          }
-        }
+      // Focus examen automatique : 3 jours avant un examen, on ne révise que les fiches des examens imminents
+      const examCats = categories
+        .filter((c) => c.examDate)
+        .filter((c) => { const d = Math.ceil((new Date(c.examDate) - new Date()) / 86400000); return d >= 0 && d <= 3; })
+        .map((c) => c.name);
+      if (!catFilter && examCats.length > 0) {
+        queue = getSmartQueue(expressions.filter((e) => examCats.includes(e.category)));
       } else {
-        queue = getSmartQueue(queue);
+        queue = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
+        if (mode === "interleaving" || mode === "flow") {
+          const byCat = {};
+          queue.forEach(e => {
+            if (!byCat[e.category]) byCat[e.category] = [];
+            byCat[e.category].push(e);
+          });
+          queue = [];
+          const maxLen = Math.max(...Object.values(byCat).map(a => a.length));
+          for (let i = 0; i < maxLen; i++) {
+            for (const cat in byCat) {
+              if (byCat[cat][i]) queue.push(byCat[cat][i]);
+            }
+          }
+        } else {
+          queue = getSmartQueue(queue);
+        }
       }
     }
 
@@ -3132,8 +3199,18 @@ ${SPEECH_HYGIENE_PROMPT}`;
       mediaRecorder.onstop = async () => {
         const blob = new Blob(chunks, { type: mediaRecorder.mimeType || mimeType });
         setAddAudioBlob(blob);
-        const url = URL.createObjectURL(blob);
-        setAddAudioUrl(url);
+        // Persister en data URL (base64) : les blob: URLs sont perdues au rechargement de la page
+        try {
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+          setAddAudioUrl(dataUrl);
+        } catch {
+          setAddAudioUrl(URL.createObjectURL(blob));
+        }
         stream.getTracks().forEach(t => t.stop());
         showToast("🎙️ Audio enregistré !");
       };
@@ -6170,6 +6247,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       <div style={{ background: isDarkMode ? "#0F1A3A" : "#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
                         <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>{activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}</div>
                         <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{activeFacet ? activeFacet.front : currentCard.front}</div>
+                        {(currentCard.audioUrl || currentCard.audioId) && (
+                          <AudioFichePlayer card={currentCard} />
+                        )}
                         {currentCard.imageUrl && (
                           <img src={currentCard.imageUrl} alt="support visuel" className={!revealed ? "occlusion-img" : ""} style={{ width: "100%", borderRadius: 16, border: `2px solid ${theme.border}` }} title={!revealed ? "Survole l'image pour l'apercevoir" : ""} />
                         )}
@@ -6375,10 +6455,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       { id: "chat", label: "Copilot IA" },
                       { id: "batch", label: "Batch IA" },
                       { id: "text", label: "Depuis un texte" },
-                      { id: "file", label: "Image & Vision IA" },
-                      { id: "multimedia", label: "Multimédia" },
-                      { id: "templates", label: "Templates" },
-                      { id: "quickadd", label: "Quick Add" },
                     ].find(t => t.id === addSubView)?.label || "Choisir"})
                   </button>
                   <div className="add-tabs-cluster" style={{ display: "flex", gap: 8, marginBottom: 32, background: isDarkMode ? "rgba(15,23,42,0.4)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", padding: 8, borderRadius: 24, border: `1px solid ${theme.border}`, boxShadow: "0 10px 30px rgba(77,107,254,0.05)", overflowX: "auto", scrollbarWidth: "none" }}>
@@ -6387,10 +6463,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       { id: "chat", icon: "💬", label: "Copilot IA" },
                       { id: "batch", icon: "🚀", label: "Batch IA" },
                       { id: "text", icon: "📄", label: "Depuis un texte" },
-                      { id: "file", icon: "📎", label: "Image & Vision IA" },
-                      { id: "multimedia", icon: "🎨", label: "Multimédia" },
-                      { id: "templates", icon: "📋", label: "Templates" },
-                      { id: "quickadd", icon: "⚡", label: "Quick Add" },
                     ].map(t => (
                       <button key={t.id} onClick={() => { setAddSubView(t.id); setShowBatchPreview(false); document.body.classList.remove("add-tabs-expanded"); }} className="hov" style={{ flex: 1, minWidth: 140, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, transition: "all 0.2s", background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "#3451D1" : theme.textMuted, boxShadow: addSubView === t.id ? "0 4px 15px rgba(77,107,254,0.05)" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                         {t.icon} {t.label}
@@ -9149,44 +9221,55 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             <div style={{ animation: "fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1)" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, flexWrap: "wrap", gap: 12 }}>
                 <div>
-                  <h1 style={{ fontSize: 32, fontWeight: 900, background: "linear-gradient(135deg, #4D6BFE, #7B93FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: 0, letterSpacing: "-1px" }}>🌌 Portfolio Astral</h1>
-                  <p style={{ color: theme.textMuted, marginTop: 6, fontSize: 15 }}>La galerie holographique de tes accomplissements et codes sources.</p>
+                  <h1 style={{ fontSize: 32, fontWeight: 900, background: "linear-gradient(135deg, #4D6BFE, #7B93FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: 0, letterSpacing: "-1px" }}>📈 Tableau de Bord & Acquis</h1>
+                  <p style={{ color: theme.textMuted, marginTop: 6, fontSize: 15 }}>La vue globale de votre progression et de vos accomplissements.</p>
                 </div>
               </div>
-              {projects.filter(p => p.status === "terminé").length === 0 ? (
-                <div style={{ textAlign: "center", padding: "100px 20px", background: isDarkMode ? "radial-gradient(circle at center, rgba(77, 107, 254,0.15) 0%, transparent 70%)" : "radial-gradient(circle at center, rgba(77, 107, 254,0.1) 0%, transparent 70%)", borderRadius: 40, border: `1px solid ${isDarkMode ? "rgba(77, 107, 254,0.2)" : "rgba(77, 107, 254,0.1)"}`, position: "relative", overflow: "hidden" }}>
-                  <div style={{ position: "absolute", top: "50%", left: "50%", width: 300, height: 300, marginTop: -150, marginLeft: -150, background: "conic-gradient(from 0deg, transparent 0%, rgba(77, 107, 254,0.3) 50%, transparent 100%)", borderRadius: "50%", animation: "spin 4s linear infinite", pointerEvents: "none", filter: "blur(20px)" }} />
-                  <div style={{ fontSize: 80, animation: "float 4s ease-in-out infinite", marginBottom: 24, position: "relative", zIndex: 1, filter: "drop-shadow(0 0 20px rgba(77, 107, 254,0.8))" }}>🌌</div>
-                  <h3 style={{ color: theme.text, fontSize: 32, margin: "0 0 16px", fontWeight: 900, position: "relative", zIndex: 1, textShadow: "0 0 30px rgba(77, 107, 254,0.5)" }}>Le Néant Astral...</h3>
-                  <p style={{ color: theme.textMuted, fontSize: 16, maxWidth: 500, margin: "0 auto", position: "relative", zIndex: 1, lineHeight: 1.6 }}>Termine tes premiers projets pour les faire transcender et briller dans cette constellation d'accomplissements.</p>
-                </div>
-              ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 24 }}>
-                  {projects.filter(p => p.status === "terminé").map((proj, idx) => (
-                    <HoloCard key={proj.id} theme={theme} glowColor={proj.color || "#4D6BFE"} style={{
-                      background: isDarkMode ? "linear-gradient(145deg, rgba(15,23,42,0.9), rgba(15,23,42,0.6))" : "linear-gradient(145deg, rgba(255,255,255,0.9), rgba(248,250,255,0.9))",
-                      borderRadius: 24, padding: 28, border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77, 107, 254,0.1)"}`,
-                      boxShadow: "0 20px 40px rgba(77,107,254,0.1)", backdropFilter: "blur(20px)",
-                      transform: "translateZ(0)", animation: `fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) ${idx * 0.1}s both`,
-                      position: "relative", overflow: "hidden"
-                    }}>
-                      <div style={{ position: "absolute", top: -50, right: -50, width: 150, height: 150, background: `radial-gradient(circle, ${proj.color || "#4D6BFE"}40 0%, transparent 70%)`, borderRadius: "50%", pointerEvents: "none" }} />
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                        <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: theme.text, zIndex: 1, textShadow: isDarkMode ? "0 2px 10px rgba(0,0,0,0.5)" : "none" }}>{proj.title}</h3>
-                        <span style={{ background: "rgba(77, 107, 254,0.1)", color: "#4D6BFE", padding: "4px 10px", borderRadius: 20, fontSize: 11, fontWeight: 800, border: "1px solid rgba(77, 107, 254,0.2)" }}>Niveau Astral</span>
+              
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 32 }}>
+                {/* Cartes de statistiques globales */}
+                <HoloCard theme={theme} glowColor="#10B981" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontSize: 32, marginBottom: 12 }}>📚</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>{expressions.length}</div>
+                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Fiches totales générées</div>
+                </HoloCard>
+                
+                <HoloCard theme={theme} glowColor="#4D6BFE" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontSize: 32, marginBottom: 12 }}>🎓</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>
+                    {expressions.filter(e => e.level >= 3).length}
+                  </div>
+                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Fiches maîtrisées (Niveau 3+)</div>
+                </HoloCard>
+
+                <HoloCard theme={theme} glowColor="#F59E0B" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontSize: 32, marginBottom: 12 }}>📦</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>
+                    {new Set(expressions.map(e => e.category)).size}
+                  </div>
+                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Modules actifs</div>
+                </HoloCard>
+              </div>
+
+              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 28, border: `1px solid ${theme.border}` }}>
+                <h2 style={{ fontSize: 20, fontWeight: 900, color: theme.text, marginTop: 0, marginBottom: 20 }}>Top Modules (Progression)</h2>
+                {Array.from(new Set(expressions.map(e => e.category))).slice(0, 5).map(cat => {
+                  const catExps = expressions.filter(e => e.category === cat);
+                  const mastered = catExps.filter(e => e.level >= 3).length;
+                  const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
+                  return (
+                    <div key={cat} style={{ marginBottom: 16 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
+                        <span style={{ color: theme.text }}>{cat || "Sans catégorie"}</span>
+                        <span style={{ color: theme.highlight }}>{pct}%</span>
                       </div>
-                      {proj.description && <p style={{ color: theme.textMuted, fontSize: 13, lineHeight: 1.5, marginBottom: 20 }}>{proj.description}</p>}
-                      <div style={{ background: theme.inputBg, borderRadius: 16, padding: "16px", border: `1px solid ${theme.border}`, position: "relative" }}>
-                        <div style={{ fontSize: 10, fontWeight: 900, color: theme.highlight, letterSpacing: 1, marginBottom: 8 }}>STATISTIQUES</div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                          <div><div style={{ fontSize: 18, fontWeight: 900, color: theme.text }}>{proj.tasks?.length || 0}</div><div style={{ fontSize: 11, color: theme.textMuted }}>Tâches accomplies</div></div>
-                          <div><div style={{ fontSize: 18, fontWeight: 900, color: "#22C55E" }}>100%</div><div style={{ fontSize: 11, color: theme.textMuted }}>Taux de réussite</div></div>
-                        </div>
+                      <div style={{ width: "100%", height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", background: "linear-gradient(90deg, #4D6BFE, #7B93FF)", borderRadius: 4 }} />
                       </div>
-                    </HoloCard>
-                  ))}
-                </div>
-              )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -9280,7 +9363,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     const catExps = expressions.filter(e => e.category === cat.name);
                     const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
                     const mastered = catExps.filter(e => e.level >= 7).length;
-                    const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
+                    // Progression = moyenne d'avancement de chaque fiche (niveau/7), pas seulement les fiches 100% maîtrisées
+                    const pct = catExps.length ? Math.round((catExps.reduce((s, e) => s + Math.min(7, e.level || 0), 0) / (catExps.length * 7)) * 100) : 0;
                     const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
                     const catColor = cat.color || "#4D6BFE";
                     return (
@@ -9312,10 +9396,17 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           <span>{mastered} maîtrisées</span>
                           <span style={{ color: dueCount > 0 ? "#EF4444" : theme.textMuted }}>{dueCount} en retard</span>
                         </div>
-                        <div style={{ marginTop: 12 }}>
-                          <button onClick={() => { startReview(cat.name); }} className="hov" style={{ marginRight: 8, padding: "6px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Réviser</button>
+                        <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          <button onClick={() => { startReview(cat.name); }} className="hov" style={{ padding: "6px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Réviser</button>
+                          <button onClick={() => { setFilterCat(cat.name); setView("list"); }} className="hov" style={{ padding: "6px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 8, fontWeight: 700 }}>📁 Voir les fiches</button>
+                          <button onClick={() => { startReview(cat.name, "exam"); }} className="hov" style={{ padding: "6px 14px", background: "#F59E0B", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>🎯 Réviser pour examen</button>
                           <button onClick={() => analyzeLearningCurve(cat.name)} className="hov" style={{ padding: "6px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 8, fontWeight: 700 }}>📈 Courbe</button>
                         </div>
+                        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.textMuted }}>
+                          <span>🗓️ Date d'examen :</span>
+                          <input type="date" value={cat.examDate || ""} onChange={(e) => { const v = e.target.value; setCategories(prev => prev.map(c => c.name === cat.name ? { ...c, examDate: v } : c)); showToast(v ? `Examen planifié pour ${cat.name} — révision auto 3 jours avant` : "Date d'examen retirée"); }} style={{ padding: "4px 8px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 12 }} />
+                        </div>
+
                         {/* Courbe mini */}
                         {catsLearningCurve[cat.name] && (
                           <div style={{ marginTop: 12, display: "flex", alignItems: "flex-end", gap: 2, height: 40 }}>

@@ -1,7 +1,7 @@
 import { synchronize } from '@nozbe/watermelondb/sync'
 import { database } from './index'
 import { db as firestoreDb, getFbUser } from '../firebase'
-import { collection, query, where, getDocsFromServer, writeBatch, doc } from 'firebase/firestore'
+import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore'
 import { normalizeDate } from '../../utils/dateUtils'
 import { logEvent } from '../telemetry'
 let isSyncing = false
@@ -35,7 +35,7 @@ export async function pushExpressionsToFirebase() {
 
   const expressionsRef = collection(firestoreDb, `users/${uid}/expressions`)
   const q = query(expressionsRef)
-  const existingDocs = await getDocsFromServer(q)
+  const existingDocs = await getDocs(q)
   const existingIds = new Set()
   existingDocs.forEach(doc => existingIds.add(doc.id))
 
@@ -102,7 +102,7 @@ export async function syncWithFirebase(forceReconcile = false) {
           ? query(collection(firestoreDb, expressionsPath(uid)), where('updatedAt', '>', lastPulledAt))
           : collection(firestoreDb, expressionsPath(uid))
 
-        const snapshot = await getDocsFromServer(q)
+        const snapshot = await getDocs(q)
         const created = []
         const updated = []
         const deleted = []
@@ -171,7 +171,7 @@ async function reconcileAllExpressions(uid) {
   const expressions = database.collections.get('expressions')
   const [localRecords, remoteSnap] = await Promise.all([
     expressions.query().fetch(),
-    getDocsFromServer(collection(firestoreDb, expressionsPath(uid))),
+    getDocs(collection(firestoreDb, expressionsPath(uid))),
   ])
 
   const localById = new Map(localRecords.map(record => [record.id, record]))
