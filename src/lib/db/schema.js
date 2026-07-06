@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb'
 
 export const mySchema = appSchema({
-  version: 1,
+  version: 2, // bumpé pour l'ajout de audio_id
   tables: [
     tableSchema({
       name: 'expressions',
@@ -13,6 +13,7 @@ export const mySchema = appSchema({
         { name: 'type', type: 'string', isOptional: true },
         { name: 'image_url', type: 'string', isOptional: true },
         { name: 'audio_url', type: 'string', isOptional: true },
+        { name: 'audio_id', type: 'string', isOptional: true },  // NEW v2
         { name: 'layers', type: 'string', isOptional: true }, // JSON array
         { name: 'level', type: 'number', isOptional: true },
         { name: 'next_review', type: 'string', isOptional: true },

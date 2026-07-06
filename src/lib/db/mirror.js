@@ -18,6 +18,7 @@ export async function loadInitialExpressionsFromWatermelon() {
     type: r.type,
     imageUrl: r.imageUrl,
     audioUrl: r.audioUrl,
+    audioId: r.audioId || null,  // NEW v2
     layers: r.layers,
     level: r.level,
     nextReview: r.nextReview ? normalizeDate(r.nextReview) : null,
@@ -42,6 +43,7 @@ const mapCardToRecord = (card, exp) => {
   exp.type = card.type || 'qa'
   exp.imageUrl = card.imageUrl || null
   exp.audioUrl = card.audioUrl || null
+  exp.audioId = card.audioId || null   // NEW v2
   exp.layers = card.layers || []
   exp.level = card.level || 0
   exp.nextReview = card.nextReview ? normalizeDate(card.nextReview) : today()

@@ -247,6 +247,7 @@ function firebaseDocToRaw(docSnap) {
     type: data.type || 'qa',
     image_url: data.imageUrl || null,
     audio_url: data.audioUrl || null,
+    audio_id: data.audioId || null,  // NEW v2
     layers: JSON.stringify(safeArray(data.layers)),
     level: Number(data.level || 0),
     next_review: data.nextReview ? normalizeDate(data.nextReview) : null,
@@ -268,6 +269,7 @@ function applyRawToExpression(exp, raw) {
   exp.type = raw.type || 'qa'
   exp.imageUrl = raw.image_url || null
   exp.audioUrl = raw.audio_url || null
+  exp.audioId = raw.audio_id || null  // NEW v2
   exp.layers = safeArray(raw.layers)
   exp.level = Number(raw.level || 0)
   exp.nextReview = raw.next_review ? normalizeDate(raw.next_review) : null
@@ -288,6 +290,7 @@ function recordToFirestore(record) {
     type: record.type || 'qa',
     imageUrl: record.imageUrl || null,
     audioUrl: record.audioUrl || null,
+    audioId: record.audioId || null,  // NEW v2
     layers: safeArray(record.layers),
     level: Number(record.level || 0),
     nextReview: record.nextReview ? normalizeDate(record.nextReview) : null,
@@ -309,6 +312,7 @@ function rawToCamelCase(record) {
     type: record.type || 'qa',
     imageUrl: record.image_url || null,
     audioUrl: record.audio_url || null,
+    audioId: record.audio_id || null,  // NEW v2
     layers: safeArray(record.layers),
     level: Number(record.level || 0),
     nextReview: record.next_review ? normalizeDate(record.next_review) : null,
