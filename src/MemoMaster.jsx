@@ -2292,7 +2292,8 @@ ${SPEECH_HYGIENE_PROMPT}`;
             category: categorySnapshot,
             type: typeSnapshot,
             imageUrl: addForm.imageUrl,
-            audioUrl: addAudioUrl,        // ajout audio
+            audioId: addForm.audioId,
+            audioUrl: addAudioUrl || addForm.audioUrl,        // ajout audio
             layers: addLayers.length > 1 ? addLayers : undefined, // couches
           }
           : e
@@ -2386,10 +2387,10 @@ ${SPEECH_HYGIENE_PROMPT}`;
     }, 450);
   };
 
-  const startEdit = (exp) => { setAddForm({ front: exp.front, back: exp.back, example: exp.example || "", category: exp.category, imageUrl: exp.imageUrl || null, type: exp.type || "qa" }); setEditingId(exp.id); setView("add"); };
+  const startEdit = (exp) => { setAddForm({ front: exp.front, back: exp.back, example: exp.example || "", category: exp.category, imageUrl: exp.imageUrl || null, type: exp.type || "qa", audioId: exp.audioId || null, audioUrl: exp.audioUrl || null }); setEditingId(exp.id); setAddAudioUrl(exp.audioUrl || null); setView("add"); };
   const cancelEdit = () => {
     setEditingId(null);
-    setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null, type: "qa" }));
+    setAddForm((f) => ({ ...f, front: "", back: "", example: "", imageUrl: null, type: "qa", audioId: null, audioUrl: null }));
     setAddReformulations({}); setAddMetaphoreText(""); setAddDoublonCheck(null);
     if (editReturnTo && editReturnTo.view === "review") {
       setEditReturnTo(null);
@@ -6247,7 +6248,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       <div style={{ background: isDarkMode ? "#0F1A3A" : "#F8FAFF", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme.border}` }}>
                         <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>{activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}</div>
                         <div style={{ fontSize: 26, fontWeight: 800, color: theme.highlight, lineHeight: 1.35, marginBottom: currentCard.imageUrl ? 20 : 0 }}>{activeFacet ? activeFacet.front : currentCard.front}</div>
-                        {(currentCard.audioUrl || currentCard.audioId) && (
+                        {(currentCard.audioUrl || currentCard.audioId) && currentCard.type !== "audio" && (
                           <AudioFichePlayer card={currentCard} />
                         )}
                         {currentCard.imageUrl && (
@@ -6297,6 +6298,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             <div style={{ marginTop: 12 }}>
                               <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
                             </div>
+                            {(currentCard.audioUrl || currentCard.audioId) && currentCard.type === "audio" && (
+                              <AudioFichePlayer card={currentCard} />
+                            )}
                             {currentCard.example && (
                               <div style={{ background: theme.inputBg, padding: "16px 20px", borderRadius: 16, marginTop: 24, fontSize: 15, color: theme.textMuted, fontStyle: "italic", borderLeft: `4px solid ${theme.highlight}`, position: "relative" }}>
                                 <div style={{ position: "absolute", top: -10, left: 16, background: theme.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme.highlight, letterSpacing: 1 }}>EXEMPLE</div>
@@ -8127,6 +8131,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                               <div style={{ fontSize: 16, color: theme.text, lineHeight: 1.6 }}>
                                 <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
                               </div>
+                              {(expandedCard.audioUrl || expandedCard.audioId) && (
+                                <AudioFichePlayer card={expandedCard} />
+                              )}
                               {expandedCard.example && (
                                 <div style={{ marginTop: 16, padding: "12px 16px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: `3px solid ${catColor}` }}>
                                   <GodTierContent text={expandedCard.example} theme={theme} isDarkMode={isDarkMode} />
