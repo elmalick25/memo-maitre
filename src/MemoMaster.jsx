@@ -6257,6 +6257,12 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       </div>
 
                       {!revealed ? (
+                        currentCard.type === "audio" ? (
+                          <div style={{ marginTop: 24, textAlign: "center" }}>
+                            <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 700, marginBottom: 16 }}>🎧 Clique pour écouter l'audio, puis donne ton avis.</div>
+                            <button onClick={handleReveal} className="hov btn-glow" style={{ width: "100%", padding: "20px 24px", background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", borderRadius: 18, fontSize: 17, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 24px rgba(77,107,254,0.35)", minHeight: 56 }}>▶️ Écouter la réponse</button>
+                          </div>
+                        ) : (
                         <div style={{ marginTop: 24 }}>
                           {voiceReviewActive ? (
                             <div style={{ textAlign: "center", padding: 20 }}>
@@ -6291,12 +6297,17 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             </>
                           )}
                         </div>
+                        )
                       ) : (
                         <div style={{ animation: "slideIn 0.3s ease" }}>
                           <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "#EEF2FF"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
                             <div style={{ fontSize: 11, color: "#4D6BFE", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>RÉPONSE</div>
                             <div style={{ marginTop: 12 }}>
-                              <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
+                              {currentCard.type === "audio" ? (
+                                <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 600 }}>🎧 Réécoute l'audio ci-dessous, puis donne ton avis.</div>
+                              ) : (
+                                <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
+                              )}
                             </div>
                             {(currentCard.audioUrl || currentCard.audioId) && currentCard.type === "audio" && (
                               <AudioFichePlayer card={currentCard} />
@@ -7772,7 +7783,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                               <>
                                 {exp.imageUrl && <div style={{ fontSize: 11, background: "#4D6BFE22", color: "#4D6BFE", padding: "4px 8px", borderRadius: 8, display: "inline-block", marginBottom: 12, fontWeight: 700 }}>🖼️ Image attachée</div>}
                                 <div style={{ fontSize: 14, color: theme.text, lineHeight: 1.6, marginBottom: 16 }}>
-                                  <GodTierContent text={exp.back} theme={theme} isDarkMode={isDarkMode} />
+                                  {(exp.type === "audio" && (exp.audioUrl || exp.audioId)) ? (
+                                    <AudioFichePlayer card={exp} />
+                                  ) : (
+                                    <GodTierContent text={exp.back} theme={theme} isDarkMode={isDarkMode} />
+                                  )}
                                 </div>
                                 {exp.example && (
                                   <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #4D6BFE", marginBottom: 16 }}>
@@ -8129,7 +8144,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
                             <div style={{ background: isDarkMode ? "rgba(77,107,254,0.2)" : "rgba(255,255,255,0.5)", padding: 20, borderRadius: 20, marginBottom: 24, border: `1px solid ${theme.border}` }}>
                               <div style={{ fontSize: 16, color: theme.text, lineHeight: 1.6 }}>
-                                <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
+                                {(expandedCard.type === "audio" && (expandedCard.audioUrl || expandedCard.audioId)) ? (
+                                  <div style={{ fontSize: 14, color: theme.textMuted, fontWeight: 600 }}>🎧 Fiche audio — écoute ci-dessous.</div>
+                                ) : (
+                                  <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
+                                )}
                               </div>
                               {(expandedCard.audioUrl || expandedCard.audioId) && (
                                 <AudioFichePlayer card={expandedCard} />
