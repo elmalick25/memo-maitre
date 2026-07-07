@@ -1,4 +1,5 @@
-const { onRequest } = require("firebase-functions/v2/https");
+const { onRequest, onCall } = require("firebase-functions/v2/https");
+const { AccessToken } = require('livekit-server-sdk');
 
 const admin = require("firebase-admin");
 
@@ -201,4 +202,21 @@ exports.aiProxy = onRequest({ cors: true, maxInstances: 10 }, async (req, res) =
     console.error("Proxy error:", error);
     res.status(500).send("Internal proxy error");
   }
+});
+
+exports.generateLivekitToken = onCall((request) => {
+  const data = request.data;
+  
+  const roomName = data.roomName || 'agent-room';
+  const participantName = data.participantName || `user-${Math.floor(Math.random() * 1000)}`;
+
+  const at = new AccessToken(
+    process.env.LIVEKIT_API_KEY,
+    process.env.LIVEKIT_API_SECRET,
+    { identity: participantName }
+  );
+
+  at.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true });
+
+  return { token: at.toJwt() };
 });

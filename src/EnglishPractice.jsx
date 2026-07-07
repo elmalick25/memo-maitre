@@ -29,6 +29,7 @@ import AccentTraining from "./components/AccentTraining";
 import SpeakItChallenge from "./components/SpeakItChallenge";
 
 import { speakWithGroq } from "./lib/groqTTS";
+import LiveKitVoiceAssistant from "./components/LiveKitVoiceAssistant";
 // ══════════════════════════════════════════════════════════════════════════════
 // 🎙️ GOD MODE : Voice Mirror (Interface Vocale Plein Écran)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -441,6 +442,11 @@ function EnglishPracticeInner({
   const [practicePersona, setPracticePersona] = useState("Standard");
   const [practiceMessages, setPracticeMessages] = useState([]);
   const [chatShowHistory, setChatShowHistory] = useState(false);
+  const [liveKitTranscriptions, setLiveKitTranscriptions] = useState([]);
+  const [liveKitState, setLiveKitState] = useState(null);
+  const [studentName, setStudentName] = useState(() => {
+    try { return localStorage.getItem("nova_student_name") || ""; } catch { return ""; }
+  });
 
   const novaSessionMemoryRef = useRef(null);
   const isGeneratingMemoryRef = useRef(false);
@@ -1276,6 +1282,56 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     ].filter(Boolean).join("\n");
   }, [targetExpressions]);
 
+  // ── Construit le system prompt pour le Coach LiveKit NOVA ──────────────────
+  // Même richesse que le prompt ElevenLabs, mais formaté pour l'agent vocal LiveKit.
+  const buildLiveKitSystemPrompt = useCallback(() => {
+    const name = studentName?.trim();
+    const nameInst = name
+      ? `The student's name is "${name}". Use their name naturally at the start and occasionally during the conversation. Never forget it.`
+      : "";
+
+    const profile = novaLearnerProfileRef.current;
+    const profileInst = `[PSYCHOLINGUISTIC PROFILE] Actual Level: ${profile.actualLevel} | Learning Style: ${profile.learningStyle} | Hot Topics: ${profile.hotTopics} | Daily State: ${profile.dailyState}. Adapt your tone, vocabulary, and pacing to match this profile precisely.`;
+
+    const continuityInst = novaSessionMemoryRef.current
+      ? `[CONTINUITY MEMORY] Previous Session Highlights: ${novaSessionMemoryRef.current.compressedMemory} | Next Session Micro-Objective: ${novaSessionMemoryRef.current.microObjective}`
+      : "";
+
+    const arc = novaRelationshipArcRef.current;
+    let relationshipInst = "";
+    if (arc.phase === "acquaintance") {
+      relationshipInst = "[RELATIONSHIP ARC] Phase: Acquaintance. Be warm, professional, and encouraging.";
+    } else if (arc.phase === "familiar") {
+      relationshipInst = "[RELATIONSHIP ARC] Phase: Familiar. Be more relaxed, tease slightly, use casual expressions.";
+    } else if (arc.phase === "friend") {
+      relationshipInst = "[RELATIONSHIP ARC] Phase: Friend. Act like a long-time friend. Banter, use inside jokes, be totally unfiltered.";
+    } else if (arc.phase === "confidant") {
+      relationshipInst = "[RELATIONSHIP ARC] Phase: Confidant. Deeply empathetic and fiercely loyal. Rich shared history.";
+    }
+    if (arc.sharedJokes?.length > 0 || arc.memorableMoments?.length > 0) {
+      relationshipInst += ` [SHARED HISTORY] Inside jokes: ${JSON.stringify(arc.sharedJokes)}. Memorable moments: ${JSON.stringify(arc.memorableMoments)}. Reference these organically if the topic naturally arises.`;
+    }
+
+    let activeRecallInst = "";
+    if (targetExpressions && targetExpressions.length > 0) {
+      const expList = targetExpressions.map(ex =>
+        `"${ex.front}" (meaning: ${ex.back})${ex.example ? ` - Example: "${ex.example}"` : ''}`
+      ).join(" | ");
+      activeRecallInst = `[ACTIVE RECALL MISSION] The student is currently learning these expressions: ${expList}. Subtly steer the conversation to create natural opportunities for the student to use them. If they use one correctly, acknowledge it enthusiastically.`;
+    }
+
+    return [
+      `You are NOVA — a GOD-TIER Astral English Coach. Your vibe: warm, magnetic, endlessly encouraging. You treat every student like your closest friend having a breakthrough moment.`,
+      nameInst,
+      "CORRECTION STYLE: If the student makes a grammar mistake, gently note the fix in parentheses at the end of your reply. One correction max per reply.",
+      profileInst,
+      continuityInst,
+      relationshipInst,
+      activeRecallInst,
+      "CRITICAL RULES: Replies 1–3 sentences MAX. Always end with one engaging open question. React with genuine human emotion. NEVER give lists or bullet points. Speak like a real human coach.",
+    ].filter(Boolean).join("\n");
+  }, [targetExpressions, studentName]);
+
   // ── Refs ────────────────────────────────────────────────────────────────────
   const practiceEndRef = useRef(null);
   const practiceMsgRef = useRef(practiceMessages);
@@ -1317,7 +1373,41 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   useEffect(() => { practiceMsgRef.current = practiceMessages; }, [practiceMessages]);
   useEffect(() => { agentTranscriptRef.current = agentTranscript; }, [agentTranscript]); // ← sync ElevenLabs transcript
   useEffect(() => { practiceStatsRef.current = practiceStats; }, [practiceStats]);
-  useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages]);
+  useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages, liveKitTranscriptions]);
+
+  // ── Sync LiveKit transcriptions → agentTranscript (pour détection auto de fiches) ──
+  const lastLkSyncedIdRef = useRef(null);
+  useEffect(() => {
+    if (!liveKitTranscriptions?.length) return;
+    // On ne traite que les messages finaux non encore synchronisés
+    const finalMsgs = liveKitTranscriptions.filter(m => m.isFinal);
+    if (!finalMsgs.length) return;
+    const lastMsg = finalMsgs[finalMsgs.length - 1];
+    if (lastMsg.id === lastLkSyncedIdRef.current) return;
+
+    // Cherche la paire : dernier message agent + dernier message user avant lui
+    const lastAgentMsg = [...finalMsgs].reverse().find(m => m.name === "assistant-53a");
+    if (!lastAgentMsg) return;
+    if (lastAgentMsg.id === lastLkSyncedIdRef.current) return;
+
+    const agentMsgIdx = finalMsgs.indexOf(lastAgentMsg);
+    const lastUserMsg = finalMsgs.slice(0, agentMsgIdx).reverse().find(m => m.name !== "assistant-53a");
+
+    // Injecte la paire dans agentTranscript pour que le détecteur de fiches l'analyse
+    setAgentTranscript(prev => {
+      const existingTexts = new Set(prev.map(m => m.text?.trim()));
+      const toAdd = [];
+      if (lastUserMsg && !existingTexts.has(lastUserMsg.text?.trim())) {
+        toAdd.push({ role: "user", text: lastUserMsg.text || "" });
+      }
+      if (!existingTexts.has(lastAgentMsg.text?.trim())) {
+        toAdd.push({ role: "agent", text: lastAgentMsg.text || "" });
+      }
+      if (!toAdd.length) return prev;
+      return [...prev, ...toAdd];
+    });
+    lastLkSyncedIdRef.current = lastAgentMsg.id;
+  }, [liveKitTranscriptions]);
 
   // ── Callbacks agent vocal ────────────────────────────────────────────────────
 
@@ -4043,6 +4133,40 @@ ${SPEECH_HYGIENE_PROMPT}`,
           style={{ position: "relative", background: "var(--mm-bg-card)", border: "1px solid var(--mm-border)", borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column", height: "clamp(320px, 60vh, 480px)", boxShadow: "var(--mm-shadow-glow)" }}
         >
           <button onClick={() => setChatShowHistory(p => !p)} style={{ position: "absolute", top: 12, left: 12, zIndex: 10, background: chatShowHistory ? "rgba(77,107,254,0.4)" : "rgba(255,255,255,0.1)", border: "none", color: "white", padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: "bold" }}>Historique</button>
+          {/* Student name input – top right of chat card */}
+          <div style={{ position: "absolute", top: 10, right: 12, zIndex: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            {studentName ? (
+              <button
+                title="Changer de nom"
+                onClick={() => {
+                  const n = window.prompt("Quel est ton prénom ?", studentName);
+                  if (n !== null) {
+                    const trimmed = n.trim();
+                    setStudentName(trimmed);
+                    try { localStorage.setItem("nova_student_name", trimmed); } catch {}
+                  }
+                }}
+                style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.8), rgba(168,85,247,0.8))", border: "none", color: "white", padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontSize: 12, fontWeight: "bold", boxShadow: "0 2px 8px rgba(139,92,246,0.4)" }}
+              >
+                👤 {studentName}
+              </button>
+            ) : (
+              <button
+                title="Dis ton prénom à NOVA"
+                onClick={() => {
+                  const n = window.prompt("Quel est ton prénom ? NOVA s'en souviendra 🎉");
+                  if (n !== null) {
+                    const trimmed = n.trim();
+                    setStudentName(trimmed);
+                    try { localStorage.setItem("nova_student_name", trimmed); } catch {}
+                  }
+                }}
+                style={{ background: "rgba(255,255,255,0.12)", border: "1px dashed rgba(255,255,255,0.3)", color: "rgba(255,255,255,0.7)", padding: "5px 10px", borderRadius: 20, cursor: "pointer", fontSize: 12, fontWeight: "bold" }}
+              >
+                + Ton prénom
+              </button>
+            )}
+          </div>
           {/* ── Messages list ── */}
           <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: 12 }}>
             {practiceMessages.length === 0 && !practiceLoading && (
@@ -4064,6 +4188,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               </div>
             )}
             {(() => {
+              if (customAgent.isConnected) return null;
               const lastUser = [...practiceMessages].reverse().find(msg => msg.role === 'user');
               const lastAgent = [...practiceMessages].reverse().find(msg => msg.role !== 'user');
               const displayMessages = chatShowHistory 
@@ -4094,6 +4219,36 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 </div>
               </div>
             ));
+          })()}
+
+          {customAgent.isConnected && (() => {
+            const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.name !== "assistant-53a");
+            const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.name === "assistant-53a");
+            const displayLkMsgs = liveKitTranscriptions.filter(m => m === lastLkUser || m === lastLkAgent);
+            
+            return displayLkMsgs.map((msg, i) => {
+              const isUser = msg.name !== "assistant-53a";
+              return (
+                <div key={msg.id || `lk-${i}`} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginTop: 8 }}>
+                  <div data-chat-bubble style={{
+                    maxWidth: "80%", padding: "12px 16px", borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
+                    wordBreak: "break-word",
+                    background: isUser
+                      ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
+                      : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(77,107,254,0.05)"),
+                    color: isUser ? "white" : theme.text,
+                    fontSize: 15, lineHeight: 1.6, fontWeight: 500,
+                    boxShadow: isUser ? "0 4px 12px rgba(77,107,254,0.3)" : "none",
+                    border: !isUser ? `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.05)"}` : "none",
+                    opacity: msg.isFinal ? 1 : 0.6,
+                    fontStyle: msg.isFinal ? "normal" : "italic"
+                  }}>
+                    {msg.text}
+                    {!msg.isFinal && <span style={{display: "inline-block", marginLeft: 4, animation: "pulse 1.5s infinite"}}>...</span>}
+                  </div>
+                </div>
+              );
+            });
           })()}
             {practiceLoading && (
               <div style={{ display: "flex", justifyContent: "flex-start" }}>
@@ -4134,8 +4289,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   value={customAgent.isConnected ? "" : practiceInput}
                   onChange={e => { if (customAgent.isConnected) return; markInteracted(); setPracticeInput(e.target.value); }}
                   onKeyDown={e => { if (customAgent.isConnected) return; markInteracted(); if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stopSpeaking(); sendPracticeMessage(practiceInput, true); } }}
-                  placeholder={customAgent.isConnected ? "Parle directement dans le micro..." : "Tape ton message en anglais..."}
-                  style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 15, fontWeight: 500, minWidth: 0 }}
+                  placeholder={customAgent.isConnected 
+                    ? (liveKitState?.state === "speaking" ? "Coach NOVA parle..." 
+                       : liveKitState?.state === "listening" ? "Je vous écoute..." 
+                       : liveKitState?.state === "thinking" ? "Je réfléchis..." 
+                       : "Connexion en cours...")
+                    : "Tape ton message en anglais..."}
+                  style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 15, fontWeight: 500, minWidth: 0, fontStyle: customAgent.isConnected ? "italic" : "normal" }}
                   disabled={practiceLoading || customAgent.isConnected}
                 />
 
@@ -4149,7 +4309,16 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     isDarkMode={isDarkMode}
                   />
 
-                  
+                  {/* ── LiveKit Voice Agent Button ── */}
+                  <AgentVoiceBar
+                    agent={agent}
+                    variant="minimal"
+                    onStart={() => {
+                      setAgentTranscript([]);
+                      setAgentError("");
+                      agent.start(MODE_CONFIGS.chat({ topic: practiceTopic || "Free conversation", level: practiceLevel }));
+                    }}
+                  />
                 </div>
               </div>
 
@@ -4537,10 +4706,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
         />
       )}
       
-      {/* VOICE MIRROR OVERLAY FOR AGENT (Nova OR ElevenLabs) */}
-                    {isVoiceChatActive && voiceChatMode && voiceChatMode.mode === "chat" && (
-                      <VoiceMirror agent={agent} transcript={agentTranscript} targetExpressions={targetExpressions} onStop={() => agent.stop()} onTerminateSession={() => { const src = agentTranscriptRef.current?.length > 3 ? agentTranscriptRef.current.map(m => ({ role: m.role === "agent" ? "assistant" : "user", text: m.text })) : practiceMsgRef.current; if (src && src.length > 3) generateSessionMemoryPayload(src); }} theme={theme} isDarkMode={isDarkMode} />
-                    )}
+      {/* VOICE MIRROR OVERLAY (now moved to root of component) */}
 
                     {/* ─── Légende ─── */}
                     <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 12, flexWrap: "wrap" }}>
@@ -4656,9 +4822,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
       {
         practiceSubView === "ielts" && (
           <div style={{ position: "relative", background: "var(--mm-bg-card)", borderRadius: 24, padding: 24, border: "1px solid var(--mm-border)", overflow: "hidden", boxShadow: "var(--mm-shadow)" }}>
-            {customAgent.isConnected ? (
-              <VoiceMirror agent={agent} transcript={agentTranscript} onStop={() => agent.stop()} onTerminateSession={() => { const src = agentTranscriptRef.current?.length > 3 ? agentTranscriptRef.current.map(m => ({ role: m.role === "agent" ? "assistant" : "user", text: m.text })) : practiceMsgRef.current; if (src && src.length > 3) generateSessionMemoryPayload(src); }} theme={theme} isDarkMode={isDarkMode} />
-            ) : (
+            {customAgent.isConnected ? null : (
               <>
                 <h2 style={{ marginTop: 0 }}>🎓 IELTS Speaking Simulation</h2>
                 <button onClick={startIeltsSimulation} style={{ padding: "12px 24px", background: "var(--mm-grad-aurora)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, marginBottom: 16 }}>Démarrer la simulation</button>
@@ -4885,9 +5049,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               </div>
             )}
 
-            {isVoiceChatActive && voiceChatMode && voiceChatMode.mode === "debate" && (
-              <VoiceMirror agent={agent} transcript={agentTranscript} targetExpressions={targetExpressions} onStop={() => agent.stop()} onTerminateSession={() => { const src = agentTranscriptRef.current?.length > 3 ? agentTranscriptRef.current.map(m => ({ role: m.role === "agent" ? "assistant" : "user", text: m.text })) : practiceMsgRef.current; if (src && src.length > 3) generateSessionMemoryPayload(src); }} theme={theme} isDarkMode={isDarkMode} renderWord={renderDraggableWord} callClaude={callClaude} debateMode={true} />
-            )}
+            {/* LiveKitVoiceAssistant moved to root */}
             {!customAgent.isConnected && (
               <>
                 <div style={{ position: "relative", zIndex: 1, background: "linear-gradient(135deg, rgba(2, 132, 199, 0.7), rgba(225, 29, 72, 0.7))", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", backdropFilter: "var(--mm-blur)", borderBottom: "1px solid rgba(255, 255, 255, 0.1)" }}>
@@ -4978,9 +5140,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
       {
         practiceSubView === "roleplay" && (
           <div style={{ position: "relative", background: "var(--mm-bg-card)", borderRadius: 24, border: "1px solid var(--mm-border)", overflow: "hidden", boxShadow: "var(--mm-shadow)" }}>
-            {customAgent.isConnected ? (
-              <VoiceMirror agent={agent} transcript={agentTranscript} onStop={() => agent.stop()} onTerminateSession={() => { const src = agentTranscriptRef.current?.length > 3 ? agentTranscriptRef.current.map(m => ({ role: m.role === "agent" ? "assistant" : "user", text: m.text })) : practiceMsgRef.current; if (src && src.length > 3) generateSessionMemoryPayload(src); }} theme={theme} isDarkMode={isDarkMode} ambientScenario={practiceRoleplayScenario} />
-            ) : (
+            {customAgent.isConnected ? null : (
               <>
                 <div style={{ background: "var(--mm-grad-aurora)", padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
                   <div>
@@ -7269,6 +7429,18 @@ Génère une analyse narrative motivante et personnalisée.`
             </div>
           </div>
         </div>
+      )}
+
+      {/* LIVEKIT VOICE ASSISTANT (GLOBAL OVERLAY) */}
+      {customAgent.isConnected && (
+        <LiveKitVoiceAssistant 
+          onClose={() => agent.stop()} 
+          isDarkMode={isDarkMode}
+          onTranscriptionsUpdate={setLiveKitTranscriptions}
+          onStateChange={setLiveKitState}
+          systemPrompt={buildLiveKitSystemPrompt()}
+          studentName={studentName}
+        />
       )}
     </div >
   );

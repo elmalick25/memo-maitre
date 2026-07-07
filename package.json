@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@elevenlabs/react": "^1.9.0",
+    "@livekit/components-react": "^2.9.21",
+    "@livekit/components-styles": "^1.2.0",
     "@nozbe/watermelondb": "^0.28.0",
     "@nozbe/with-observables": "^1.6.0",
     "@ricky0123/vad-react": "^0.0.36",
@@ -32,6 +34,8 @@
     "d3-time-format": "^4.1.0",
     "firebase": "^12.14.0",
     "framer-motion": "^12.40.0",
+    "jose": "^6.2.3",
+    "livekit-client": "^2.20.0",
     "lokijs": "^1.5.12",
     "lucide-react": "^1.17.0",
     "mermaid": "^11.14.0",
