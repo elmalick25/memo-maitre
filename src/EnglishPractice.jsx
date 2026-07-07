@@ -30,6 +30,7 @@ import SpeakItChallenge from "./components/SpeakItChallenge";
 
 import { speakWithGroq } from "./lib/groqTTS";
 import LiveKitVoiceAssistant from "./components/LiveKitVoiceAssistant";
+import { armIosAudio } from "./lib/iosVoiceHardening";
 // ══════════════════════════════════════════════════════════════════════════════
 // 🎙️ GOD MODE : Voice Mirror (Interface Vocale Plein Écran)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1376,22 +1377,24 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages, liveKitTranscriptions]);
 
   // ── Sync LiveKit transcriptions → agentTranscript (pour détection auto de fiches) ──
+  // liveKitTranscriptions est maintenant un tableau unifié { id, role, identity, text, isFinal, ts }
+  // produit par LiveKitStateSync (agent: TranscriptionSegment avec `final`, user: TextStreamData)
   const lastLkSyncedIdRef = useRef(null);
   useEffect(() => {
     if (!liveKitTranscriptions?.length) return;
-    // On ne traite que les messages finaux non encore synchronisés
+
+    // Seuls les segments finaux comptent
     const finalMsgs = liveKitTranscriptions.filter(m => m.isFinal);
     if (!finalMsgs.length) return;
-    const lastMsg = finalMsgs[finalMsgs.length - 1];
-    if (lastMsg.id === lastLkSyncedIdRef.current) return;
 
-    // Cherche la paire : dernier message agent + dernier message user avant lui
-    const lastAgentMsg = [...finalMsgs].reverse().find(m => m.name === "assistant-53a");
+    // Dernier agent final
+    const lastAgentMsg = [...finalMsgs].reverse().find(m => m.role === "agent");
     if (!lastAgentMsg) return;
     if (lastAgentMsg.id === lastLkSyncedIdRef.current) return;
 
+    // Dernier user avant cet agent
     const agentMsgIdx = finalMsgs.indexOf(lastAgentMsg);
-    const lastUserMsg = finalMsgs.slice(0, agentMsgIdx).reverse().find(m => m.name !== "assistant-53a");
+    const lastUserMsg = finalMsgs.slice(0, agentMsgIdx).reverse().find(m => m.role === "user");
 
     // Injecte la paire dans agentTranscript pour que le détecteur de fiches l'analyse
     setAgentTranscript(prev => {
@@ -4222,12 +4225,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
           })()}
 
           {customAgent.isConnected && (() => {
-            const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.name !== "assistant-53a");
-            const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.name === "assistant-53a");
+            // liveKitTranscriptions est maintenant un tableau unifié { id, role, text, isFinal, ts }
+            const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.role === "user");
+            const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.role === "agent" && msg.isFinal);
             const displayLkMsgs = liveKitTranscriptions.filter(m => m === lastLkUser || m === lastLkAgent);
             
             return displayLkMsgs.map((msg, i) => {
-              const isUser = msg.name !== "assistant-53a";
+              const isUser = msg.role === "user";
               return (
                 <div key={msg.id || `lk-${i}`} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginTop: 8 }}>
                   <div data-chat-bubble style={{
@@ -4240,11 +4244,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     fontSize: 15, lineHeight: 1.6, fontWeight: 500,
                     boxShadow: isUser ? "0 4px 12px rgba(77,107,254,0.3)" : "none",
                     border: !isUser ? `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.05)"}` : "none",
-                    opacity: msg.isFinal ? 1 : 0.6,
-                    fontStyle: msg.isFinal ? "normal" : "italic"
+                    opacity: msg.isFinal ? 1 : 0.65,
+                    fontStyle: msg.isFinal ? "normal" : "italic",
                   }}>
                     {msg.text}
-                    {!msg.isFinal && <span style={{display: "inline-block", marginLeft: 4, animation: "pulse 1.5s infinite"}}>...</span>}
+                    {!msg.isFinal && <span style={{display: "inline-block", marginLeft: 4, animation: "pulse 1.5s infinite", opacity: 0.7}}>…</span>}
                   </div>
                 </div>
               );
@@ -4314,6 +4318,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     agent={agent}
                     variant="minimal"
                     onStart={() => {
+                      // 🔑 MOBILE FIX: débloque l'AudioContext de façon synchrone
+                      // avant tout await (iOS/Android autoplay policy).
+                      armIosAudio();
                       setAgentTranscript([]);
                       setAgentError("");
                       agent.start(MODE_CONFIGS.chat({ topic: practiceTopic || "Free conversation", level: practiceLevel }));

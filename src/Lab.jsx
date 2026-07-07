@@ -1847,6 +1847,38 @@ ${history}`;
     }
   };
 
+  // Écoute globale des événements de collage (paste) pour la section photo
+  useEffect(() => {
+    if (tab !== "photo") return;
+
+    const handlePaste = (e) => {
+      if (!e.clipboardData) return;
+      const items = e.clipboardData.items;
+      const imageFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const file = items[i].getAsFile();
+          if (file) {
+            const customFile = new File([file], `Capture_${Date.now()}.png`, { type: file.type });
+            imageFiles.push(customFile);
+          }
+        }
+      }
+
+      if (imageFiles.length > 0) {
+        if (!photoModule) {
+          toast("Sélectionne d'abord un module (en haut) pour coller une image.", "error");
+          return;
+        }
+        handlePhotoFiles(imageFiles, pendingPhotoType);
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, photoModule, pendingPhotoType]);
+
   const updatePhoto = (id, patch) => setPhotoItems(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p));
 
   const analyzePhoto = async (photo, targetModule) => {
@@ -1928,7 +1960,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       p.cards.map(c => ({
         front: c.front, back: c.back, example: c.hint || "",
         category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-        reservedAt: new Date().toISOString(), module: p.module, sourceDoc: p.sourceDoc || [Photo] , source: "📸 Photo"
+        reservedAt: new Date().toISOString(), module: p.module, sourceDoc: p.sourceDoc || "[Photo]" , source: "📸 Photo"
       }))
     );
     if (!all.length) { toast("Aucune fiche à mettre en réserve.", "error"); return; }
@@ -2905,7 +2937,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               onClick={() => photoModule ? photoInputRef.current?.click() : toast("Sélectionne d'abord un module.", "error")}
               color={activeColor}
               icon={photoDrag ? "📥" : "📸"}
-              title="Glisse tes photos de cours ici"
+              title="Glisse tes photos de cours ou colle (Ctrl+V) une capture ici"
               subtitle={<>Notes manuscrites · Tableaux · Schémas · Formules<br /><span style={{ fontSize: 12, marginTop: 4, display: "block" }}>JPG · PNG · WEBP — L'IA lit le texte automatiquement</span></>}
               theme={theme}
             />

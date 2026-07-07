@@ -1,22 +1,24 @@
 // iosVoiceHardening.js — Rend la conversation vocale robuste sur PWA iOS
 // ══════════════════════════════════════════════════════════════════════════════
-// Le SDK @elevenlabs/react ouvre son AudioContext + attache la piste WebRTC
-// distante APRÈS des `fetch()` async (signed URL). En PWA iOS (raccourci "Ajouter
-// à l'écran d'accueil"), ce moment est HORS du user-gesture initial, donc iOS
-// mute silencieusement la sortie audio et coupe la session.
+// Le SDK @elevenlabs/react / LiveKit ouvre son AudioContext + attache la piste
+// WebRTC distante APRÈS des `fetch()` async (signed URL). En PWA iOS (raccourci
+// "Ajouter à l'écran d'accueil"), ce moment est HORS du user-gesture initial,
+// donc iOS mute silencieusement la sortie audio et coupe la session.
 //
-// Ce module fournit :
-//   • armIosAudio() — SYNCHRONE, à appeler dans l'onClick avant tout await.
-//     Crée un AudioContext partagé, lance un oscillateur inaudible pour
-//     l'empêcher de re-suspendre, prépare une <audio playsinline> qui va
-//     accueillir la piste WebRTC distante, ping speechSynthesis, unlock.
-//   • acquireWakeLock() / releaseWakeLock() — empêche l'écran de s'éteindre.
-//   • installVisibilityResume() — resume l'AudioContext au retour foreground.
-//   • isIosPWA() — helper de détection.
+// ⚠️ PROBLÈME CRITIQUE iOS Safari / PWA (juillet 2026) :
+//   Dès qu'un getUserMedia({audio:true}) est actif (LiveKit ouvre le micro),
+//   iOS bascule la session audio en catégorie "PlayAndRecord" et route par
+//   défaut la sortie vers l'ÉCOUTEUR (le petit haut-parleur du haut, celui
+//   des appels), PAS vers le haut-parleur principal. Résultat : la voix de
+//   l'agent est audible seulement si on colle l'oreille à l'écran, et le
+//   volume max n'y change rien (le volume "sonnerie" ≠ volume "média").
+//
+//   Fix officiel (WebKit) : `navigator.audioSession.type = 'play-and-record'`
+//   force le routage vers le haut-parleur principal en Safari 17.4+.
+//   Doit être appelé DANS le user-gesture, AVANT getUserMedia.
 // ══════════════════════════════════════════════════════════════════════════════
 
 let sharedCtx = null;
-let keepAliveOsc = null;
 let unlockAudioEl = null;
 let wakeLock = null;
 let visibilityHandlerInstalled = false;
@@ -39,45 +41,45 @@ export function isIosPWA() {
 
 /**
  * DOIT être appelé de façon 100% synchrone dans un user-gesture (onClick)
- * AVANT tout `await`. Débloque définitivement la sortie audio iOS.
+ * AVANT tout `await`. Débloque définitivement la sortie audio iOS ET force
+ * le routage vers le haut-parleur principal (pas l'écouteur).
  */
 export function armIosAudio() {
   try {
+    // 0) 🔊 FIX PRINCIPAL — Force la sortie sur le haut-parleur principal.
+    //    Sans ça, iOS 17+ route l'audio WebRTC vers l'écouteur (voice-chat)
+    //    et la voix de l'agent est quasi inaudible même au volume max.
+    //    Doit être défini AVANT getUserMedia + AVANT de créer l'AudioContext.
+    try {
+      if (typeof navigator !== "undefined" && navigator.audioSession) {
+        // 'play-and-record' + routing par défaut vers le haut-parleur (loud).
+        navigator.audioSession.type = "play-and-record";
+      }
+    } catch {}
+
     // 1) AudioContext partagé + resume synchrone
+    //    ⚠️ On NE crée PLUS d'oscillateur "keep-alive" : sur iOS, une source
+    //    Web Audio active en continu maintient la session audio en état
+    //    "voice-chat / earpiece" et casse le routage haut-parleur.
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (AudioCtx) {
       if (!sharedCtx || sharedCtx.state === "closed") {
         sharedCtx = new AudioCtx({ latencyHint: "interactive" });
       }
       if (sharedCtx.state === "suspended") {
-        // Ne pas await — on est dans un handler synchrone
         sharedCtx.resume().catch(() => {});
-      }
-
-      // 2) Oscillateur sub-audible : empêche iOS de re-suspendre le contexte
-      //    dès qu'il n'y a plus de source active
-      if (!keepAliveOsc) {
-        try {
-          const osc = sharedCtx.createOscillator();
-          const gain = sharedCtx.createGain();
-          gain.gain.value = 0.0001; // inaudible
-          osc.frequency.value = 20;  // sub-bass
-          osc.connect(gain).connect(sharedCtx.destination);
-          osc.start();
-          keepAliveOsc = osc;
-        } catch {}
       }
     }
 
-    // 3) <audio playsinline autoplay> primé — iOS n'autorise l'audio HTML
-    //    distant que si l'élément a été "touché" par un user-gesture. On
-    //    lance un play() sur un blob silencieux pour poser le flag.
+    // 2) <audio playsinline autoplay> primé — iOS n'autorise l'audio HTML
+    //    distant que si l'élément a été "touché" par un user-gesture.
     if (!unlockAudioEl) {
       unlockAudioEl = document.createElement("audio");
       unlockAudioEl.setAttribute("playsinline", "");
       unlockAudioEl.setAttribute("webkit-playsinline", "");
       unlockAudioEl.autoplay = true;
       unlockAudioEl.muted = false;
+      unlockAudioEl.volume = 1.0;
       unlockAudioEl.style.display = "none";
       // WAV mono 8kHz d'1 sample silencieux (base64)
       unlockAudioEl.src =
@@ -87,7 +89,7 @@ export function armIosAudio() {
     const p = unlockAudioEl.play();
     if (p && typeof p.catch === "function") p.catch(() => {});
 
-    // 4) speechSynthesis ping — débloque la file TTS iOS au cas où
+    // 3) speechSynthesis ping — débloque la file TTS iOS au cas où
     try {
       if (window.speechSynthesis) {
         const u = new SpeechSynthesisUtterance("");
@@ -96,7 +98,7 @@ export function armIosAudio() {
       }
     } catch {}
 
-    // 5) Installer le resume auto sur visibilitychange (une seule fois)
+    // 4) Installer le resume auto sur visibilitychange (une seule fois)
     installVisibilityResume();
   } catch (e) {
     console.warn("[iosVoiceHardening] armIosAudio failed:", e);
@@ -108,13 +110,23 @@ export function installVisibilityResume() {
   visibilityHandlerInstalled = true;
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible") return;
+    // Ré-affirme le routage haut-parleur au retour foreground
+    try {
+      if (navigator.audioSession) {
+        navigator.audioSession.type = "play-and-record";
+      }
+    } catch {}
     if (sharedCtx && sharedCtx.state === "suspended") {
       sharedCtx.resume().catch(() => {});
     }
-    // Ré-acquérir le wake lock (iOS le libère au blur)
     if (wakeLock === "wanted") acquireWakeLock().catch(() => {});
   });
   window.addEventListener?.("pageshow", () => {
+    try {
+      if (navigator.audioSession) {
+        navigator.audioSession.type = "play-and-record";
+      }
+    } catch {}
     if (sharedCtx && sharedCtx.state === "suspended") {
       sharedCtx.resume().catch(() => {});
     }
@@ -130,7 +142,6 @@ export async function acquireWakeLock() {
     const sentinel = await navigator.wakeLock.request("screen");
     wakeLock = sentinel;
     sentinel.addEventListener?.("release", () => {
-      // iOS libère au blur — on remarquera l'état "wanted" pour le reprendre
       if (wakeLock === sentinel) wakeLock = "wanted";
     });
     return sentinel;
@@ -156,7 +167,6 @@ export function getSharedAudioContext() {
 
 /**
  * Choisit le type de connexion optimal selon batterie / réseau.
- * WebRTC = latence basse mais coûteux. WebSocket = plus robuste sur mauvais réseau.
  */
 export async function pickConnectionType() {
   try {
@@ -174,9 +184,6 @@ export async function pickConnectionType() {
   return "webrtc";
 }
 
-/**
- * Feedback haptique (silencieux si non supporté).
- */
 export function haptic(pattern = 15) {
   try {
     if (navigator.vibrate) navigator.vibrate(pattern);

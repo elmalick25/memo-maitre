@@ -17,6 +17,7 @@
 
 
 import { useCallback, useMemo, useState } from "react";
+import { armIosAudio } from "./lib/iosVoiceHardening";
 
 // ── Compat: prompts et voix (utilisés ailleurs pour LiveKit à venir) ─────────
 export const ELEVENLABS_AGENTS = [];
@@ -131,6 +132,9 @@ export default function AgentVoiceBar({ agent, onStart, variant = "default" } = 
       agent.stop?.();
       return;
     }
+    // 🔑 MOBILE FIX: débloque l'AudioContext iOS/Android de façon SYNCHRONE
+    // avant tout await. Doit être la 1ère instruction dans le handler onClick.
+    armIosAudio();
     try { onStart?.(); } catch (e) { console.warn("[AgentVoiceBar] onStart threw", e); }
     // Si onStart n'a pas déclenché start() lui-même (certains callers le font),
     // on le fait ici pour être sûr d'ouvrir la session LiveKit.
