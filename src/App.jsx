@@ -14,6 +14,30 @@ const MemoMaster = lazy(() => import('./MemoMaster'))
 import ErrorBoundary from './components/ErrorBoundary'
 import OfflineBanner from './components/OfflineBanner'
 import UpdatePrompt from './components/UpdatePrompt'
+import BetaChat from './components/BetaChat'
+
+// ── Contrôle d'accès : propriétaire + bêta-testeurs autorisés ──
+// L'accès reste réservé, MAIS on peut désormais autoriser d'autres personnes
+// par leur adresse e-mail Google via la variable VITE_ALLOWED_EMAILS
+// (liste séparée par des virgules). Chaque personne autorisée obtient sa
+// PROPRE vue : les données sont rangées dans Firestore sous users/{uid},
+// donc personne ne voit les fiches d'un autre.
+//   Ex : VITE_ALLOWED_EMAILS="ami@gmail.com, testeur@outlook.com"
+const OWNER_UID = import.meta.env.VITE_OWNER_UID
+const ALLOWED_EMAILS = String(import.meta.env.VITE_ALLOWED_EMAILS || '')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean)
+
+function isAuthorizedUser(user) {
+  if (!user) return false
+  // Propriétaire (par UID) toujours autorisé.
+  if (OWNER_UID && user.uid === OWNER_UID) return true
+  // Bêta-testeurs autorisés par e-mail.
+  const email = String(user.email || '').toLowerCase()
+  if (email && ALLOWED_EMAILS.includes(email)) return true
+  return false
+}
 
 // ── Détection PWA / mobile ──
 // signInWithPopup est bloqué/instable dans une PWA installée (display: standalone)
@@ -58,8 +82,7 @@ function App() {
     getRedirectResult(auth)
       .then((res) => {
         if (!res) return
-        const OWNER_UID = import.meta.env.VITE_OWNER_UID
-        if (res.user && res.user.uid === OWNER_UID) {
+        if (res.user && isAuthorizedUser(res.user)) {
           setFbUser(res.user.uid)
         }
       })
@@ -71,14 +94,12 @@ function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (cancelled) return
 
-      const OWNER_UID = import.meta.env.VITE_OWNER_UID
-
-      // Utilisateur connecté mais ce n'est pas le propriétaire → refus.
-      if (user && OWNER_UID && user.uid !== OWNER_UID) {
+      // Utilisateur connecté mais NON autorisé (ni propriétaire, ni bêta-testeur) → refus.
+      if (user && !isAuthorizedUser(user)) {
         try { await auth.signOut() } catch { }
         setAccessDenied(true)
         setAuthChecking(false)
-        setLoginError("Ce compte Google n'est pas autorisé.")
+        setLoginError("Ce compte Google n'est pas autorisé à accéder à l'application.")
         return
       }
 
@@ -91,7 +112,7 @@ function App() {
         return
       }
 
-      // ✅ Auth OK + bon propriétaire : on aligne le UID interne et on démarre.
+      // ✅ Auth OK + utilisateur autorisé : on aligne le UID interne (vue isolée) et on démarre.
       setFbUser(user.uid)
       setAccessDenied(false)
       setAuthChecking(false)
@@ -158,13 +179,12 @@ function App() {
         const result = await startLogin()
         // Cas popup : on vérifie tout de suite. Cas redirect : la page recharge.
         if (result && result.user) {
-          const OWNER_UID = import.meta.env.VITE_OWNER_UID
-          if (result.user.uid === OWNER_UID) {
+          if (isAuthorizedUser(result.user)) {
             setFbUser(result.user.uid)
             window.location.reload()
           } else {
             await auth.signOut()
-            setLoginError("Ce compte Google n'est pas autorisé.")
+            setLoginError("Ce compte Google n'est pas autorisé à accéder à l'application.")
           }
         }
       } catch (e) {
@@ -207,7 +227,7 @@ function App() {
         <div style={{ fontSize: 48 }}>🔒</div>
         <div style={{ fontSize: 22, fontWeight: 700 }}>Connexion requise</div>
         <div style={{ fontSize: 14, color: '#888', marginBottom: '8px', maxWidth: 420 }}>
-          Connectez-vous avec votre compte Google propriétaire pour synchroniser vos fiches sur cet appareil.
+          Connectez-vous avec un compte Google autorisé pour accéder à vos fiches. Chaque compte autorisé dispose de son propre espace privé.
         </div>
         <button
           onClick={handleLogin}
@@ -245,6 +265,7 @@ function App() {
         </Suspense>
         <OfflineBanner />
         <UpdatePrompt />
+        <BetaChat />
       </ErrorBoundary>
     </DatabaseProvider>
   )

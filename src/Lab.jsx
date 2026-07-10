@@ -2,6 +2,7 @@
 // Communique avec MemoMaster via onAddCards callback
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import GodTierContent from "./components/GodTierContent";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { callGeminiGenerateContent, getGeminiKeyCount, isGeminiLikelyUnavailable } from "./lib/geminiClient";
 import { aiCall } from "./lib/aiRouter";
 import { today as localToday, addDays } from "./utils/dateUtils";
@@ -355,6 +356,53 @@ function safeJsonParse(raw) {
   });
   return JSON.parse(jsonStr);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🛡️ Anti-crash : coercition des champs de fiche renvoyés par l'IA
+// ────────────────────────────────────────────────────────────────────────────
+// L'IA renvoie parfois un champ (front/back/…) sous forme d'OBJET
+// (ex: {definition, types, contexte}) au lieu d'une chaîne. Rendre un objet
+// comme enfant React déclenche l'erreur #31 et fait planter toute la section.
+// toText() garantit une chaîne sûre dans tous les cas.
+export function toText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map(toText).filter(Boolean).join("\n");
+  if (typeof v === "object") {
+    if (typeof v.text === "string") return v.text;
+    if (typeof v.value === "string") return v.value;
+    if (typeof v.content === "string") return v.content;
+    try {
+      return Object.entries(v)
+        .map(([k, val]) => `**${k}** : ${toText(val)}`)
+        .filter(Boolean)
+        .join("\n");
+    } catch {
+      return "";
+    }
+  }
+  return String(v);
+}
+
+// Normalise une fiche brute IA → tous les champs affichables deviennent des chaînes.
+function normalizeCard(c) {
+  const card = c && typeof c === "object" ? c : {};
+  return {
+    ...card,
+    front: toText(card.front) || "Fiche",
+    back: toText(card.back),
+    hint: toText(card.hint),
+    keyword: toText(card.keyword),
+    example: toText(card.example),
+    type: typeof card.type === "string" ? card.type : "qa",
+  };
+}
+
+// Modèle Gemini par défaut (corrige l'ancien "GEMINI_MODEL is not defined").
+const GEMINI_MODEL =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) ||
+  "gemini-2.0-flash-lite";
 
 async function callGroq(systemPrompt, userMsg, maxTokens = 4000, isJson = false) {
   // Délègue à aiRouter (qui utilise le proxy)
@@ -1058,9 +1106,9 @@ function ReserveList({ reserveCards, addFromReserve, setShowReservePanel, theme,
                           {reserveSelected.has(i) && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{card.front}</div>
+                          <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{toText(card.front)}</div>
                           <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.5 }}>
-                            {(card.back || "").substring(0, 120)}{(card.back || "").length > 120 ? "..." : ""}
+                            {toText(card.back).substring(0, 120)}{toText(card.back).length > 120 ? "..." : ""}
                           </div>
                           <div style={{ fontSize: 10, color: activeColor, marginTop: 6, fontWeight: 700 }}>
                             {card.source ? `${card.source} · ` : ""}Ajouté le {card.reservedAt ? new Date(card.reservedAt).toLocaleDateString("fr-FR") : "—"}
@@ -1314,11 +1362,9 @@ Réponds UNIQUEMENT en JSON valide, sans markdown autour :
           true
         );
         const parsed = safeJsonParse(raw);
-        const cards = (parsed.cards || []).map(c => ({
-          ...c,
+        const cards = (Array.isArray(parsed?.cards) ? parsed.cards : []).map(c => ({
+          ...normalizeCard(c),
           category: pdfModule,
-          keyword: c.keyword || "",
-          type: c.type || "qa",
           source: "pdf",
         }));
         allCards.push(...cards);
@@ -1335,8 +1381,8 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
             true
           );
           const parsed2 = safeJsonParse(raw2);
-          const cards2 = (parsed2.cards || []).map(c => ({
-            ...c, category: pdfModule, keyword: c.keyword || "", type: c.type || "qa", source: "pdf",
+          const cards2 = (Array.isArray(parsed2?.cards) ? parsed2.cards : []).map(c => ({
+            ...normalizeCard(c), category: pdfModule, source: "pdf",
           }));
           allCards.push(...cards2);
         } catch (e2) {
@@ -1566,16 +1612,19 @@ ${resSummary.slice(0, 8000)}`;
 
       const parsed = JSON.parse(jsonStr);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const cards = parsed.map(c => ({
+        const cards = parsed.map(c => {
+          const n = normalizeCard(c);
+          return {
           id: crypto.randomUUID(),
-          front: c.front,
-          back: c.back,
+          front: n.front,
+          back: n.back,
           level: 0,
           interval: 1,
           easeFactor: 2.5,
           deckId: "default",
           tags: ["résumé-ia"]
-        }));
+          };
+        });
         if (onAddCards) {
           onAddCards(cards);
           toast(`✅ ${cards.length} fiches ajoutées au deck !`);
@@ -1923,14 +1972,18 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       }
       const cardsData = safeJsonParse(step2);
 
-      const cards = (cardsData.cards || []).map(c => ({
-        ...c,
-        category: targetModule,
-        image: photo.dataUrl,
-        keyword: c.keyword || "",
-        type: c.type || "qa",
-        imageType: info.imageType,
-      }));
+      const rawCards = Array.isArray(cardsData?.cards)
+        ? cardsData.cards
+        : (Array.isArray(cardsData) ? cardsData : []);
+      const cards = rawCards.map(c => {
+        const n = normalizeCard(c);
+        return {
+          ...n,
+          category: targetModule,
+          image: photo.dataUrl,
+          imageType: info.imageType,
+        };
+      });
 
       updatePhoto(photo.id, {
         status: "done", imageType: info.imageType,
@@ -2257,6 +2310,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               {/* Panneau droit : Cascade de fiches */}
               <div style={{ flex: "1 1 60%", minWidth: 320, display: "flex", flexDirection: "column", gap: 14 }}>
                 {pdfCards.map((card, i) => (
+                  <ErrorBoundary key={i} silent>
                   <div
                     key={i}
                     onMouseEnter={() => setXrayKeyword(card.keyword || card.front)}
@@ -2298,10 +2352,10 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         RECTO — Question
                       </div>
                       <div style={{ fontWeight: 800, color: theme.text, fontSize: 15, lineHeight: 1.5 }}>
-                        {card.front}
+                        {toText(card.front)}
                         {card.keyword && (
                           <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: `${activeColor}15`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${activeColor}40`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
-                            🔑 {card.keyword}
+                            🔑 {toText(card.keyword)}
                           </span>
                         )}
                       </div>
@@ -2315,11 +2369,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       </div>
                       {card.hint && (
                         <div style={{ marginTop: 10, fontSize: 12, color: "#B45309", background: "#FFFBEB", borderRadius: 8, padding: "8px 12px", border: "1px solid #FDE68A" }}>
-                          💡 {card.hint}
+                          💡 {toText(card.hint)}
                         </div>
                       )}
                     </div>
                   </div>
+                  </ErrorBoundary>
                 ))}
               </div>
             </div>
@@ -3145,6 +3200,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             </div>
 
                             {photo.cards.map((card, ci) => (
+                              <ErrorBoundary key={ci} silent>
                               <div
                                 key={ci}
                                 onMouseEnter={() => setXrayKeyword(card.keyword || card.front)}
@@ -3160,10 +3216,10 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                 <div style={{ padding: "14px 16px", borderBottom: `1px solid ${theme.border}` }}>
                                   <div style={{ fontSize: 10, fontWeight: 900, color: activeColor, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>RECTO</div>
                                   <div style={{ fontSize: 14, fontWeight: 800, color: theme.text, lineHeight: 1.4 }}>
-                                    {card.front}
+                                    {toText(card.front)}
                                     {card.keyword && (
                                       <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: `${activeColor}15`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${activeColor}40`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
-                                        🔑 {card.keyword}
+                                        🔑 {toText(card.keyword)}
                                       </span>
                                     )}
                                   </div>
@@ -3175,11 +3231,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                   </div>
                                   {card.hint && (
                                     <div style={{ marginTop: 8, fontSize: 11, color: "#B45309", background: "#FFFBEB", borderRadius: 8, padding: "6px 10px", border: "1px solid #FDE68A" }}>
-                                      💡 {card.hint}
+                                      💡 {toText(card.hint)}
                                     </div>
                                   )}
                                 </div>
                               </div>
+                              </ErrorBoundary>
                             ))}
                           </div>
                         </div>

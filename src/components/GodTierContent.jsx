@@ -12,7 +12,28 @@ import React from "react";
 import RichText from "./RichText";
 
 export default function GodTierContent({ text, theme, isDarkMode: explicitIsDarkMode }) {
-  if (!text) return null;
+  // 🛡️ Anti-crash : l'IA renvoie parfois un objet/tableau au lieu d'une chaîne.
+  // On coerce en chaîne pour éviter que RichText/react-markdown ne plante.
+  let safeText = text;
+  if (safeText != null && typeof safeText !== "string") {
+    try {
+      if (Array.isArray(safeText)) {
+        safeText = safeText.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join("\n");
+      } else if (typeof safeText === "object") {
+        safeText =
+          typeof safeText.text === "string"
+            ? safeText.text
+            : Object.entries(safeText)
+                .map(([k, v]) => `**${k}** : ${typeof v === "string" ? v : JSON.stringify(v)}`)
+                .join("\n");
+      } else {
+        safeText = String(safeText);
+      }
+    } catch {
+      safeText = "";
+    }
+  }
+  if (!safeText) return null;
   // Heuristique pour le mode sombre (utilisée en fallback)
   const bg = theme?.bg || theme?.cardBg || "";
   let isDarkMode = true;
@@ -32,7 +53,7 @@ export default function GodTierContent({ text, theme, isDarkMode: explicitIsDark
   }
   return (
     <div style={{ width: "100%", color: theme?.text || "inherit" }}>
-      <RichText content={text} isDarkMode={isDarkMode} style={{ color: theme?.text }} />
+      <RichText content={safeText} isDarkMode={isDarkMode} style={{ color: theme?.text }} />
     </div>
   );
 }

@@ -24,23 +24,19 @@ const IS_DEV = typeof import.meta !== "undefined" && import.meta.env?.DEV;
 async function fetchViaProxy(url) {
   const baseProxies = [
     {
-      name: "allorigins",
-      build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-      parse: async (r) => {
-        const j = await r.json();
-        if (!j.contents) throw new Error("allorigins: empty contents");
-        return j.contents;
-      }
-    },
-    {
-      name: "corsproxy",
-      build: (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+      name: "CorsProxy",
+      build: (u) => `https://corsproxy.io/?${u}`,
       parse: async (r) => r.text()
     },
     {
-      name: "r.jina.ai",
-      build: (u) => `https://r.jina.ai/${u}`,
-      parse: async (r) => r.text(),
+      name: "ThingProxy",
+      build: (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+      parse: async (r) => r.text()
+    },
+    {
+      name: "AllOrigins",
+      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      parse: async (r) => r.text()
     },
     {
       name: "rss2json",
@@ -842,7 +838,7 @@ ${batch.map(i => `{"id":"${i.id}","title":"${i.title}","desc":"${(i.description|
     const all = [];
     await Promise.allSettled(sources.map(async ([name, p]) => {
       try { all.push(...(await p)); }
-      catch (e) { failed.push(name); console.warn(`RSS [${name}]:`, e?.message); }
+      catch (e) { failed.push(name); console.debug(`RSS [${name}]:`, e?.message); }
       finally { done++; setProgress(Math.round((done / total) * 100)); }
     }));
     // ✅ Phase 1.1 — Déduplication par URL canonique (évite les doublons cross-sources)
@@ -1035,6 +1031,10 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     for (let i = 0; i < toProcess.length; i++) {
       const item = toProcess[i];
       if (isGeminiLikelyUnavailable()) break;
+      
+      // Delay to prevent rate limiting (429 Too Many Requests)
+      if (i > 0) await new Promise(r => setTimeout(r, 2000));
+      
       try {
         let pageContent = "";
         try {
@@ -1393,6 +1393,9 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         @media(max-width:480px){
           .tiv-hero-title{font-size:17px!important}
           .tiv-modal-inner{max-height:92vh!important;border-radius:20px 20px 0 0!important}
+          .tiv-btn-refresh{padding:7px 10px}
+          .tiv-btn-refresh-label{display:none}
+          .tiv-topbar-controls{width:100%;justify-content:flex-end;margin-top:4px}
         }
       `}</style>
 
@@ -1404,7 +1407,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         borderBottom: "1px solid var(--mm-border)",
       }}>
         {/* Top bar */}
-        <div style={{ padding: "12px 16px 0", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ padding: "12px 16px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {/* Logo + title */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
             <div style={{
@@ -1437,7 +1440,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           </div>
 
           {/* Controls */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <div className="tiv-topbar-controls" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
             <button onClick={() => setShowSourcesModal(true)} style={{
               background: "rgba(255,255,255,.04)", border: "1px solid var(--mm-border)",
               color: "var(--mm-fg-muted)", borderRadius: 20, padding: "6px 12px", cursor: "pointer",
@@ -1466,7 +1469,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             {/* Refresh */}
             <button onClick={() => fetchAll(false)} disabled={loading} className="tiv-btn-refresh">
               <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
-              <span>Regénérer</span>
+              <span className="tiv-btn-refresh-label">Regénérer</span>
             </button>
           </div>
         </div>

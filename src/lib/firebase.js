@@ -106,7 +106,7 @@ async function shardedGet(key) {
       
       if (isDirty) {
         if (serverTs > localTs) {
-          console.warn(`[storage] CONFLIT: Local dirty écrase un serveur plus récent pour ${key}. Backup serveur créé.`);
+          console.debug(`[storage] CONFLIT: Local dirty écrase un serveur plus récent pour ${key}. Backup serveur créé.`);
           const { chunkCount } = idxSnap.data();
           const chunkSnaps = await Promise.all(
             Array.from({ length: chunkCount }, (_, i) => withTimeout(getDoc(doc(db, "users", uid, "data", key + "__chunk_" + i))))
@@ -229,7 +229,7 @@ async function simpleGet(key) {
         
         if (isDirty) {
           if (serverTs > localTs) {
-            console.warn(`[storage] CONFLIT: Local dirty écrase un serveur plus récent pour ${key}. Backup serveur créé.`);
+            console.debug(`[storage] CONFLIT: Local dirty écrase un serveur plus récent pour ${key}. Backup serveur créé.`);
             const val = snap.data().value !== undefined ? snap.data().value : null;
             if (val !== null) lsSet(key + "_conflict", val, serverTs);
           }

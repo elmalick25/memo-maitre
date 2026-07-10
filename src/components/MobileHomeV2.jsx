@@ -199,12 +199,9 @@ export default function MobileHomeV2({
           <div className="mhv2-tile-value">{stats.mastery ?? 0}<span style={{ fontSize: "0.8rem" }}>%</span></div>
           <div className="mhv2-tile-label">Maîtrise</div>
         </button>
-        <button type="button" className="mhv2-tile" onClick={() => onOpenStats?.("exam")}>
-          <div className="mhv2-tile-value">
-            {stats.nextExamDays != null ? stats.nextExamDays : "—"}
-            {stats.nextExamDays != null && <span style={{ fontSize: "0.8rem" }}>j</span>}
-          </div>
-          <div className="mhv2-tile-label">Examen</div>
+        <button type="button" className="mhv2-tile" onClick={() => window.dispatchEvent(new CustomEvent('open_beta_chat'))}>
+          <div className="mhv2-tile-value" style={{ marginTop: '0.1rem', marginBottom: '4px' }}>💬</div>
+          <div className="mhv2-tile-label">Discussion</div>
         </button>
       </div>
 
