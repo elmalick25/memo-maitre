@@ -8,6 +8,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage, fbStorage, getFbUser, onAuthReady } from "./lib/firebase";
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
+import { ensureMasteryStage } from "./lib/masteryStages";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 import { fsrs, fsrsR } from "./lib/fsrs";
 import { getAudioObjectUrl } from "./lib/audioStore";
@@ -1105,7 +1106,9 @@ export default function MemoMaster() {
         ]);
 
         // ✅ Toutes les données sont récupérées AVANT de toucher aux états
-        const { repaired: expsRepaired, count: dateFixCount } = repairCardDates(exps || []);
+        const { repaired: expsRepairedRaw, count: dateFixCount } = repairCardDates(exps || []);
+        // Phase 1 — rétro-compat : chaque fiche reçoit un masteryStage dérivé si absent.
+        const expsRepaired = expsRepairedRaw.map(ensureMasteryStage);
         if (dateFixCount > 0) console.info(`[dateRepair] ${dateFixCount} fiches avec dates anormales corrigées.`);
         setExpressions(expsRepaired);
         setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats), expsRepaired));
@@ -1156,7 +1159,7 @@ export default function MemoMaster() {
             storage.get("projects_v1"),
             storage.get("badges_viewed_count"),
           ]);
-           const expsRepaired2 = repairCardDates(exps || []).repaired;
+           const expsRepaired2 = repairCardDates(exps || []).repaired.map(ensureMasteryStage);
            setExpressions(expsRepaired2);
           // FIX : ne jamais passer `undefined` à setCategories — sinon les
           // composants qui appellent categories.map / .filter plantent.
@@ -1181,7 +1184,7 @@ export default function MemoMaster() {
       try {
         const exps = await loadInitialExpressionsFromWatermelon();
         const { repaired } = repairCardDates(exps || []);
-        setExpressions(repaired);
+        setExpressions(repaired.map(ensureMasteryStage));
         console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
       } catch (e) {
         console.warn('[sync] reload après cards_synced KO:', e);

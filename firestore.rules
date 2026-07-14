@@ -12,7 +12,20 @@ service cloud.firestore {
       allow update: if request.auth != null; // Pour les votes
       allow delete: if request.auth != null && request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3';
     }
+    // Espace de stockage privé par utilisateur
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    // Espace de discussion pour les bêta-testeurs (le testeur et le propriétaire y ont accès)
+    match /chats/{testerUid} {
+      allow read, write: if request.auth != null && (request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
+      
+      match /messages/{msgId} {
+        allow read, write: if request.auth != null && (request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
+      }
+    }
 
+    // Le reste est restreint au propriétaire par défaut (si d'autres documents existent à la racine)
     match /{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3';
     }

@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb'
 
 export const mySchema = appSchema({
-  version: 1,
+  version: 2,
   tables: [
     tableSchema({
       name: 'expressions',
@@ -22,6 +22,10 @@ export const mySchema = appSchema({
         { name: 'interval', type: 'number', isOptional: true },
         { name: 'repetitions', type: 'number', isOptional: true },
         { name: 'review_history', type: 'string', isOptional: true }, // JSON array
+        // Phase 1 — production active (additifs, tous optionnels, aucune perte)
+        { name: 'mastery_stage', type: 'string', isOptional: true },
+        { name: 'productive_uses', type: 'string', isOptional: true }, // JSON array
+        { name: 'last_productive_use_at', type: 'number', isOptional: true },
       ]
     }),
   ]

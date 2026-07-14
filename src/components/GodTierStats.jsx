@@ -7,6 +7,8 @@ import {
 } from 'chart.js';
 import { Bar, Line, Doughnut, PolarArea, Radar } from 'react-chartjs-2';
 import { FsrsForecastChart, ComparisonVs30Days } from "../MemoMasterUpgrades";
+import StatsInsights from "./StatsInsights";
+import { englishCategoryFilter } from "../hooks/useProductiveUse";
 
 ChartJS.register(
   CategoryScale, LinearScale, BarElement,
@@ -138,7 +140,19 @@ export default function GodTierStats({
         </div>
       </motion.div>
 
-      
+      {/* ─── INSIGHTS NARRATIFS + PRODUCTION ACTIVE (Phase 5) ─── */}
+      <motion.div variants={itemVars}>
+        <StatsInsights
+          isDarkMode={isDarkMode}
+          theme={theme}
+          expressions={expressions}
+          sessionHistory={statsSessionHistory}
+          stats={stats}
+          masteredCount={masteredCount}
+          productionCategoryFilter={englishCategoryFilter}
+        />
+      </motion.div>
+
       {/* ─── REPORT IA (SI ACTIF) ─── */}
       {statsAiReport && (
         <motion.div variants={itemVars} style={{ 

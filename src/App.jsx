@@ -1,7 +1,7 @@
 import { Suspense, lazy, useEffect, useState, useRef } from 'react'
 import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
-import { migrateFromLocalStorage } from './lib/db/migration'
+import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
 import { syncWithFirebase } from './lib/db/sync'
 import { auth, provider, setFbUser } from './lib/firebase'
 import {
@@ -119,7 +119,20 @@ function App() {
 
       if (!initStarted.current) {
         initStarted.current = true
+        if (localStorage.getItem("memo_db_needs_reset") === "true") {
+          try {
+            await database.write(async () => {
+              await database.unsafeResetDatabase();
+            });
+            localStorage.removeItem("memo_db_needs_reset");
+            console.info("[db] Base locale réinitialisée pour le nouvel utilisateur.");
+          } catch (e) {
+            console.error("Erreur reset DB:", e);
+          }
+        }
         try { await migrateFromLocalStorage() } catch (e) { console.warn('Migration KO:', e) }
+        // Récupération one-shot des révisions SM-2 orphelines (ancien onglet SRS)
+        try { await migrateOrphanSRSData() } catch (e) { console.warn('Migration SRS→FSRS KO:', e) }
         try { await syncWithFirebase() } catch (e) { console.warn('Sync init KO:', e) }
         if (cancelled) return
         setDbReady(true)

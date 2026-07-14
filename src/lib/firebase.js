@@ -20,12 +20,27 @@ const FIREBASE_CONFIG = {
 // ─── FB_USER : getter dynamique (FIX clé — évite la capture statique) ────────
 // On ne stocke plus la valeur dans un export primitif figé au moment de l'import.
 // Tous les accès passent par getFbUser() qui lit toujours la valeur courante.
-let _fbUser = localStorage.getItem("memo_user_uid") || import.meta.env.VITE_OWNER_UID || "";
+// Ne pas retomber sur VITE_OWNER_UID : un bêta-testeur non encore authentifié
+// écrirait alors sous users/{OWNER_UID}. On attend explicitement setFbUser().
+let _fbUser = localStorage.getItem("memo_user_uid") || "";
 export const getFbUser = () => _fbUser;
 
 // Compatibilité rétrograde supprimée : getFbUser() doit être utilisé exclusivement.
 
 export const setFbUser = (uid) => {
+  const previousUid = localStorage.getItem("memo_user_uid");
+  if (previousUid && previousUid !== uid) {
+    console.warn(`[storage] Changement d'utilisateur détecté (${previousUid} -> ${uid}). Nettoyage des données locales.`);
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("memomaitre_")) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+    localStorage.setItem("memo_db_needs_reset", "true");
+  }
   _fbUser = uid;
   localStorage.setItem("memo_user_uid", uid);
   console.info("[firebase] FB_USER →", uid);

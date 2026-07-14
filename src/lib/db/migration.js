@@ -89,3 +89,118 @@ export async function migrateFromLocalStorage() {
     isMigrating = false
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// migrateOrphanSRSData — récupère les révisions faites via l'ancien onglet SRS
+// (SM-2, store séparé "srs_data_v1") qui n'auraient PAS d'entrée équivalente
+// dans expression.reviewHistory. Ne touche NI interval NI nextReview des fiches
+// (on ne rejoue pas un scheduling FSRS rétroactif fictif — on préserve
+// uniquement l'historique brut pour les stats).
+//
+// Idempotent : protégée par la clé 'migrated_srs_v1_done'.
+// ══════════════════════════════════════════════════════════════════════════════
+
+const ORPHAN_SRS_MIGRATION_KEY = 'migrated_srs_v1_done'
+const SRS_LEGACY_LS_KEY = 'memomaitre_srs_data_v1'  // = LS_PREFIX + "srs_data_v1"
+
+// Convert SM-2 score (0..5) → FSRS q (0/1/3/5) pour uniformiser reviewHistory.
+function sm2ScoreToQ(score) {
+  if (typeof score !== 'number') return 3
+  if (score <= 0) return 0
+  if (score <= 2) return 1
+  if (score <= 4) return 3
+  return 5
+}
+
+export async function migrateOrphanSRSData() {
+  if (typeof localStorage === 'undefined') return
+  if (localStorage.getItem(ORPHAN_SRS_MIGRATION_KEY) === 'true') return
+
+  let srsStore
+  try {
+    const raw = localStorage.getItem(SRS_LEGACY_LS_KEY)
+    if (!raw) {
+      // Rien à migrer — on marque quand même pour ne pas re-scanner à chaque boot
+      localStorage.setItem(ORPHAN_SRS_MIGRATION_KEY, 'true')
+      console.info('[Migration SRS→FSRS] Aucun store srs_data_v1 trouvé, rien à migrer.')
+      return
+    }
+    srsStore = JSON.parse(raw)
+  } catch (e) {
+    console.warn('[Migration SRS→FSRS] Lecture srs_data_v1 impossible :', e)
+    return
+  }
+
+  if (!srsStore || typeof srsStore !== 'object') {
+    localStorage.setItem(ORPHAN_SRS_MIGRATION_KEY, 'true')
+    return
+  }
+
+  const cardIds = Object.keys(srsStore)
+  if (cardIds.length === 0) {
+    localStorage.setItem(ORPHAN_SRS_MIGRATION_KEY, 'true')
+    console.info('[Migration SRS→FSRS] Store srs_data_v1 vide.')
+    return
+  }
+
+  const collection = database.get('expressions')
+  let cardsTouched = 0
+  let entriesMigrated = 0
+
+  try {
+    await database.write(async () => {
+      for (const cardId of cardIds) {
+        const legacy = srsStore[cardId]
+        if (!legacy || !Array.isArray(legacy.history) || legacy.history.length === 0) continue
+
+        // Récupérer la fiche depuis WatermelonDB
+        let record
+        try {
+          record = await collection.find(cardId)
+        } catch {
+          // La fiche n'existe plus → on ignore silencieusement
+          continue
+        }
+
+        const currentHistory = Array.isArray(record.reviewHistory) ? record.reviewHistory : []
+        // Index des dates déjà présentes dans reviewHistory (peu importe la source)
+        const knownDates = new Set(currentHistory.map(h => h && h.date).filter(Boolean))
+
+        const missing = legacy.history
+          .filter(h => h && h.date && !knownDates.has(h.date))
+          .map(h => ({
+            date: h.date,
+            q: sm2ScoreToQ(h.score),
+            newLevel: null,                    // inconnu depuis SM-2
+            interval: typeof h.interval === 'number' ? h.interval : 1,
+            migratedFromSM2: true,
+          }))
+
+        if (missing.length === 0) continue
+
+        const merged = [...currentHistory, ...missing]
+          .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+
+        await record.update(exp => {
+          exp.reviewHistory = merged
+          // NE PAS toucher : interval, nextReview, stability, difficulty, level
+        })
+
+        cardsTouched += 1
+        entriesMigrated += missing.length
+      }
+    })
+
+    // Nettoyage de la clé legacy — plus aucun consommateur (SRSEngine renommé en .legacy.js)
+    try { localStorage.removeItem(SRS_LEGACY_LS_KEY) } catch {}
+    localStorage.setItem(ORPHAN_SRS_MIGRATION_KEY, 'true')
+    console.info(
+      `[Migration SRS→FSRS] Terminée : ${cardsTouched} fiche(s) enrichie(s), ` +
+      `${entriesMigrated} révision(s) SM-2 orphelin(es) fusionnée(s) dans reviewHistory. ` +
+      `(interval/nextReview inchangés — historique brut préservé pour les stats)`
+    )
+  } catch (err) {
+    console.error('[Migration SRS→FSRS] Échec :', err)
+    // On NE marque PAS la clé → nouvelle tentative au prochain démarrage
+  }
+}

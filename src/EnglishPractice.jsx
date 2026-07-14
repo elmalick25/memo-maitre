@@ -17,7 +17,11 @@ import AgentCardToast from "./AgentCardToast";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 
 import { useNovaAgent } from "./lib/useNovaAgent";
-import { loadSRSData, recordReview, getSRSStats, getHeatmapData, getWeeklyStatsForClaude, formatTimeUntil, SCORE_BUTTONS, defaultCardState } from "./lib/SRSEngine";
+import { getSRSStats, getHeatmapData, getWeeklyStatsForClaude, formatTimeUntil, SCORE_BUTTONS } from "./lib/reviewStats";
+import { fsrs, fsrsFromProduction } from "./lib/fsrs";
+import { recordProductiveUse, getExpressionsNeedingProduction, computeMasteryStage } from "./lib/masteryStages";
+import useProductiveUse, { englishCategoryFilter } from "./hooks/useProductiveUse";
+import { today } from "./utils/dateUtils";
 import LiveNewsModule from "./components/LiveNewsModule";
 import { useXP } from "./hooks/useXP";
 import { useCEFR } from "./hooks/useCEFR";
@@ -27,6 +31,7 @@ import CoachNewsAnchor from "./components/CoachNewsAnchor";
 import BattleMode from "./components/BattleMode";
 import AccentTraining from "./components/AccentTraining";
 import SpeakItChallenge from "./components/SpeakItChallenge";
+import ProductionChallenge from "./components/ProductionChallenge";
 
 import { speakWithGroq } from "./lib/groqTTS";
 import LiveKitVoiceAssistant from "./components/LiveKitVoiceAssistant";
@@ -422,21 +427,37 @@ function EnglishPracticeInner({
   const { cefrState, isAnalyzing, addProduction, triggerAnalysis } = useCEFR(storage);
 
   // ── Mode "Active Recall" (Missions HUD) ─────────────────────────────────────
+  // Phase 5 — priorité aux fiches "recalled jamais produites", complétées par les
+  // fiches dues classiques s'il en manque pour arriver à 3.
+  // Phase 1 fix — utilise `ex.nextReview` (camelCase, l'état réel) et non
+  // `ex.next_review` qui existait dans le code initial et matchait toujours undefined :
+  // le filtre `isDue` était mort et seule la branche `isLearning` déclenchait des
+  // missions. Cohérent maintenant avec MemoMaster.jsx (nextReview partout).
   const targetExpressions = React.useMemo(() => {
     if (!expressions || !Array.isArray(expressions)) return [];
     const now = new Date();
-    return expressions
+    const isEnglish = (ex) => {
+      if (!ex?.category) return false;
+      const cat = ex.category.toLowerCase();
+      return cat.includes("anglais") || cat.includes("english") || ex.category.includes("🇬🇧");
+    };
+    const englishExps = expressions.filter(isEnglish);
+
+    // 1) Priorité absolue : fiches "recalled" jamais produites en contexte réel.
+    const needProduction = getExpressionsNeedingProduction(englishExps, 3);
+
+    // 2) Complément : fiches dues (nextReview <= now) ou encore en apprentissage.
+    const alreadyIn = new Set(needProduction.map(e => e.id));
+    const dueOrLearning = englishExps
+      .filter(ex => !alreadyIn.has(ex.id))
       .filter(ex => {
-        if (!ex.category) return false;
-        const cat = ex.category.toLowerCase();
-        if (!cat.includes("anglais") && !cat.includes("english") && !ex.category.includes("🇬🇧")) return false;
-        
-        const isDue = ex.next_review && new Date(ex.next_review) <= now;
-        const isLearning = ex.repetitions > 0 && ex.interval < 5;
+        const isDue = ex.nextReview && new Date(ex.nextReview) <= now;
+        const isLearning = (ex.repetitions ?? 0) > 0 && (ex.interval ?? 0) < 5;
         return isDue || isLearning;
       })
-      .sort((a, b) => new Date(a.next_review || 0).getTime() - new Date(b.next_review || 0).getTime())
-      .slice(0, 3);
+      .sort((a, b) => new Date(a.nextReview || 0).getTime() - new Date(b.nextReview || 0).getTime());
+
+    return [...needProduction, ...dueOrLearning].slice(0, 3);
   }, [expressions]);
 
   // ── États internes ──────────────────────────────────────────────────────────
@@ -707,15 +728,12 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   const [accentHistory, setAccentHistory] = useState([]); // [{ phrase, sound, score, date, transcript }]
   const [xrayRevealed, setXrayRevealed] = useState({}); // { [wordIndex]: bool }
 
-  // ── SRS (Spaced Repetition System) ──────────────────────────────────────────────────
-  const [srsData, setSrsData] = useState({});        // { [id]: CardState }
-  const [srsLoaded, setSrsLoaded] = useState(false);
+  // ── SRS (Spaced Repetition System) — source de vérité = expression directement (FSRS)
   const [srsReviewing, setSrsReviewing] = useState(null);      // expression being reviewed
   const [srsNarrative, setSrsNarrative] = useState("");         // Claude weekly analysis
   const [srsNarrLoading, setSrsNarrLoading] = useState(false);
   const [srsShowBack, setSrsShowBack] = useState(false);     // flip card
   const [srsFilter, setSrsFilter] = useState("overdue"); // "overdue" | "today" | "all"
-  const srsDataRef = useRef({});  // always current srsData for async callbacks
 
   // ── Role-Play Vocal (Web Speech API — zéro dep) ───────────────────────
   // Tous les états volatils dans des refs pour éviter re-renders pendant la boucle vocale.
@@ -1139,7 +1157,7 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   useEffect(() => {
     setContextSnapshotBuilder(() => {
       try {
-        const srsStats = getSRSStats(expressions, srsData);
+        const srsStats = getSRSStats(expressions);
         const profile = novaLearnerProfileRef.current || {};
         const continuity = summarizeForContinuity(2);
         return {
@@ -1212,7 +1230,31 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     }));
 
     return () => { unreg.forEach(u => u()); };
-  }, [expressions, srsData, targetExpressions, xpState, cefrState, practiceTopic, setExpressions, awardXP, showToast]);
+  }, [expressions, targetExpressions, xpState, cefrState, practiceTopic, setExpressions, awardXP, showToast]);
+
+  // ── Phase 3/4 — Pipeline production active (hook partagé avec EnglishInTheWild)
+  const {
+    analyzeSessionProductiveUses,
+    openProductionChallengeIfRelevant: openProductionChallengeRaw,
+    validateProductionSentence,
+    postSessionChallenge,
+    setPostSessionChallenge,
+  } = useProductiveUse({
+    callClaude,
+    expressions,
+    setExpressions,
+    awardXP,
+    showToast,
+    // English-only : les autres matières n'ont pas de détection de production.
+    categoryFilter: englishCategoryFilter,
+  });
+
+  // Adapter : fallback topic = practiceTopic si non fourni par l'appelant.
+  const openProductionChallengeIfRelevant = useCallback(
+    (topicHint, recentlyUpdated = []) =>
+      openProductionChallengeRaw(topicHint || practiceTopic || "cette session", recentlyUpdated),
+    [openProductionChallengeRaw, practiceTopic]
+  );
 
   const startVoiceConversation = useCallback(({ mode, config } = {}) => {
     setVoiceChatMode({ mode, config });
@@ -1226,7 +1268,25 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
       showToast(`✨ ${sessionCreatedCards.length} nouvelle(s) fiche(s) créée(s) — voir Fiches`, "success");
     }
     clearPending();
-  }, [clearPending, sessionCreatedCards, showToast]);
+
+    // Phase 3 — analyse LLM automatique de la transcription complète
+    try {
+      const transcript = agentTranscriptRef.current || [];
+      const userLines = transcript
+        .filter(m => m && m.role === "user" && m.text)
+        .map(m => m.text)
+        .join("\n");
+      if (userLines.trim().length > 20) {
+        analyzeSessionProductiveUses({
+          transcriptText: userLines,
+          targets: targetExpressions,
+          sessionContext: "voice",
+        }).then((updated) => openProductionChallengeIfRelevant(undefined, updated));
+      } else {
+        openProductionChallengeIfRelevant();
+      }
+    } catch (e) { console.warn("[stopVoiceConversation] analysis failed", e); }
+  }, [clearPending, sessionCreatedCards, showToast, analyzeSessionProductiveUses, targetExpressions, openProductionChallengeIfRelevant]);
 
   // ── Construit le system prompt ElevenLabs enrichi avec la mémoire de session ─
   // Même logique que sendPracticeMessage mais formaté pour l'agent vocal.
@@ -1376,6 +1436,62 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   useEffect(() => { practiceStatsRef.current = practiceStats; }, [practiceStats]);
   useEffect(() => { practiceEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [practiceMessages, liveKitTranscriptions]);
 
+  // ── Phase 3 — Analyse LLM automatique à la fermeture de la session chat texte
+  // Contrat de déclenchement :
+  //  - Se lance UNE SEULE FOIS par session chat réelle (cleanup au démontage
+  //    du composant OU au changement de practiceSubView), et sur onglet caché.
+  //  - N'est PAS relancée par un changement de `targetExpressions` (qui suit
+  //    l'état global `expressions` — modifié depuis n'importe où dans l'app).
+  //  - Snapshotte les cibles à l'OUVERTURE de la vue chat (chatSessionTargetsRef).
+  //  - Flag `sessionAnalyzedRef` empêche tout double appel LLM/toast/XP.
+  const analyzeSessionProductiveUsesRef = useRef(analyzeSessionProductiveUses);
+  const openProductionChallengeIfRelevantRef = useRef(openProductionChallengeIfRelevant);
+  useEffect(() => { analyzeSessionProductiveUsesRef.current = analyzeSessionProductiveUses; }, [analyzeSessionProductiveUses]);
+  useEffect(() => { openProductionChallengeIfRelevantRef.current = openProductionChallengeIfRelevant; }, [openProductionChallengeIfRelevant]);
+
+  const chatSessionTargetsRef = useRef([]);
+  const sessionAnalyzedRef = useRef(false);
+
+  useEffect(() => {
+    if (practiceSubView !== "chat") return;
+    // Nouvelle session chat détectée : snapshot des cibles + reset du flag.
+    chatSessionTargetsRef.current = targetExpressions;
+    sessionAnalyzedRef.current = false;
+
+    const runChatAnalysis = () => {
+      if (sessionAnalyzedRef.current) return;
+      sessionAnalyzedRef.current = true;
+      try {
+        const msgs = practiceMsgRef.current || [];
+        const userLines = msgs
+          .filter((m) => m && m.role === "user" && m.text)
+          .map((m) => m.text)
+          .join("\n");
+        if (userLines.trim().length < 20) return;
+        analyzeSessionProductiveUsesRef.current({
+          transcriptText: userLines,
+          targets: chatSessionTargetsRef.current,
+          sessionContext: "chat",
+        }).then((updated) =>
+          openProductionChallengeIfRelevantRef.current(undefined, updated)
+        );
+      } catch (e) {
+        console.warn("[chat-analysis]", e);
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") runChatAnalysis();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      runChatAnalysis();
+    };
+    // Ne dépend QUE de practiceSubView : un changement de `targetExpressions`
+    // déclenché depuis ailleurs dans l'app ne doit PAS re-tirer l'analyse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [practiceSubView]);
+
   // ── Sync LiveKit transcriptions → agentTranscript (pour détection auto de fiches) ──
   // liveKitTranscriptions est maintenant un tableau unifié { id, role, identity, text, isFinal, ts }
   // produit par LiveKitStateSync (agent: TranscriptionSegment avec `final`, user: TextStreamData)
@@ -1451,22 +1567,9 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     storage.get("english_notebook_history").then(h => { if (h) setNotebookHistory(h); }).catch(() => { });
   }, []);
 
-  // Load SRS data from storage
-  useEffect(() => {
-    if (srsLoaded) return;
-    loadSRSData(storage).then(data => {
-      setSrsData(data);
-      srsDataRef.current = data;
-      setSrsLoaded(true);
-    });
-  }, [srsLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Keep ref in sync
-  useEffect(() => { srsDataRef.current = srsData; }, [srsData]);
-
   // Restore last active sub-view so navigating away and back keeps context
   useEffect(() => {
-    const VALID_VIEWS = ["chat", "daily", "debate", "roleplay", "dictation", "writing", "speaking", "ielts", "dashboard", "achievements", "brainmap", "accent", "exam", "notebook", "wild", "coach", "srs", "news", "cefr"];
+    const VALID_VIEWS = ["chat", "daily", "debate", "roleplay", "dictation", "writing", "speaking", "ielts", "dashboard", "achievements", "brainmap", "accent", "exam", "notebook", "wild", "coach", "news", "cefr"];
     storage.get("english_subview").then(saved => {
       if (saved && VALID_VIEWS.includes(saved)) setPracticeSubView(saved);
     }).catch(() => { });
@@ -3760,52 +3863,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
         )}
       </div>
 
-      {/* ── 🔴 URGENT SRS BANDEAU — s'affiche quand des cartes sont en retard ── */}
-      {(() => {
-        const srsStats = getSRSStats(expressions, srsData);
-        if (srsStats.overdueCount === 0) return null;
-        return (
-          <div style={{
-            background: "linear-gradient(135deg,rgba(239,68,68,0.15),rgba(220,38,38,0.08))",
-            border: "1.5px solid rgba(239,68,68,0.4)",
-            borderRadius: 18, padding: "14px 20px",
-            marginBottom: 16, display: "flex", alignItems: "center",
-            gap: 14, flexWrap: "wrap",
-            animation: "srsBandeauPulse 3s ease-in-out infinite"
-          }}>
-            <style>{`@keyframes srsBandeauPulse{0%,100%{border-color:rgba(239,68,68,0.4)}50%{border-color:rgba(239,68,68,0.8)}}`}</style>
-            <div style={{ fontSize: 24, flexShrink: 0 }}>🔴</div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontWeight: 900, fontSize: 15, color: "#EF4444", marginBottom: 4 }}>
-                {srsStats.overdueCount} expression{srsStats.overdueCount > 1 ? "s" : ""} à revoir MAINTENANT
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {srsStats.urgentCards.slice(0, 5).map((c, i) => (
-                  <span key={i} style={{
-                    fontSize: 11, fontWeight: 700,
-                    background: "rgba(239,68,68,0.12)", color: "#EF4444",
-                    borderRadius: 8, padding: "2px 8px",
-                    border: "1px solid rgba(239,68,68,0.25)"
-                  }}>
-                    {c.front.slice(0, 22)}{c.front.length > 22 ? "…" : ""}
-                  </span>
-                ))}
-              </div>
-            </div>
-            <button
-              onClick={() => switchSubView("srs")}
-              style={{
-                padding: "10px 20px", background: "linear-gradient(135deg,#EF4444,#DC2626)",
-                color: "white", border: "none", borderRadius: 12,
-                fontWeight: 900, fontSize: 13, cursor: "pointer", flexShrink: 0,
-                boxShadow: "0 4px 12px rgba(239,68,68,0.4)"
-              }}
-            >
-              🚀 Réviser maintenant
-            </button>
-          </div>
-        );
-      })()}
+
       <style>{`
         @media (max-width: 768px) {
           .academy-header { padding: 20px !important; border-radius: 20px !important; }
@@ -3981,7 +4039,6 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div style={{ width: 1, height: 22, background: "rgba(255,255,255,0.12)", margin: "0 6px", flexShrink: 0 }} />
 
             {[
-              { id: "srs", icon: "🔄", label: "SRS" },
               { id: "brainmap", icon: "🧠", label: "Brain Map" },
               { id: "dashboard", icon: "📊", label: "Progrès" },
               { id: "achievements", icon: "🏆", label: "Succès" },
@@ -6777,400 +6834,6 @@ Analyze pronunciation word by word.`
         })()
       }
 
-      {/* ── TAB : SRS Spaced Repetition Dashboard ─────────────────────────── */}
-      {
-        practiceSubView === "srs" && (() => {
-          const stats = getSRSStats(expressions, srsData);
-          const heatmap = getHeatmapData(srsData, 7);
-          const totalReviewed = heatmap.reduce((s, d) => s + d.count, 0);
-
-          // Queue to review based on filter
-          const reviewQueue = srsFilter === "overdue"
-            ? stats.overdueCards
-            : srsFilter === "today"
-              ? stats.dueTodayCards
-              : stats.allSorted.filter(c => c.isOverdue || c.isDueToday);
-
-          // Handle scoring a card
-          const handleScore = async (expr, score) => {
-            const { newData } = await recordReview(storage, expr.id, score, srsDataRef.current);
-            setSrsData(newData);
-            srsDataRef.current = newData;
-            // Next card or close reviewer
-            setSrsReviewing(null);
-            setSrsShowBack(false);
-            awardXP(8, 2, "Révision SRS");
-          };
-
-          // Generate Claude narrative
-          const generateNarrative = async () => {
-            setSrsNarrLoading(true);
-            try {
-              const weekStats = getWeeklyStatsForClaude(expressions, srsData);
-              const raw = await callClaude(
-                `Tu es un coach en apprentissage expert en mémorisation espacée. Analyse ces statistiques SRS d'un étudiant en anglais et génère un paragraphe motivant (5-7 phrases) avec des insights précis et des conseils personnalisés. Utilise des emojis judicieusement. Réponds en français.`,
-                `Statistiques de la semaine :
-- Révisions totales : ${weekStats.totalReviews}
-- Jours actifs : ${weekStats.activeDays}/7
-- Expressions en retard : ${weekStats.overdueCount}
-- Dues aujourd'hui : ${weekStats.dueTodayCount}
-- Facteur d'aisance moyen : ${weekStats.avgEF}
-- Heatmap : ${weekStats.heatmap}
-- Mots les plus difficiles : ${weekStats.struggling.join(", ")}
-
-Génère une analyse narrative motivante et personnalisée.`
-              );
-              setSrsNarrative(raw.trim());
-            } catch (e) {
-              showToast("Erreur analyse IA", "error");
-            }
-            setSrsNarrLoading(false);
-          };
-
-          const heatEmoji = (count, avg) => {
-            if (count === 0) return { ch: "⬜", color: isDarkMode ? "#374151" : "#E5E7EB" };
-            if (avg >= 4) return { ch: "🟢", color: "#22C55E" };
-            if (avg >= 2.5) return { ch: "🟡", color: "#F59E0B" };
-            return { ch: "🔴", color: "#EF4444" };
-          };
-
-          const dayLabels = ["Di", "Lu", "Ma", "Me", "Je", "Ve", "Sa"];
-          const today7 = heatmap.map(h => {
-            const d = new Date(h.date + "T12:00:00");
-            return { ...h, dayLabel: dayLabels[d.getDay()] };
-          });
-
-          return (
-            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-              <style>{`
-              @keyframes srsFlip { from{transform:rotateY(90deg);opacity:0} to{transform:rotateY(0);opacity:1} }
-              @keyframes srsPulse { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.5)} 70%{box-shadow:0 0 0 12px rgba(239,68,68,0)} }
-              .srs-score-btn:hover { transform:scale(1.06) !important; }
-              .srs-queue-item:hover { background:${isDarkMode ? "rgba(77, 107, 254,0.15)" : "rgba(77, 107, 254,0.07)"} !important; cursor:pointer; }
-            `}</style>
-
-              {/* ─── Stats Banner ─── */}
-              <div style={{
-                display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 14
-              }}>
-                {[
-                  {
-                    icon: "🔴", label: "En retard", value: stats.overdueCount,
-                    sub: "expressions", color: "#EF4444",
-                    bg: isDarkMode ? "rgba(239,68,68,0.12)" : "rgba(239,68,68,0.07)",
-                    border: "rgba(239,68,68,0.3)", urgent: stats.overdueCount > 0,
-                  },
-                  {
-                    icon: "🟡", label: "Dues aujourd'hui", value: stats.dueTodayCount,
-                    sub: "expressions", color: "#F59E0B",
-                    bg: isDarkMode ? "rgba(245,158,11,0.12)" : "rgba(245,158,11,0.07)",
-                    border: "rgba(245,158,11,0.3)", urgent: false,
-                  },
-                  {
-                    icon: "🟢", label: "Prochaine révision",
-                    value: formatTimeUntil(stats.nextReviewMs) || "–",
-                    sub: stats.nextReviewMs ? "" : "Toutes à jour !",
-                    color: "#22C55E",
-                    bg: isDarkMode ? "rgba(34,197,94,0.12)" : "rgba(34,197,94,0.07)",
-                    border: "rgba(34,197,94,0.3)", urgent: false,
-                  },
-                  {
-                    icon: "📚", label: "Révisées ce sem.", value: totalReviewed,
-                    sub: "révisions", color: "var(--mm-primary)",
-                    bg: isDarkMode ? "rgba(77, 107, 254,0.12)" : "rgba(77, 107, 254,0.07)",
-                    border: "rgba(77, 107, 254,0.3)", urgent: false,
-                  },
-                ].map(s => (
-                  <div key={s.label} style={{
-                    borderRadius: 20, padding: "18px 22px",
-                    background: s.bg, border: `1.5px solid ${s.border}`,
-                    animation: s.urgent ? "srsPulse 2s infinite" : "none",
-                    position: "relative", overflow: "hidden"
-                  }}>
-                    <div style={{ fontSize: 28, marginBottom: 4 }}>{s.icon}</div>
-                    <div style={{ fontSize: 30, fontWeight: 900, color: s.color, lineHeight: 1 }}>{s.value}</div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, marginTop: 4 }}>{s.label}</div>
-                    {s.sub && <div style={{ fontSize: 11, color: theme.textMuted }}>{s.sub}</div>}
-                  </div>
-                ))}
-              </div>
-
-              {/* ─── Card Reviewer ─── */}
-              {srsReviewing ? (
-                <div style={{
-                  background: isDarkMode ? "var(--mm-bg-elev)" : "white",
-                  borderRadius: 24, padding: 32,
-                  border: `2px solid ${isDarkMode ? "rgba(77, 107, 254,0.4)" : "rgba(77, 107, 254,0.2)"}`,
-                  boxShadow: "0 20px 60px rgba(77, 107, 254,0.15)"
-                }}>
-                  {/* Progress indicator */}
-                  <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, marginBottom: 20, textTransform: "uppercase", letterSpacing: 1 }}>
-                    📖 Révision · {srsReviewing.category || "Anglais"}
-                  </div>
-
-                  {/* Flip card */}
-                  <div style={{
-                    background: isDarkMode ? "rgba(77, 107, 254,0.08)" : "var(--mm-bg-elev)",
-                    borderRadius: 20, padding: "28px 32px",
-                    border: `2px solid ${isDarkMode ? "rgba(77, 107, 254,0.25)" : "rgba(77, 107, 254,0.2)"}`,
-                    marginBottom: 20, minHeight: 120,
-                    animation: "srsFlip 0.3s ease"
-                  }}>
-                    {/* Front always visible */}
-                    <div style={{ fontSize: 20, fontWeight: 800, color: theme.text, lineHeight: 1.5, marginBottom: srsShowBack ? 16 : 0 }}>
-                      {srsReviewing.front}
-                    </div>
-                    {/* Back revealed on click */}
-                    {srsShowBack && (
-                      <div style={{ borderTop: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)"}`, paddingTop: 16, animation: "srsFlip 0.25s ease" }}>
-                        <div style={{ fontSize: 16, color: isDarkMode ? "#A5B4FC" : "#4338CA", fontWeight: 700, marginBottom: 8 }}>
-                          {srsReviewing.back}
-                        </div>
-                        {srsReviewing.example && (
-                          <div style={{ fontSize: 13, color: theme.textMuted, fontStyle: "italic" }}>
-                            💡 {srsReviewing.example}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {!srsShowBack ? (
-                    <button onClick={() => setSrsShowBack(true)} style={{
-                      width: "100%", padding: "16px",
-                      background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
-                      color: "white", border: "none", borderRadius: 16,
-                      fontWeight: 900, fontSize: 16, cursor: "pointer",
-                      boxShadow: "0 8px 24px rgba(52, 81, 209,0.4)"
-                    }}>👁️ Révéler la réponse</button>
-                  ) : (
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: theme.textMuted, textAlign: "center", marginBottom: 12, textTransform: "uppercase", letterSpacing: 1 }}>
-                        Comment tu t'en es sorti ?
-                      </div>
-                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                        {SCORE_BUTTONS.map(btn => (
-                          <button
-                            key={btn.score}
-                            className="srs-score-btn"
-                            onClick={() => handleScore(srsReviewing, btn.score)}
-                            style={{
-                              flex: 1, minWidth: 80, padding: "14px 8px",
-                              background: btn.bg, border: `2px solid ${btn.color}30`,
-                              borderRadius: 16, cursor: "pointer",
-                              display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                              transition: "transform 0.15s, box-shadow 0.15s"
-                            }}
-                          >
-                            <span style={{ fontSize: 24 }}>{btn.emoji}</span>
-                            <span style={{ fontSize: 12, fontWeight: 800, color: btn.color }}>{btn.label}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <button onClick={() => { setSrsReviewing(null); setSrsShowBack(false); }}
-                    style={{
-                      marginTop: 16, width: "100%", padding: "10px", background: "transparent",
-                      border: `1px solid ${theme.border}`, borderRadius: 12,
-                      color: theme.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer"
-                    }}>
-                    ← Retour au dashboard
-                  </button>
-                </div>
-              ) : (
-                <>
-                  {/* ─── Review Queue ─── */}
-                  <div style={{
-                    background: isDarkMode ? "var(--mm-bg-elev)" : "white",
-                    borderRadius: 24, padding: 24,
-                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.05)"}`,
-                    boxShadow: "0 8px 32px rgba(77,107,254,0.05)"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
-                      <div style={{ fontWeight: 900, fontSize: 17, color: theme.text }}>📋 File de révision</div>
-                      {/* Filter buttons */}
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {[{ k: "overdue", l: "En retard", c: "#EF4444" }, { k: "today", l: "Aujourd'hui", c: "#F59E0B" }, { k: "all", l: "Tout", c: "var(--mm-primary)" }].map(f => (
-                          <button key={f.k} onClick={() => setSrsFilter(f.k)} style={{
-                            padding: "6px 14px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
-                            background: srsFilter === f.k ? f.c : "transparent",
-                            color: srsFilter === f.k ? "white" : theme.textMuted,
-                            border: `1.5px solid ${srsFilter === f.k ? f.c : theme.border}`,
-                            transition: "all 0.2s"
-                          }}>{f.l}</button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {reviewQueue.length === 0 ? (
-                      <div style={{ textAlign: "center", padding: "32px 0" }}>
-                        <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
-                        <div style={{ fontWeight: 800, fontSize: 18, color: "#22C55E", marginBottom: 6 }}>Tout est à jour !</div>
-                        <div style={{ fontSize: 14, color: theme.textMuted }}>
-                          Prochaine révision {formatTimeUntil(stats.nextReviewMs) ? `dans ${formatTimeUntil(stats.nextReviewMs)}` : "bientôt"}.
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Quick Start button */}
-                        <button
-                          onClick={() => { setSrsReviewing(expressions.find(e => e.id === reviewQueue[0].id) || null); setSrsShowBack(false); }}
-                          style={{
-                            width: "100%", marginBottom: 16, padding: "14px",
-                            background: "linear-gradient(135deg,#EF4444,#DC2626)",
-                            color: "white", border: "none", borderRadius: 16,
-                            fontWeight: 900, fontSize: 15, cursor: "pointer",
-                            boxShadow: "0 6px 20px rgba(239,68,68,0.35)"
-                          }}
-                        >
-                          🚀 Commencer les révisions ({reviewQueue.length} cartes)
-                        </button>
-
-                        {/* Queue list */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 340, overflowY: "auto" }}>
-                          {reviewQueue.slice(0, 20).map((item, i) => {
-                            const delay = item.nextReview < Date.now() ? formatTimeUntil(item.nextReview) : null;
-                            const cardSRS = srsData[item.id] || defaultCardState();
-                            const ef = (cardSRS.easeFactor || 2.5).toFixed(1);
-                            const efColor = cardSRS.easeFactor >= 2.5 ? "#22C55E" : cardSRS.easeFactor >= 1.8 ? "#F59E0B" : "#EF4444";
-                            return (
-                              <div
-                                key={item.id}
-                                className="srs-queue-item"
-                                onClick={() => { setSrsReviewing(expressions.find(e => e.id === item.id)); setSrsShowBack(false); }}
-                                style={{
-                                  display: "flex", alignItems: "center", gap: 14, padding: "12px 16px",
-                                  background: isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(77,107,254,0.05)",
-                                  borderRadius: 14, border: `1px solid ${theme.border}`, transition: "background 0.2s"
-                                }}
-                              >
-                                <div style={{
-                                  width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-                                  background: item.isOverdue ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
-                                  display: "flex", alignItems: "center", justifyContent: "center",
-                                  fontSize: 16
-                                }}>{item.isOverdue ? "🔴" : "🟡"}</div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontWeight: 700, fontSize: 14, color: theme.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                                    {item.front}
-                                  </div>
-                                  <div style={{ fontSize: 11, color: theme.textMuted, marginTop: 2 }}>{item.category}</div>
-                                </div>
-                                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                                  <span style={{ fontSize: 11, fontWeight: 800, color: item.isOverdue ? "#EF4444" : "#F59E0B" }}>
-                                    {item.isOverdue ? "EN RETARD" : "AUJOURD'HUI"}
-                                  </span>
-                                  <span style={{ fontSize: 10, color: efColor, fontWeight: 700 }}>EF {ef}</span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* ─── 7-day Heatmap ─── */}
-                  <div style={{
-                    background: isDarkMode ? "var(--mm-bg-elev)" : "white",
-                    borderRadius: 24, padding: 24,
-                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.05)"}`
-                  }}>
-                    <div style={{ fontWeight: 900, fontSize: 16, color: theme.text, marginBottom: 4 }}>📅 Activité des 7 derniers jours</div>
-                    <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 18 }}>🟢 Bon (moy≥4) · 🟡 Correct (moy≥2.5) · 🔴 Difficile · ⬜ Inactif</div>
-
-                    <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-                      {today7.map((d, i) => {
-                        const { ch, color } = heatEmoji(d.count, d.avgScore);
-                        const maxCount = Math.max(...today7.map(x => x.count), 1);
-                        const barH = d.count === 0 ? 4 : Math.max(8, (d.count / maxCount) * 72);
-                        return (
-                          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: 1, minWidth: 36 }}>
-                            {/* Bar */}
-                            <div style={{
-                              width: "100%", borderRadius: 6, overflow: "hidden",
-                              background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.05)",
-                              height: 72, display: "flex", alignItems: "flex-end"
-                            }}>
-                              <div style={{
-                                width: "100%", borderRadius: 6,
-                                background: d.count === 0 ? "transparent" : color,
-                                height: barH, transition: "height 0.6s ease",
-                                opacity: 0.85
-                              }} />
-                            </div>
-                            {/* Emoji */}
-                            <span style={{ fontSize: 16 }}>{ch}</span>
-                            {/* Count */}
-                            <span style={{ fontSize: 11, fontWeight: 800, color: d.count > 0 ? color : theme.textMuted }}>{d.count}</span>
-                            {/* Day label */}
-                            <span style={{ fontSize: 10, color: theme.textMuted, fontWeight: 600 }}>{d.dayLabel}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Summary row */}
-                    <div style={{ display: "flex", gap: 20, marginTop: 16, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 13, color: theme.textMuted }}>
-                        📊 <strong style={{ color: theme.text }}>{totalReviewed}</strong> révisions cette semaine
-                      </span>
-                      <span style={{ fontSize: 13, color: theme.textMuted }}>
-                        📆 <strong style={{ color: theme.text }}>{heatmap.filter(d => d.count > 0).length}</strong>/7 jours actifs
-                      </span>
-                      <span style={{ fontSize: 13, color: theme.textMuted }}>
-                        🎯 <strong style={{ color: theme.text }}>{heatmap.length > 0 ? ((heatmap.reduce((s, d) => s + d.avgScore, 0) / heatmap.filter(d => d.count > 0).length) || 0).toFixed(1) : "0"}</strong>/5 score moy.
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* ─── Claude Narrative ─── */}
-                  <div style={{
-                    background: isDarkMode ? "linear-gradient(135deg,var(--mm-bg-elev),var(--mm-bg-elev))" : "linear-gradient(135deg,var(--mm-bg-elev),#fff)",
-                    borderRadius: 24, padding: 24,
-                    border: `1px solid ${isDarkMode ? "rgba(77, 107, 254,0.3)" : "rgba(77, 107, 254,0.2)"}`
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-                      <div>
-                        <div style={{ fontWeight: 900, fontSize: 16, color: theme.text }}>🤖 Analyse IA de la semaine</div>
-                        <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>Claude analyse tes stats et génère des conseils personnalisés</div>
-                      </div>
-                      <button
-                        onClick={generateNarrative}
-                        disabled={srsNarrLoading}
-                        style={{
-                          padding: "10px 20px", borderRadius: 14, cursor: srsNarrLoading ? "not-allowed" : "pointer",
-                          background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white",
-                          border: "none", fontWeight: 800, fontSize: 13,
-                          boxShadow: "0 4px 16px rgba(52, 81, 209,0.3)", opacity: srsNarrLoading ? 0.7 : 1
-                        }}
-                      >{srsNarrLoading ? "⏳ Analyse…" : "✨ Générer l'analyse"}</button>
-                    </div>
-
-                    {srsNarrative ? (
-                      <div style={{
-                        background: isDarkMode ? "rgba(77, 107, 254,0.1)" : "rgba(77, 107, 254,0.06)",
-                        borderRadius: 16, padding: "18px 22px",
-                        border: `1px solid ${isDarkMode ? "rgba(77, 107, 254,0.25)" : "rgba(77, 107, 254,0.15)"}`,
-                        fontSize: 14, color: theme.text, lineHeight: 1.8
-                      }}>
-                        {srsNarrative}
-                      </div>
-                    ) : (
-                      <div style={{ textAlign: "center", padding: "20px 0", color: theme.textMuted, fontSize: 14 }}>
-                        Clique sur "Générer l'analyse" pour recevoir un rapport personnalisé de Claude.
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })()
-      }
-
       {/* ── TAB : Examen blanc ──────────────────────────────────────────────── */}
       {
         practiceSubView === "exam" && (
@@ -7338,6 +7001,7 @@ Génère une analyse narrative motivante et personnalisée.`
             storage={storage}
             expressions={expressions}
             setExpressions={setExpressions}
+            awardXP={awardXP}
             showToast={showToast}
             theme={theme}
             isDarkMode={isDarkMode}
@@ -7447,6 +7111,18 @@ Génère une analyse narrative motivante et personnalisée.`
           onStateChange={setLiveKitState}
           systemPrompt={buildLiveKitSystemPrompt()}
           studentName={studentName}
+        />
+      )}
+
+      {/* PHASE 4 — Mini-défi de production active en fin de session */}
+      {postSessionChallenge && (
+        <ProductionChallenge
+          items={postSessionChallenge.items}
+          topic={postSessionChallenge.topic}
+          isDarkMode={isDarkMode}
+          theme={theme}
+          onClose={() => setPostSessionChallenge(null)}
+          onValidate={validateProductionSentence}
         />
       )}
     </div >

@@ -9,6 +9,7 @@
 
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
+import { getMasteryBreakdown, computeMasteryStage } from "../lib/masteryStages";
 
 const CARD_COLORS = {
   positive: { bg: "rgba(16,185,129,0.12)", border: "#10B981", icon: "🚀" },
@@ -151,13 +152,33 @@ export default function StatsInsights({
   sessionHistory = [],
   stats = {},
   masteredCount = 0,
+  // ── Phase 5 — Le breakdown "Production active" ne concerne que les matières
+  // où la détection de production existe (anglais aujourd'hui). Sans filtre,
+  // le ratio serait faussé pour les autres matières. Filtre paramétrable pour
+  // ne pas casser un usage générique éventuel.
+  productionCategoryFilter,
 }) {
   const insights = useMemo(
     () => computeInsights({ expressions, sessionHistory, stats, masteredCount }),
     [expressions, sessionHistory, stats, masteredCount]
   );
 
-  if (!insights.length) return null;
+  // ── Phase 5 — Production active : bar chart honnête X apprises / Y utilisées
+  const productionSummary = useMemo(() => {
+    const source = expressions || [];
+    const list = typeof productionCategoryFilter === "function"
+      ? source.filter(productionCategoryFilter)
+      : source;
+    // Enrichit à la volée pour rester juste même sans persistance de masteryStage
+    const enriched = list.map(e => ({ ...e, masteryStage: e.masteryStage || computeMasteryStage(e) }));
+    const breakdown = getMasteryBreakdown(enriched);
+    const learned = enriched.filter(e => e.masteryStage !== "discovered").length;
+    const usedInConversation = enriched.filter(e => e.masteryStage === "produced" || e.masteryStage === "mastered").length;
+    return { breakdown, learned, usedInConversation, total: list.length };
+  }, [expressions, productionCategoryFilter]);
+
+  if (!insights.length && productionSummary.total === 0) return null;
+
 
   return (
     <motion.div
@@ -217,6 +238,58 @@ export default function StatsInsights({
           );
         })}
       </div>
+
+      {/* Phase 5 — Production active : indicateur honnête */}
+      {productionSummary.total > 0 && (
+        <div style={{
+          marginTop: 18, padding: 16, borderRadius: 16,
+          background: isDarkMode ? "rgba(16,185,129,0.08)" : "rgba(16,185,129,0.06)",
+          border: `1px solid rgba(16,185,129,0.25)`,
+        }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+            <strong style={{ color: theme?.text, fontSize: 15, fontWeight: 800 }}>
+              🗣️ Production active
+            </strong>
+            <span style={{ color: theme?.textMuted, fontSize: 13 }}>
+              <strong style={{ color: theme?.text }}>{productionSummary.learned}</strong> expressions apprises ·{" "}
+              <strong style={{ color: "#10B981" }}>{productionSummary.usedInConversation}</strong> déjà utilisées en conversation
+              {productionSummary.learned > 0 && (
+                <> ({productionSummary.usedInConversation}/{productionSummary.learned})</>
+              )}
+            </span>
+          </div>
+          {/* Bar chart empilé simple */}
+          {(() => {
+            const b = productionSummary.breakdown;
+            const total = Math.max(1, productionSummary.total);
+            const segs = [
+              { key: "discovered", label: "Découvertes", color: "#94A3B8", n: b.discovered },
+              { key: "recognized", label: "Reconnues",   color: "#60A5FA", n: b.recognized },
+              { key: "recalled",   label: "Rappelées",   color: "#8B5CF6", n: b.recalled },
+              { key: "produced",   label: "Produites",   color: "#10B981", n: b.produced },
+              { key: "mastered",   label: "Maîtrisées",  color: "#F59E0B", n: b.mastered },
+            ];
+            return (
+              <>
+                <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)" }}>
+                  {segs.map(s => s.n > 0 && (
+                    <div key={s.key} title={`${s.label}: ${s.n}`}
+                      style={{ width: `${(s.n / total) * 100}%`, background: s.color }} />
+                  ))}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10, fontSize: 12, color: theme?.textMuted }}>
+                  {segs.map(s => (
+                    <span key={s.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color, display: "inline-block" }} />
+                      {s.label} <strong style={{ color: theme?.text }}>{s.n}</strong>
+                    </span>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
     </motion.div>
   );
 }

@@ -4,6 +4,8 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { speakWithFallback, NovaBadge } from "./lib/HuggingFaceVoice";
+import useProductiveUse, { englishCategoryFilter } from "./hooks/useProductiveUse";
+import ProductionChallenge from "./components/ProductionChallenge";
 // ── Utilitaire : extraire l'ID YouTube ──────────────────────────────────────
 function extractYouTubeId(url) {
   if (!url) return "";
@@ -154,7 +156,9 @@ function safeParseJSON(str) {
 export default function EnglishInTheWild({
   callClaude,
   storage,
+  expressions = [],
   setExpressions,
+  awardXP,
   showToast,
   theme,
   isDarkMode,
@@ -209,6 +213,94 @@ export default function EnglishInTheWild({
 
   // ── Vocab in Context Mining States ────────────────────────────────────────────
   const [miningState, setMiningState] = useState({ isOpen: false, loading: false, word: "", context: "", data: null, tab: "formal", testMode: false });
+
+  // ── Phase 3/4/5 — Pipeline production active (hook partagé avec EnglishPractice)
+  // Analyse le texte produit par l'utilisateur (dictée + shadowing) à la fin d'une
+  // session vidéo, met à jour les fiches English concernées, et déclenche le
+  // mini-défi ProductionChallenge si des fiches "recalled" restent à activer.
+  const {
+    analyzeSessionProductiveUses,
+    openProductionChallengeIfRelevant,
+    validateProductionSentence,
+    postSessionChallenge,
+    setPostSessionChallenge,
+  } = useProductiveUse({
+    callClaude,
+    expressions,
+    setExpressions,
+    awardXP,
+    showToast,
+    categoryFilter: englishCategoryFilter,
+  });
+
+  // Refs pour l'effet de fin-de-session : stables, ne re-tirent pas d'analyse
+  // quand l'état global `expressions` change ailleurs.
+  const analyzeRef = useRef(analyzeSessionProductiveUses);
+  const openChallengeRef = useRef(openProductionChallengeIfRelevant);
+  useEffect(() => { analyzeRef.current = analyzeSessionProductiveUses; }, [analyzeSessionProductiveUses]);
+  useEffect(() => { openChallengeRef.current = openProductionChallengeIfRelevant; }, [openProductionChallengeIfRelevant]);
+
+  // Refs de collecte : snapshot de texte utilisateur produit pendant la session.
+  const dictationInputsRef = useRef({});
+  const shadowingUserTextRef = useRef("");
+  const expressionsRef = useRef(expressions);
+  useEffect(() => { dictationInputsRef.current = dictationInputs; }, [dictationInputs]);
+  useEffect(() => { shadowingUserTextRef.current = shadowingUserText; }, [shadowingUserText]);
+  useEffect(() => { expressionsRef.current = expressions; }, [expressions]);
+
+  const sessionAnalyzedRef = useRef(false);
+
+  // Reset du flag chaque fois qu'une nouvelle session vidéo démarre (nouvelles
+  // expressions10 générées). Sans ça, une seconde vidéo ne déclencherait plus
+  // d'analyse après la première.
+  useEffect(() => {
+    if (expressions10 && expressions10.length) {
+      sessionAnalyzedRef.current = false;
+    }
+  }, [expressions10]);
+
+  // Effet de fin-de-session : cleanup au démontage du composant OU onglet caché.
+  useEffect(() => {
+    const runWildAnalysis = () => {
+      if (sessionAnalyzedRef.current) return;
+      try {
+        const dictText = Object.values(dictationInputsRef.current || {})
+          .filter(Boolean)
+          .join(" ");
+        const shadowText = shadowingUserTextRef.current || "";
+        const userProduced = `${dictText}\n${shadowText}`.trim();
+        if (userProduced.length < 20) return;
+
+        // Cibles : fiches English de l'utilisateur qui ont vraiment besoin
+        // d'une trace de production (stage "recalled"). On limite à 8 pour
+        // borner le coût LLM sur un transcript court.
+        const englishExprs = (expressionsRef.current || []).filter(englishCategoryFilter);
+        const targets = englishExprs.slice(0, 20);
+        if (!targets.length) return;
+
+        sessionAnalyzedRef.current = true;
+        analyzeRef.current({
+          transcriptText: userProduced,
+          targets,
+          sessionContext: "writing",
+        }).then((updated) => openChallengeRef.current("cette vidéo", updated));
+      } catch (e) {
+        console.warn("[wild-analysis]", e);
+      }
+    };
+    const onVis = () => {
+      if (document.visibilityState === "hidden") runWildAnalysis();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      runWildAnalysis();
+    };
+    // Effet mount/unmount uniquement — les données réelles sont lues via refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
 
   const triggerMining = async (word, context) => {
     if (!word) return;
@@ -1537,6 +1629,18 @@ retourne UNIQUEMENT ce JSON :
           </>
         )}
       </div>
+
+      {/* PHASE 4 — Mini-défi de production active en fin de session vidéo */}
+      {postSessionChallenge && (
+        <ProductionChallenge
+          items={postSessionChallenge.items}
+          topic={postSessionChallenge.topic}
+          isDarkMode={isDarkMode}
+          theme={theme}
+          onClose={() => setPostSessionChallenge(null)}
+          onValidate={validateProductionSentence}
+        />
+      )}
     </div>
   );
 }

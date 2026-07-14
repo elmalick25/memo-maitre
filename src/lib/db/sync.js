@@ -30,8 +30,7 @@ const stripUndefined = (value) => JSON.parse(JSON.stringify(value))
 
 export async function pushExpressionsToFirebase() {
   const uid = getFbUser()
-  const OWNER_UID = import.meta.env.VITE_OWNER_UID
-  if (!uid || uid !== OWNER_UID) return
+  if (!uid) return
 
   const expressionsRef = collection(firestoreDb, `users/${uid}/expressions`)
   const q = query(expressionsRef)
@@ -85,8 +84,7 @@ export async function forceResetSync() {
 
 export async function syncWithFirebase(forceReconcile = false) {
   const uid = getFbUser()
-  const OWNER_UID = import.meta.env.VITE_OWNER_UID
-  if (!uid || uid !== OWNER_UID) return false
+  if (!uid) return false
   if (isSyncing) {
     rerunRequested = true
     return false
@@ -162,12 +160,6 @@ export async function syncWithFirebase(forceReconcile = false) {
 }
 
 async function reconcileAllExpressions(uid) {
-  const OWNER_UID = import.meta.env.VITE_OWNER_UID
-  if (OWNER_UID && uid !== OWNER_UID) {
-    console.warn('[sync] reconcile bloqué : UID non autorisé')
-    return false
-  }
-
   const expressions = database.collections.get('expressions')
   const [localRecords, remoteSnap] = await Promise.all([
     expressions.query().fetch(),

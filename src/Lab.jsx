@@ -555,6 +555,49 @@ async function fileToBase64(file) {
   });
 }
 
+// Compresse et redimensionne une image (max 1600px, JPEG q=0.82) pour éviter
+// que 2-3 captures d'écran collées ne saturent la mémoire de l'onglet et
+// fassent planter la section Lab.
+async function compressImageFile(file, maxDim = 1600, quality = 0.82) {
+  // Les GIF/SVG ne se compressent pas correctement via canvas → fallback direct.
+  if (/gif|svg/i.test(file.type)) return fileToBase64(file);
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = (e) => resolve(e.target.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = dataUrl;
+    });
+    let { width: w, height: h } = img;
+    const scale = Math.min(1, maxDim / Math.max(w, h));
+    w = Math.round(w * scale);
+    h = Math.round(h * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+    const outUrl = canvas.toDataURL("image/jpeg", quality);
+    // Libère la mémoire du canvas
+    canvas.width = 0;
+    canvas.height = 0;
+    return {
+      base64: outUrl.split(",")[1],
+      dataUrl: outUrl,
+      mimeType: "image/jpeg",
+    };
+  } catch (err) {
+    console.warn("compressImageFile fallback:", err?.message);
+    return fileToBase64(file);
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CONSTANTE PROMPT — Préservation vocabulaire exact + contenu riche
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1875,7 +1918,9 @@ ${history}`;
     const newItems = [];
     for (const file of arr) {
       try {
-        const { base64, dataUrl, mimeType } = await fileToBase64(file);
+        // Compression systématique : évite l'OOM quand l'utilisateur colle
+        // plusieurs captures d'écran haute résolution d'affilée.
+        const { base64, dataUrl, mimeType } = await compressImageFile(file);
         newItems.push({
           id: `photo_${Date.now()}_${Math.random().toString(36).substr(2,9)}`,
           name: file.name, dataUrl, base64, mimeType,
@@ -1884,7 +1929,10 @@ ${history}`;
           status: "idle", imageType: mode,
           extractedText: "", cards: [], summary: "", error: null,
         });
-      } catch { toast(`Erreur lecture ${file.name}`, "error"); }
+      } catch (err) {
+        console.warn("handlePhotoFiles read error:", err);
+        toast(`Erreur lecture ${file.name}`, "error");
+      }
     }
     setPhotoItems(prev => [...prev, ...newItems]);
     toast(`📸 ${newItems.length} photo(s) chargée(s) — L'IA va analyser automatiquement...`);
@@ -1900,15 +1948,22 @@ ${history}`;
   useEffect(() => {
     if (tab !== "photo") return;
 
+    // Anti-doublon : certains navigateurs / extensions dispatchent 2 events "paste"
+    // pour un seul Ctrl+V, ce qui uploadait la même image 2x et pouvait saturer
+    // la mémoire après quelques collages.
+    let lastPasteAt = 0;
+
     const handlePaste = (e) => {
       if (!e.clipboardData) return;
+      const now = Date.now();
+      if (now - lastPasteAt < 400) return;
       const items = e.clipboardData.items;
       const imageFiles = [];
       for (let i = 0; i < items.length; i++) {
         if (items[i].type.startsWith("image/")) {
           const file = items[i].getAsFile();
           if (file) {
-            const customFile = new File([file], `Capture_${Date.now()}.png`, { type: file.type });
+            const customFile = new File([file], `Capture_${now}_${i}.png`, { type: file.type });
             imageFiles.push(customFile);
           }
         }
@@ -1919,6 +1974,7 @@ ${history}`;
           toast("Sélectionne d'abord un module (en haut) pour coller une image.", "error");
           return;
         }
+        lastPasteAt = now;
         handlePhotoFiles(imageFiles, pendingPhotoType);
       }
     };
@@ -1947,9 +2003,12 @@ ${history}`;
       }
       
       const step1 = await callGeminiVision(promptOcr, "Analyse cette image.", photo.base64, photo.mimeType);
-      const info = safeJsonParse(step1);
-
-      // Étape 2 : génération texte-seul (pas de 2e appel vision → économise le quota Gemini)
+      let info;
+      try { info = safeJsonParse(step1); } catch { info = null; }
+      if (!info || typeof info !== "object" || Array.isArray(info)) {
+        // L'IA a renvoyé du texte non-JSON → on ne bloque pas : on prend le texte brut.
+        info = { imageType: photo.imageType || "mixte", subject: "", extractedText: String(step1 || "").slice(0, 4000), summary: "" };
+      }
       const extractedSnippet = (info.extractedText || "").slice(0, 4000).replace(/[\x00-\x1F\x7F]/g, " ");
       const cardPrompt = `Tu es un expert en mémorisation GOD-TIER.
 ${FIDELITY_RULE}
@@ -1970,7 +2029,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
           photo.base64, photo.mimeType
         );
       }
-      const cardsData = safeJsonParse(step2);
+      let cardsData;
+      try { cardsData = safeJsonParse(step2); } catch { cardsData = null; }
 
       const rawCards = Array.isArray(cardsData?.cards)
         ? cardsData.cards

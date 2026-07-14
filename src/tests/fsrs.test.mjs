@@ -118,3 +118,56 @@ test('FSRS — nextReview est dans le futur quand interval >= 1', () => {
   const today = new Date().toISOString().slice(0, 10);
   assert.ok(r.nextReview >= today, `nextReview (${r.nextReview}) >= today (${today})`);
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 2 — plafond d'intervalle tant que la fiche n'est pas "produced" +
+// bonus de production (fsrsFromProduction).
+// ══════════════════════════════════════════════════════════════════════════════
+import { fsrsFromProduction, PRE_PRODUCTION_INTERVAL_CAP_DAYS } from '../lib/fsrs.js';
+
+test('Plafond pré-production : interval borné à 3j sans masteryStage', () => {
+  // On chauffe une fiche avec plusieurs "Easy" pour dépasser normalement 3j
+  let card = newCard();
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs(card, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  // Sans masteryStage → devrait être capé
+  assert.ok(card.interval <= PRE_PRODUCTION_INTERVAL_CAP_DAYS,
+    `interval capé attendu ≤ ${PRE_PRODUCTION_INTERVAL_CAP_DAYS}, reçu ${card.interval}`);
+});
+
+test('Plafond pré-production : "recalled" est encore capé', () => {
+  let card = { ...newCard(), masteryStage: 'recalled' };
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs({ ...card, masteryStage: 'recalled' }, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  assert.ok(card.interval <= PRE_PRODUCTION_INTERVAL_CAP_DAYS);
+});
+
+test('Plafond levé quand masteryStage = "produced"', () => {
+  let card = { ...newCard(), masteryStage: 'produced' };
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs({ ...card, masteryStage: 'produced' }, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  assert.ok(card.interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS,
+    `sans plafond, interval doit dépasser ${PRE_PRODUCTION_INTERVAL_CAP_DAYS}, reçu ${card.interval}`);
+});
+
+test('Stability/difficulty NE sont PAS altérés par le plafond', () => {
+  const capped = fsrs({ ...newCard() }, 5);
+  const uncapped = fsrs({ ...newCard(), masteryStage: 'produced' }, 5);
+  // Même premier calcul → même stability/difficulty (plafond ne concerne que interval)
+  assert.equal(capped.stability, uncapped.stability);
+  assert.equal(capped.difficulty, uncapped.difficulty);
+});
+
+test('fsrsFromProduction : équivalent à un grade "easy" (q=5)', () => {
+  const a = fsrsFromProduction({ ...newCard(), masteryStage: 'produced' });
+  const b = fsrs({ ...newCard(), masteryStage: 'produced' }, 5);
+  assert.equal(a.interval, b.interval);
+  assert.equal(a.stability, b.stability);
+  assert.equal(a.difficulty, b.difficulty);
+});

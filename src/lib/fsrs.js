@@ -1,5 +1,5 @@
 // src/lib/fsrs.js
-import { addDays, today } from "../utils/dateUtils";
+import { addDays, today } from "../utils/dateUtils.js";
 
 const FSRS_PARAMS = [
   0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0589, 1.5330,
@@ -8,6 +8,21 @@ const FSRS_PARAMS = [
 const FSRS_DECAY = -0.5;
 const FSRS_FACTOR = 19 / 81;
 const TARGET_R = 0.9;
+
+// ── Phase 2 : plafond d'intervalle tant que la fiche n'est pas "produced" ───
+// Tant qu'une fiche n'a pas atteint au moins le stage "produced" (usage actif
+// prouvé en contexte réel), on plafonne l'intervalle affiché à 3 jours — même
+// si stability/difficulty calculées suggéreraient beaucoup plus. Ces valeurs
+// (stability, difficulty) restent intactes : seul `interval` (et donc
+// `nextReview`) est plafonné pour éviter qu'une fiche "connue par cœur mais
+// jamais utilisée" ne disparaisse des révisions pendant des mois.
+export const PRE_PRODUCTION_INTERVAL_CAP_DAYS = 3;
+const PRODUCTIVE_STAGES = new Set(['produced', 'mastered']);
+
+function shouldCapInterval(masteryStage) {
+  if (!masteryStage) return true; // pas de stage connu → on protège par défaut
+  return !PRODUCTIVE_STAGES.has(masteryStage);
+}
 
 export function fsrsR(t, S) {
   return Math.pow(1 + FSRS_FACTOR * (t / S), FSRS_DECAY);
@@ -53,7 +68,7 @@ function fsrsNextStabilityForgot(D, S, R) {
 
 export function fsrs(card, q) {
   const grade = toFSRSGrade(q);
-  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null, easeFactor = null } = card;
+  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null, easeFactor = null, masteryStage = null } = card;
   const t = elapsedDays ?? interval;
 
   // Migration des anciennes fiches SM-2 (qui ont des répétitions mais pas de stabilité FSRS)
@@ -79,6 +94,12 @@ export function fsrs(card, q) {
     }
   }
 
+  // Plafond pré-production : n'altère PAS stability/difficulty, uniquement
+  // l'intervalle effectif utilisé pour nextReview.
+  if (interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS && shouldCapInterval(masteryStage)) {
+    interval = PRE_PRODUCTION_INTERVAL_CAP_DAYS;
+  }
+
   const retention = Math.round(fsrsR(interval, stability) * 100);
   const nextReview = addDays(today(), interval);
   return {
@@ -89,4 +110,16 @@ export function fsrs(card, q) {
     nextReview,
     retention
   };
+}
+
+/**
+ * Phase 2 — Traite un usage productif correct comme un rappel très fort.
+ * Équivalent à `fsrs(card, 5)` (grade "easy") mais explicite dans l'API pour
+ * qu'on sache dans les call-sites qu'on donne un bonus de PRODUCTION, pas un
+ * bonus de reconnaissance. `masteryStage` doit déjà avoir été mis à jour par
+ * l'appelant (via recordProductiveUse) pour que le plafond d'intervalle soit
+ * levé correctement.
+ */
+export function fsrsFromProduction(card) {
+  return fsrs(card, 5);
 }
