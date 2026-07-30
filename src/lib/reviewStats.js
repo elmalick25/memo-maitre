@@ -200,3 +200,103 @@ export function getWeeklyStatsForClaude(expressions) {
     masteryBreakdown: stageCounts,
   };
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Couche 7 — Instrumentation légère + garde-fou côté création
+//
+// Objectif : régler les constantes des couches 2 et 3 sur des DONNÉES RÉELLES
+// (après ~2 semaines d'usage) plutôt que sur une estimation. On logge donc
+// chaque jour : la taille de la pile due, la composition de la session servie,
+// et le nombre de nouvelles fiches créées (génération IA + sauvetage de leech
+// « ATOMISER » confondus — sinon l'entrée fuit par un chemin non mesuré).
+//
+// Fonctions PURES : la persistance (localStorage) est faite par l'appelant.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Clé de persistance du journal (localStorage, géré par l'appelant). */
+export const REVIEW_LOAD_LOG_KEY = "memomaitre_reviewLoadLog_v1";
+/** Nombre de jours conservés dans le journal (rolling window). */
+export const REVIEW_LOAD_LOG_MAX_DAYS = 60;
+/**
+ * Garde-fou création : au-delà de ce nombre de fiches JAMAIS VUES en attente,
+ * on avertit (sans jamais bloquer) au moment de créer/générer des fiches.
+ */
+export const CREATION_GUARD_NEW_CARDS_THRESHOLD = 300;
+
+/** Entrée vierge de journal pour un jour donné. */
+export function makeDailyLogEntry(dateISO) {
+  return {
+    date: dateISO,
+    pileSize: 0,          // fiches réellement dues ce jour-là
+    served: 0,            // fiches effectivement servies en session
+    leeches: 0,
+    backlog: 0,
+    due: 0,
+    consolidation: 0,
+    newCardsServed: 0,    // nouvelles fiches admises par le budget d'entrée
+    newCardsCreated: 0,   // fiches créées (génération + sauvetage de leech)
+    neverSeenBacklog: 0,  // total de fiches repetitions === 0 en attente
+  };
+}
+
+/**
+ * Fusionne un delta dans le journal pour la date donnée.
+ * Les champs numériques fournis en `delta` sont ADDITIONNÉS, sauf
+ * `pileSize` / `neverSeenBacklog` qui sont des instantanés (remplacés).
+ *
+ * @returns {Array} nouveau journal (tronqué à REVIEW_LOAD_LOG_MAX_DAYS).
+ */
+export function appendDailyLog(log, dateISO, delta = {}) {
+  const list = Array.isArray(log) ? log.slice() : [];
+  const idx = list.findIndex((e) => e && e.date === dateISO);
+  const base = idx >= 0 ? { ...list[idx] } : makeDailyLogEntry(dateISO);
+  const SNAPSHOT_FIELDS = new Set(["pileSize", "neverSeenBacklog"]);
+
+  Object.entries(delta).forEach(([k, v]) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return;
+    base[k] = SNAPSHOT_FIELDS.has(k) ? v : (Number(base[k]) || 0) + v;
+  });
+
+  if (idx >= 0) list[idx] = base; else list.push(base);
+  list.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return list.slice(-REVIEW_LOAD_LOG_MAX_DAYS);
+}
+
+/** Résumé lisible du journal sur N jours (pour calibrer les seuils). */
+export function summarizeReviewLoad(log, days = 14) {
+  const list = (Array.isArray(log) ? log : []).slice(-days);
+  if (!list.length) return { days: 0, avgPile: 0, avgServed: 0, avgCreated: 0, maxPile: 0 };
+  const sum = (k) => list.reduce((s, e) => s + (Number(e?.[k]) || 0), 0);
+  return {
+    days: list.length,
+    avgPile: +(sum("pileSize") / list.length).toFixed(1),
+    avgServed: +(sum("served") / list.length).toFixed(1),
+    avgCreated: +(sum("newCardsCreated") / list.length).toFixed(1),
+    maxPile: list.reduce((m, e) => Math.max(m, Number(e?.pileSize) || 0), 0),
+  };
+}
+
+/** Nombre de fiches jamais vues en attente (repetitions === 0). */
+export function countNeverSeenCards(expressions) {
+  return (Array.isArray(expressions) ? expressions : []).filter(
+    (e) => e && (Number(e.repetitions) || 0) === 0 && !e.paused
+  ).length;
+}
+
+/**
+ * Garde-fou création (INFORMATIF, jamais bloquant).
+ * @returns {{ warn: boolean, count: number, threshold: number, message: string|null }}
+ */
+export function checkCreationGuard(expressions, opts = {}) {
+  const threshold = opts.threshold ?? CREATION_GUARD_NEW_CARDS_THRESHOLD;
+  const count = countNeverSeenCards(expressions);
+  const warn = count >= threshold;
+  return {
+    warn,
+    count,
+    threshold,
+    message: warn
+      ? `⚠️ ${count} fiches jamais vues en attente (seuil ${threshold}) — la création reste possible, mais pense à absorber le stock avant d'en générer davantage.`
+      : null,
+  };
+}

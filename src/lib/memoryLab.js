@@ -16,6 +16,10 @@
 //   4. Composition de session ciblée « points faibles » : booster massif
 //      pour les cartes à faible rétention prédite.
 
+// Couche 6 : la définition de « fiche maîtrisée / à consolider » est
+// centralisée dans cardStatus.js (plus de seuils inline sur `level`).
+import { isConsolidationCandidate } from "./cardStatus.js";
+
 // ── Tokenization + similarité Jaccard sur le recto ────────────────────────
 const STOPWORDS_FR = new Set([
   "le", "la", "les", "un", "une", "des", "de", "du", "d", "l",
@@ -218,7 +222,7 @@ export function composeWeakSpotSession(allCards, opts = {}) {
 
   const consolidation = cards
     .filter((c) => !usedIds.has(c.id))
-    .filter((c) => (c.level || 0) >= 4)
+    .filter(isConsolidationCandidate)
     .sort((a, b) => (b.level || 0) - (a.level || 0))
     .slice(0, Math.max(1, Math.floor(target * 0.15)));
 
@@ -235,4 +239,109 @@ export function composeWeakSpotSession(allCards, opts = {}) {
 export function nextLapseCount(card, q) {
   const cur = typeof card?.lapseCount === "number" ? card.lapseCount : 0;
   return q === 0 ? cur + 1 : cur;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Couche 2 — Session quotidienne plafonnée et composée
+// ══════════════════════════════════════════════════════════════════════════
+// Problème : envoyer d'un coup les ~200 fiches dues rend la routine
+// ingérable → l'utilisateur saute des jours → la pile grossit encore.
+// Solution : un DÉBIT contrôlé. Les fiches non traitées restent `isDue` et
+// reviennent naturellement le lendemain (aucune perte de données), mais la
+// session du jour est plafonnée et surtout PRIORISÉE.
+//
+// Seuils configurables (à régler après usage réel) :
+export const DAILY_SESSION_TIERS = [
+  { maxPile: 50, target: null },        // petite pile → aucun plafond
+  { maxPile: 150, target: 45 },         // pile moyenne → ~40-50 fiches
+  { maxPile: Infinity, target: 35 },    // grosse pile → ~30-40 fiches
+];
+
+// Répartition interne de la session (somme ≤ 1, le reste sert de marge) :
+export const DAILY_SESSION_MIX = {
+  leeches: 0.30,        // fiches qui bloquent réellement
+  backlog: 0.40,        // retard le plus ancien
+  due: 0.20,            // dues normales
+  consolidation: 0.10,  // haute rétention, à espacer davantage
+};
+
+/**
+ * Taille de session cible en fonction de la taille de la pile due.
+ * Renvoie `null` quand aucun plafond ne s'applique.
+ */
+export function getDailySessionTarget(pileSize, tiers = DAILY_SESSION_TIERS) {
+  const n = Number(pileSize) || 0;
+  for (const tier of tiers) {
+    if (n < tier.maxPile) return tier.target;
+  }
+  return tiers[tiers.length - 1]?.target ?? null;
+}
+
+/**
+ * Compose la session quotidienne par défaut à partir des fiches dues.
+ * Priorité : leeches sévères > retard le plus ancien > dues normales >
+ * consolidation. Sortie interleavée + anti-interférence.
+ *
+ * Fonction PURE : ne modifie ni les fiches ni aucun state.
+ *
+ * @param {Array} dueCards - fiches réellement dues aujourd'hui.
+ * @param {Object} opts - { target, todayISO }
+ * @returns {Array} session plafonnée et ordonnée.
+ */
+export function composeDailySession(dueCards, opts = {}) {
+  const cards = Array.isArray(dueCards) ? dueCards : [];
+  const target = opts.target !== undefined ? opts.target : getDailySessionTarget(cards.length);
+
+  // Pas de plafond (petite pile) → comportement historique, juste réordonné.
+  if (!target || cards.length <= target) {
+    return antiInterferenceReorder(interleaveByCategory([...cards]));
+  }
+
+  const used = new Set();
+  const take = (list, n) => {
+    const out = [];
+    for (const c of list) {
+      if (out.length >= n) break;
+      if (used.has(c.id)) continue;
+      used.add(c.id);
+      out.push(c);
+    }
+    return out;
+  };
+
+  // 1. Leeches sévères (tri par sévérité décroissante)
+  const leeches = take(
+    cards
+      .map((c) => ({ card: c, ...analyzeLeech(c) }))
+      .filter((x) => x.isLeech)
+      .sort((a, b) => b.severity - a.severity)
+      .map((x) => x.card),
+    Math.ceil(target * DAILY_SESSION_MIX.leeches),
+  );
+
+  // 2. Retard le plus ancien (nextReview le plus lointain dans le passé)
+  const byOldest = [...cards].sort((a, b) => String(a.nextReview || "").localeCompare(String(b.nextReview || "")));
+  const backlog = take(byOldest, Math.ceil(target * DAILY_SESSION_MIX.backlog));
+
+  // 3. Dues normales du jour
+  const todayISO = opts.todayISO;
+  const normalDue = take(
+    byOldest.filter((c) => !todayISO || String(c.nextReview || "") >= todayISO),
+    Math.ceil(target * DAILY_SESSION_MIX.due),
+  );
+
+  // 4. Consolidation (haute rétention / niveau élevé) — comble le reste
+  const remaining = Math.max(0, target - (leeches.length + backlog.length + normalDue.length));
+  const consolidation = take(
+    cards.filter(isConsolidationCandidate).sort((a, b) => (b.level || 0) - (a.level || 0)),
+    remaining,
+  );
+
+  // 5. Si on n'atteint toujours pas la cible, on complète par le reste du retard.
+  let merged = [...leeches, ...backlog, ...normalDue, ...consolidation];
+  if (merged.length < target) {
+    merged = merged.concat(take(byOldest, target - merged.length));
+  }
+
+  return antiInterferenceReorder(interleaveByCategory(merged.slice(0, target)));
 }

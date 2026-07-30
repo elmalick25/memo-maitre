@@ -8,11 +8,27 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthReady } from "./lib/firebase";
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
-import { ensureMasteryStage } from "./lib/masteryStages";
+import { ensureMasteryStage, recordProductiveUse } from "./lib/masteryStages";
+import { isCardActive, isCardMastered, countMasteredCards } from "./lib/cardStatus";
+import {
+  pickProductionInvite,
+  canPromptProduction,
+  buildProductionValidationPrompt,
+  parseProductionValidation,
+  PRODUCTION_PROMPT_STORAGE_KEY,
+} from "./lib/productionPrompt";
+import {
+  appendDailyLog,
+  summarizeReviewLoad,
+  checkCreationGuard,
+  countNeverSeenCards,
+  REVIEW_LOAD_LOG_KEY,
+} from "./lib/reviewStats";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
-import { fsrs, fsrsR } from "./lib/fsrs";
+import { fsrs, fsrsR, fsrsFromProduction } from "./lib/fsrs";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
-import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, nextLapseCount } from "./lib/memoryLab";
+import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeDailySession, getDailySessionTarget, pickLeeches, nextLapseCount } from "./lib/memoryLab";
+import { isNewCard, splitNewAndReview, selectNewCardsForToday, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
 import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
 import { getAudioObjectUrl } from "./lib/audioStore";
 import useAudioFeedback from "./hooks/useAudioFeedback";
@@ -861,6 +877,19 @@ export default function MemoMaster() {
 
   const [sessionMode, setSessionMode] = useState("standard");
   const [showSessionSummary, setShowSessionSummary] = useState(false);
+  // ── Couche 5 : invitation « production » universelle en fin de session ──
+  const [productionInvite, setProductionInvite] = useState(null);   // { items: [...] }
+  const [productionDraft, setProductionDraft] = useState({});       // { [cardId]: phrase }
+  const [productionResult, setProductionResult] = useState({});     // { [cardId]: { correct, feedback } }
+  const [productionBusy, setProductionBusy] = useState(null);       // id en cours de validation
+  // ── Couche 7 : journal quotidien de charge (calibration des seuils) ─────
+  const [reviewLoadLog, setReviewLoadLog] = useState(() => {
+    try {
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(REVIEW_LOAD_LOG_KEY) : null;
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  });
   const [sessionSummary, setSessionSummary] = useState(null);
   const [sessionTimer, setSessionTimer] = useState(0);
   const sessionTimerRef = useRef(null);
@@ -1054,8 +1083,46 @@ export default function MemoMaster() {
     };
   }, [currentDate]);
 
-  const todayReviews = useMemo(() => expressions.filter((e) => isDue(e.nextReview, currentDate) && (e.level || 0) < 7 && !e.paused), [expressions, currentDate]);
-  const masteredCount = useMemo(() => expressions.filter((e) => e.level >= 7).length, [expressions]);
+  // Couche 6 : un SEUL critère de maîtrise (cardStatus.isCardMastered) —
+  // fini les `level >= 7` inline incohérents avec l'état FSRS.
+  const todayReviews = useMemo(() => expressions.filter((e) => isDue(e.nextReview, currentDate) && isCardActive(e) && !e.paused), [expressions, currentDate]);
+  const masteredCount = useMemo(() => countMasteredCards(expressions), [expressions]);
+
+  // ── Couche 3 : budget d'entrée des fiches jamais vues ───────────────────
+  // `todayReviews` reste le TOTAL réel de la pile (badges/stats non faussés) :
+  // seule la SESSION est plafonnée (couche 2) et le débit d'entrée limité.
+  const NEW_CARD_INTAKE_KEY = "memomaitre_newCardIntake_v1";
+  const [newCardIntake, setNewCardIntake] = useState(() => {
+    try {
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(NEW_CARD_INTAKE_KEY) : null;
+      return normalizeIntakeState(raw ? JSON.parse(raw) : null, today());
+    } catch { return makeIntakeState(today()); }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(NEW_CARD_INTAKE_KEY, JSON.stringify(newCardIntake)); } catch { /* quota / SSR */ }
+  }, [newCardIntake]);
+  useEffect(() => {
+    setNewCardIntake((prev) => normalizeIntakeState(prev, currentDate));
+  }, [currentDate]);
+
+  // Taille de la pile de RÉVISION (hors fiches jamais vues) : signal commun
+  // aux couches 2 et 3.
+  const reviewPileSize = useMemo(() => todayReviews.filter((e) => !isNewCard(e)).length, [todayReviews]);
+  const newCardBudget = useMemo(() => getNewCardBudget(reviewPileSize), [reviewPileSize]);
+  const newCardsRemainingToday = remainingIntake(newCardIntake, newCardBudget);
+
+  // Aperçu de la session du jour (couche 2) — mémoïsé, sert aussi à la
+  // bannière leech (couche 4) pour ne PAS recalculer les leeches deux fois.
+  const dailySessionPreview = useMemo(
+    () => composeDailySession(todayReviews.filter((e) => !isNewCard(e)), { todayISO: currentDate }),
+    [todayReviews, currentDate],
+  );
+  // Couche 4 : leeches sévères qui ne sont PAS déjà dans la session du jour.
+  const proactiveLeeches = useMemo(() => {
+    const inSession = new Set(dailySessionPreview.map((c) => c.id));
+    return pickLeeches(expressions, 6).filter((c) => !inSession.has(c.id)).slice(0, 3);
+  }, [expressions, dailySessionPreview]);
+
 
   // ── Scroll-to-top à chaque changement de vue ──
   useEffect(() => {
@@ -1403,6 +1470,29 @@ export default function MemoMaster() {
     setTimeout(() => setToast(null), 3200);
   }, []);
 
+  // ── Couche 7 : instrumentation (journal local, aucune dépendance externe) ──
+  useEffect(() => {
+    try { localStorage.setItem(REVIEW_LOAD_LOG_KEY, JSON.stringify(reviewLoadLog)); } catch { /* quota / SSR */ }
+  }, [reviewLoadLog]);
+
+  const logReviewLoad = useCallback((delta) => {
+    setReviewLoadLog((prev) => appendDailyLog(prev, today(), delta));
+  }, []);
+
+  // Garde-fou création (INFORMATIF, jamais bloquant) : couvre TOUS les points
+  // d'entrée de nouvelles fiches — génération IA, ajout manuel, import ET
+  // fiches nées d'un sauvetage de leech « ATOMISER ».
+  const notifyCardsCreated = useCallback((count) => {
+    const n = Number(count) || 0;
+    if (n <= 0) return;
+    logReviewLoad({ newCardsCreated: n });
+    setExpressions((prev) => {
+      const guard = checkCreationGuard(prev);
+      if (guard.warn) setTimeout(() => showToast(guard.message, "info"), 800);
+      return prev;
+    });
+  }, [logReviewLoad, showToast]);
+
   const updateStreakAfterSession = useCallback((count) => {
     const todayStr = today();
     const hour = new Date().getHours();
@@ -1585,6 +1675,24 @@ export default function MemoMaster() {
         avgLevelBefore: avgBefore,
         avgLevelAfter: avgAfter,
       });
+      // ── COUCHE 5 : filet de sécurité « production » universel ───────────
+      // Actif quelle que soit la vue (et pas seulement EnglishPractice /
+      // EnglishInTheWild) : c'est la condition qui rend sûre la levée du
+      // plafond FSRS pour les fiches `recalled` (couche 1).
+      try {
+        const rawLast = typeof localStorage !== "undefined" ? localStorage.getItem(PRODUCTION_PROMPT_STORAGE_KEY) : null;
+        const lastAt = rawLast ? Number(rawLast) : null;
+        if (canPromptProduction(lastAt)) {
+          const invite = pickProductionInvite(expressions, sessionCards);
+          if (invite.length) {
+            setProductionInvite({ items: invite });
+            setProductionDraft({});
+            setProductionResult({});
+            try { localStorage.setItem(PRODUCTION_PROMPT_STORAGE_KEY, String(Date.now())); } catch { /* SSR */ }
+          }
+        }
+      } catch (e) { console.warn("[couche5] invitation production", e); }
+
       setShowSessionSummary(true);
       setView("review");
     } else {
@@ -2041,6 +2149,7 @@ RÈGLES STRICTES : le bloc de code DOIT être encadré par \`\`\`<langage> / \`\
     })).filter(e => e.front && e.back);
     setExpressions(prev => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
+    notifyCardsCreated(newExps.length); // couche 7
     showToast(`🎉 ${newExps.length} fiches sauvegardées !`);
     setBatchPreview([]); setShowBatchPreview(false); setAiPrompt("");
     setBatchLinks([]);
@@ -2100,6 +2209,7 @@ ${ATOMIC_CARD_RULES}`;
     const newExp = { id: crypto.randomUUID(), front: card.front || "", back: card.back || "", example: card.example || "", category: addForm.category, level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null };
     setExpressions(prev => { const updated = [newExp, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + 1 }));
+    notifyCardsCreated(1); // couche 7
     showToast("✅ Fiche sauvegardée !");
   };
   const saveAllChatCards = (cards) => {
@@ -2107,6 +2217,7 @@ ${ATOMIC_CARD_RULES}`;
     const newExps = cards.map((c, i) => ({ id: crypto.randomUUID(), front: c.front || "", back: c.back || "", example: c.example || "", category: addForm.category, level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null }));
     setExpressions(prev => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
+    notifyCardsCreated(newExps.length); // couche 7
     showToast(`✅ ${newExps.length} fiches sauvegardées d'un coup !`);
   };
 
@@ -2187,6 +2298,7 @@ ${ATOMIC_CARD_RULES}`;
     }
     
     setExpressions(prev => [...newExps, ...prev]);
+    notifyCardsCreated(newExps.length); // couche 7
     setStats(prev => ({
       ...prev,
       aiGenerated: prev.aiGenerated + newExps.length,
@@ -2392,11 +2504,75 @@ ${ATOMIC_CARD_RULES}`;
         lapseCount: 0,
       } : c));
 
+      // Couche 7 : les fiches issues d'un sauvetage « ATOMISER » sont de
+      // vraies nouvelles fiches — elles doivent être comptées comme telles.
+      if (additions.length) notifyCardsCreated(additions.length);
       showToast(`🩹 Fiche sauvée (${strategy})${additions.length ? ` — +${additions.length} variantes ajoutées` : ""}`);
     } catch (e) {
       showToast("Erreur pendant la reformulation IA.", "error");
     }
     setLeechRescueLoading(false);
+  };
+
+  // ── Couche 5 : validation d'une phrase produite (mini-défi de fin de session)
+  // Réutilise exactement le critère de validation de useProductiveUse
+  // (productionPrompt.js) sans dépendre du composant EnglishPractice.
+  const handleValidateProduction = async (card) => {
+    const sentence = (productionDraft[card.id] || "").trim();
+    if (sentence.length < 3) { showToast("Écris une phrase complète 🙂", "info"); return; }
+    setProductionBusy(card.id);
+    try {
+      const { system, user } = buildProductionValidationPrompt(card, sentence);
+      const raw = await callClaude(system, user);
+      const parsed = parseProductionValidation(raw);
+      setProductionResult((prev) => ({ ...prev, [card.id]: parsed }));
+      if (parsed.correct) {
+        setExpressions((prev) => prev.map((e) => {
+          if (e.id !== card.id) return e;
+          const updated = recordProductiveUse(e, { context: "writing", correct: true, note: sentence });
+          const srs = fsrsFromProduction({ ...updated, elapsedDays: null });
+          return {
+            ...updated,
+            ...srs,
+            reviewHistory: [
+              ...(e.reviewHistory || []),
+              { date: today(), q: 5, newLevel: e.level ?? 0, interval: srs.interval, source: "production-challenge" },
+            ],
+          };
+        }));
+        showToast(`🗣️ "${card.front}" produite en contexte — intervalle allongé`, "success");
+      }
+    } catch (e) {
+      console.warn("[handleValidateProduction]", e);
+      showToast("Validation indisponible pour le moment.", "error");
+    }
+    setProductionBusy(null);
+  };
+
+  // ── Couche 3 : apprendre MAINTENANT une fiche jamais vue ─────────────────
+  // Consomme un slot du budget du jour (ne le contourne pas). Si le budget est
+  // épuisé, on informe explicitement l'utilisateur et on lui laisse un
+  // override CONSCIENT plutôt qu'un blocage silencieux.
+  const handleLearnNow = (card) => {
+    if (!card) return;
+    const todayISO = today();
+    const state = normalizeIntakeState(newCardIntake, todayISO);
+    const already = state.admittedIds.includes(card.id);
+    const used = state.admittedIds.length;
+    if (!already && remainingIntake(state, newCardBudget) <= 0) {
+      const ok = typeof window !== "undefined" && window.confirm(
+        `Budget du jour atteint (${used}/${newCardBudget} nouvelles fiches).\n\n` +
+        `Cette fiche sera proposée demain automatiquement.\nLa forcer quand même aujourd'hui ?`
+      );
+      if (!ok) {
+        showToast(`Budget du jour atteint (${used}/${newCardBudget}) — cette fiche revient demain.`, "info");
+        return;
+      }
+      showToast("⚠️ Budget dépassé volontairement — attention à la charge de demain.", "info");
+    }
+    setNewCardIntake(consumeIntakeSlot(state, card.id, todayISO));
+    setExpandedCard(null);
+    startReview(null, "standard", [card]);
   };
 
   // ── Démarrer une session « Points faibles » (leeches + due + consolidation)
@@ -2774,6 +2950,7 @@ ${ATOMIC_CARD_RULES}`;
         const newExps = [newExp];
 
         setExpressions((prev) => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
+        notifyCardsCreated(1); // couche 7
         showToast("✅ Fiche ajoutée !");
       }
 
@@ -2852,6 +3029,7 @@ ${ATOMIC_CARD_RULES}`;
 
   const startReview = (catFilter = null, mode = "standard", fixedQueue = null) => {
     let queue;
+    let cappedFrom = 0; // taille réelle de la pile si la session a été plafonnée
     if (fixedQueue && fixedQueue.length > 0) {
       // Session ciblée : on utilise exactement les fiches fournies (ex: fiches urgentes)
       queue = getSmartQueue([...fixedQueue]);
@@ -2867,10 +3045,37 @@ ${ATOMIC_CARD_RULES}`;
       if (!catFilter && examCats.length > 0) {
         queue = getSmartQueue(expressions.filter((e) => examCats.includes(e.category)));
       } else {
-        queue = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
+        const basePool = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
+
+        // ── Couche 3 : budget d'entrée des fiches jamais vues ──────────────
+        const { newCards, reviewCards } = splitNewAndReview(basePool);
+        const intake = selectNewCardsForToday(newCards, {
+          todayISO: today(),
+          pileSize: reviewCards.length,
+          state: newCardIntake,
+          budget: newCardBudget,
+        });
+        if (intake.state !== newCardIntake) setNewCardIntake(intake.state);
+        queue = [...reviewCards, ...intake.admitted];
+
+        // ── Couche 2 : session plafonnée + priorisée (leech > retard > dues
+        // normales > consolidation), appliquée à TOUS les modes — y compris
+        // "flow"/"interleaving". Avant ce correctif, ces deux modes servaient
+        // la pile brute sans plafond (jusqu'à ~200 fiches d'un coup) car ils
+        // court-circuitaient composeDailySession. Les fiches non retenues
+        // restent dues et reviendront demain : aucune perte, juste un débit
+        // contrôlé, quel que soit le bouton utilisé pour lancer la session.
+        const pileSize = queue.length;
+        const composed = composeDailySession(queue, { todayISO: today() });
+        if (composed.length < pileSize) {
+          cappedFrom = pileSize;
+        }
+
         if (mode === "interleaving" || mode === "flow") {
+          // Réordonnancement round-robin par catégorie, appliqué UNIQUEMENT
+          // sur l'ensemble déjà plafonné (composed), pas sur la pile brute.
           const byCat = {};
-          queue.forEach(e => {
+          composed.forEach(e => {
             if (!byCat[e.category]) byCat[e.category] = [];
             byCat[e.category].push(e);
           });
@@ -2882,17 +3087,33 @@ ${ATOMIC_CARD_RULES}`;
             }
           }
         } else {
-          queue = getSmartQueue(queue);
+          queue = getSmartQueue(composed);
         }
       }
     }
 
     if (queue.length === 0) { showToast("Aucune fiche à réviser !", "info"); return; }
+
+    // ── COUCHE 7 : instrumentation — on enregistre la charge RÉELLE du jour
+    // (pile due vs. session servie) pour pouvoir régler les constantes des
+    // couches 2 et 3 sur des données et non sur une estimation.
+    try {
+      logReviewLoad({
+        pileSize: todayReviews.length,
+        served: queue.length,
+        newCardsServed: queue.filter(isNewCard).length,
+        neverSeenBacklog: countNeverSeenCards(expressions),
+      });
+    } catch (e) { console.warn("[couche7] log", e); }
+
     setReviewQueue(queue); setReviewIndex(0); setRevealed(false); setUserAnswer(""); setSocraticHint(""); setSocraticMode(false); setRabbitHoleOpen(false); setMnemonicText(""); setReviewSessionDone(0);
     setCardStartTime(Date.now());
     setShowSessionSummary(false);
     setSessionTimer(0);
     setView("review");
+    if (cappedFrom > queue.length) {
+      showToast(`🎯 Session allégée : ${queue.length} fiches sur ${cappedFrom} dues (les autres reviendront demain)`, "info");
+    }
 
     if (mode === "vocal") {
       setVoiceReviewActive(true);
@@ -4177,8 +4398,14 @@ ${ATOMIC_CARD_RULES}`;
     let score = 60;
     if (stats.streak >= 7) score += 20;
     else if (stats.streak >= 3) score += 10;
-    if (todayReviews.length === 0) score += 15;
-    else if (todayReviews.length > 20) score -= 10;
+    // Basé sur la session RÉELLE du jour (déjà plafonnée par la couche 2),
+    // pas sur la pile brute (todayReviews.length) : avec un gros backlog de
+    // fond, ce dernier reste quasi toujours > 20 même quand la session du
+    // jour est parfaitement gérée — le malus était donc structurellement
+    // injuste et ne reflétait pas l'effort réel de l'utilisateur.
+    const doneToday = sessions.some((s) => s.date === today() && s.count > 0);
+    if (doneToday) score += 15;
+    else if (dailySessionPreview.length > 20) score -= 10;
     const hour = new Date().getHours();
     if (hour >= 8 && hour <= 12) score += 10; // matin
     else if (hour >= 22) score -= 5; // tard
@@ -6266,6 +6493,31 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 display: "flex", flexDirection: "column", gap: 20,
                 pointerEvents: isEnteringFlow ? "none" : "auto"
               }}>
+                {/* ── COUCHE 4 : détection de leech proactive ─────────────── */}
+                {proactiveLeeches.length > 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+                    background: isDarkMode ? "rgba(239,68,68,0.12)" : "rgba(239,68,68,0.08)",
+                    border: "1px solid rgba(239,68,68,0.35)", borderRadius: 16, padding: "14px 18px",
+                  }}>
+                    <span style={{ fontSize: 22 }}>🩹</span>
+                    <div style={{ flex: 1, minWidth: 220 }}>
+                      <div style={{ fontWeight: 900, color: theme.text, fontSize: 14 }}>
+                        {proactiveLeeches.length} fiche{proactiveLeeches.length > 1 ? "s" : ""} bloque{proactiveLeeches.length > 1 ? "nt" : ""} ta progression
+                      </div>
+                      <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
+                        Plus de révisions n'y changeront rien — il faut les <strong>reformuler</strong>. {proactiveLeeches.map((c) => String(c.front || "").slice(0, 28)).join(" · ")}
+                      </div>
+                    </div>
+                    <button onClick={() => handleRescueLeech(proactiveLeeches[0])} disabled={leechRescueLoading} className="hov" style={{ padding: "10px 18px", background: "#EF4444", color: "white", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13, cursor: leechRescueLoading ? "wait" : "pointer" }}>
+                      {leechRescueLoading ? "…" : "🩹 Sauver la 1ère"}
+                    </button>
+                    <button onClick={() => startReview(null, "standard", proactiveLeeches)} className="hov" style={{ padding: "10px 18px", background: "transparent", color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 12, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      Les revoir
+                    </button>
+                  </div>
+                )}
+
                 {/* ── COUCHE 1 : Intelligence de Veille Continue ── */}
 
                 {/* ══ HERO HEADER ══════════════════════════════════════════════════════ */}
@@ -6759,6 +7011,47 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   <div style={{ fontSize: 12, color: theme.textMuted }}>Niveau moy. estimé après</div>
                 </div>
               </div>
+              {/* ── COUCHE 5 : mini-défi de production (toutes vues confondues) ── */}
+              {productionInvite?.items?.length > 0 && (
+                <div style={{ marginTop: 24, textAlign: "left", background: theme.inputBg, borderRadius: 18, padding: 18, border: `1px solid ${theme.border}` }}>
+                  <div style={{ fontWeight: 900, color: theme.text, fontSize: 15 }}>🗣️ Défi production ({productionInvite.items.length})</div>
+                  <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, marginBottom: 14 }}>
+                    Ces expressions sont reconnues mais jamais produites. Écris une phrase réelle avec chacune : c'est ce qui autorise des intervalles longs.
+                  </div>
+                  {productionInvite.items.map((card) => {
+                    const res = productionResult[card.id];
+                    return (
+                      <div key={card.id} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${theme.border}` }}>
+                        <div style={{ fontWeight: 800, color: theme.highlight, fontSize: 14 }}>{card.front}</div>
+                        <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 8 }}>{card.back}</div>
+                        <textarea
+                          value={productionDraft[card.id] || ""}
+                          onChange={(e) => setProductionDraft((prev) => ({ ...prev, [card.id]: e.target.value }))}
+                          placeholder="Ta phrase en anglais…"
+                          rows={2}
+                          style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${theme.border}`, background: theme.cardBg, color: theme.text, fontSize: 13, resize: "vertical" }}
+                        />
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+                          <button
+                            onClick={() => handleValidateProduction(card)}
+                            disabled={productionBusy === card.id || res?.correct}
+                            className="hov"
+                            style={{ padding: "8px 16px", background: res?.correct ? "#10B98133" : "#10B981", color: res?.correct ? "#10B981" : "white", border: "none", borderRadius: 10, fontWeight: 800, fontSize: 12, cursor: res?.correct ? "default" : "pointer" }}
+                          >{res?.correct ? "✅ Validée" : productionBusy === card.id ? "Analyse…" : "Valider"}</button>
+                          {res?.feedback && (
+                            <span style={{ fontSize: 12, color: res.correct ? "#10B981" : theme.textMuted }}>{res.feedback}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <button
+                    onClick={() => setProductionInvite(null)}
+                    className="hov"
+                    style={{ padding: "6px 12px", background: "none", border: `1px solid ${theme.border}`, borderRadius: 10, color: theme.textMuted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                  >Plus tard</button>
+                </div>
+              )}
               <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
             </div>
           ) : reviewQueue.length === 0 ? (
@@ -8866,6 +9159,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                               <button onClick={() => { startDuel(expandedCard); setExpandedCard(null); }} className="btn-glow hov" style={{ flex: 1, padding: "16px", background: "linear-gradient(135deg, #4D6BFE, #1E3A8A)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                                 <span style={{ fontSize: 20 }}>⚔️</span> Duel IA Instantané
                               </button>
+                              {isNewCard(expandedCard) && (
+                                <button onClick={() => handleLearnNow(expandedCard)} className="hov" title={`Budget du jour : ${newCardsRemainingToday}/${newCardBudget} nouvelles fiches restantes`} style={{ padding: "16px", background: "linear-gradient(135deg,#10B981,#047857)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>
+                                  🚀 Apprendre maintenant <span style={{ opacity: 0.8, fontWeight: 600 }}>({newCardsRemainingToday}/{newCardBudget})</span>
+                                </button>
+                              )}
                               <button onClick={() => { startEdit(expandedCard); setExpandedCard(null); }} className="hov" style={{ padding: "16px", background: theme.inputBg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>
                                 ✏️ Éditer
                               </button>
@@ -9160,6 +9458,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           _url: item.url,
                         };
                         setExpressions(prev => [card, ...prev]);
+                        notifyCardsCreated(1); // couche 7 — combler la fuite de comptage
                         showToast?.("Fiche créée depuis la veille", "success");
                       } catch (e) {
                         showToast?.("Erreur création fiche", "error");

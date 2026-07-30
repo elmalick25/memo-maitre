@@ -10,16 +10,30 @@ const FSRS_FACTOR = 19 / 81;
 const TARGET_R = 0.9;
 
 // ── Phase 2 : plafond d'intervalle tant que la fiche n'est pas "produced" ───
-// Tant qu'une fiche n'a pas atteint au moins le stage "produced" (usage actif
-// prouvé en contexte réel), on plafonne l'intervalle affiché à 3 jours — même
-// si stability/difficulty calculées suggéreraient beaucoup plus. Ces valeurs
+// Tant qu'une fiche est encore FRAGILE (discovered / recognized / stage
+// inconnu), on plafonne l'intervalle affiché à 3 jours — même si
+// stability/difficulty calculées suggéreraient beaucoup plus. Ces valeurs
 // (stability, difficulty) restent intactes : seul `interval` (et donc
-// `nextReview`) est plafonné pour éviter qu'une fiche "connue par cœur mais
-// jamais utilisée" ne disparaisse des révisions pendant des mois.
+// `nextReview`) est plafonné.
+//
+// ⚠️ Changement (couche 1 — réduction de la surcharge quotidienne) :
+// le stade `recalled` N'EST PLUS plafonné. Par définition (masteryStages.js)
+// une fiche `recalled` a repetitions >= 2 ET interval >= 5 : elle est déjà
+// stable au sens FSRS. La rappeler tous les 1-3 jours indéfiniment gonflait
+// la pile quotidienne sans bénéfice mnésique.
+// La pression « il faut produire cette fiche à l'oral/à l'écrit » est déjà
+// portée par getExpressionsNeedingProduction() (masteryStages.js), utilisée
+// par useProductiveUse.js / EnglishPractice.jsx : ce mécanisme sélectionne les
+// fiches `recalled` INDÉPENDAMMENT de leur nextReview, donc il continue de
+// fonctionner sans le plafond. Le cap FSRS faisait doublon, en plus coûteux.
 export const PRE_PRODUCTION_INTERVAL_CAP_DAYS = 3;
-const PRODUCTIVE_STAGES = new Set(['produced', 'mastered']);
 
-function shouldCapInterval(card) {
+// Stades qui suivent l'intervalle FSRS naturel (aucun plafond).
+const UNCAPPED_STAGES = new Set(['recalled', 'produced', 'mastered']);
+// Conservé pour compatibilité de lecture : stades considérés « productifs ».
+export const PRODUCTIVE_STAGES = new Set(['produced', 'mastered']);
+
+export function shouldCapInterval(card) {
   const { masteryStage, category } = card;
   // Le plafond pré-production (imposant une pratique orale/chat) ne concerne QUE l'anglais
   if (!category || !category.toLowerCase().includes("anglais")) {
@@ -27,7 +41,7 @@ function shouldCapInterval(card) {
   }
 
   if (!masteryStage) return true; // pas de stage connu → on protège par défaut
-  return !PRODUCTIVE_STAGES.has(masteryStage);
+  return !UNCAPPED_STAGES.has(masteryStage);
 }
 
 export function fsrsR(t, S) {

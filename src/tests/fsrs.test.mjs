@@ -140,10 +140,30 @@ test('Plafond pré-production : interval borné à 3j sans masteryStage (fiche a
     `interval capé attendu ≤ ${PRE_PRODUCTION_INTERVAL_CAP_DAYS}, reçu ${card.interval}`);
 });
 
-test('Plafond pré-production : "recalled" est encore capé', () => {
+test('Plafond levé pour "recalled" (fiche déjà stable, pression de production déléguée aux missions)', () => {
   let card = { ...newCard(), category: '🇬🇧 Anglais', masteryStage: 'recalled' };
   for (let i = 0; i < 6; i++) {
     const r = fsrs({ ...card, category: '🇬🇧 Anglais', masteryStage: 'recalled' }, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  assert.ok(card.interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS,
+    `"recalled" ne doit plus être capé : interval attendu > ${PRE_PRODUCTION_INTERVAL_CAP_DAYS}, reçu ${card.interval}`);
+});
+
+test('Plafond maintenu pour "recognized" (fiche encore fragile)', () => {
+  let card = { ...newCard(), category: '🇬🇧 Anglais', masteryStage: 'recognized' };
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs({ ...card, category: '🇬🇧 Anglais', masteryStage: 'recognized' }, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  assert.ok(card.interval <= PRE_PRODUCTION_INTERVAL_CAP_DAYS,
+    `"recognized" doit rester capé ≤ ${PRE_PRODUCTION_INTERVAL_CAP_DAYS}, reçu ${card.interval}`);
+});
+
+test('Plafond maintenu pour "discovered" / absence de stage', () => {
+  let card = { ...newCard(), category: '🇬🇧 Anglais', masteryStage: 'discovered' };
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs({ ...card, category: '🇬🇧 Anglais', masteryStage: 'discovered' }, 5);
     card = { ...card, ...r, elapsedDays: r.interval };
   }
   assert.ok(card.interval <= PRE_PRODUCTION_INTERVAL_CAP_DAYS);
