@@ -1489,123 +1489,151 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         }
       `}</style>
 
-      {/* ── HEADER ── */}
+      {/* ── UNIFIED HERO HEADER & CONTROL PANEL ── */}
       <div style={{
-        position: "relative", zIndex: 20,
-        background: isDarkMode ? "rgba(4,6,15,.92)" : "rgba(248,250,252,.94)",
-        backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
-        borderBottom: "1px solid var(--mm-border)",
+        background: isDarkMode 
+          ? "linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,27,75,0.7))" 
+          : "linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.9))",
+        border: "1px solid var(--mm-border-strong, rgba(139,92,246,0.25))",
+        borderRadius: 24,
+        padding: "16px 20px",
+        marginBottom: 16,
+        boxShadow: "0 12px 32px rgba(0,0,0,0.12)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
       }}>
-        {/* Top bar */}
-        <div style={{ padding: "12px 16px 0", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          {/* Logo + title */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+        {/* Top Header Row */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          {/* Logo & Title */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 200 }}>
             <div style={{
-              width: 34, height: 34, borderRadius: 11, flexShrink: 0,
+              width: 42, height: 42, borderRadius: 14, flexShrink: 0,
               background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 17, boxShadow: "0 4px 14px rgba(139,92,246,.4)",
+              fontSize: 20, boxShadow: "0 6px 18px rgba(139,92,246,0.35)",
             }}>📡</div>
             <div>
-              <div style={{ fontWeight: 900, fontSize: 15, color: "var(--mm-fg)", letterSpacing: "-0.4px", fontFamily: "var(--mm-font-display)", lineHeight: 1.2 }}>
-                Veille Tech
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h1 style={{ margin: 0, fontWeight: 900, fontSize: 18, color: "var(--mm-fg)", letterSpacing: "-0.4px", fontFamily: "var(--mm-font-display)", lineHeight: 1.2 }}>
+                  Veille Tech
+                </h1>
+                {isLive && (
+                  <span style={{
+                    background: "#ef4444", color: "#fff", fontSize: 9, fontWeight: 900,
+                    padding: "2px 7px", borderRadius: 10, letterSpacing: 0.8,
+                    animation: "tiv-pulse 2s infinite", display: "flex", alignItems: "center", gap: 4, flexShrink: 0
+                  }}>
+                    <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff" }} />
+                    LIVE
+                  </span>
+                )}
               </div>
-              <div style={{ fontSize: 10, color: "var(--mm-fg-muted)", fontWeight: 500, lineHeight: 1.2 }}>
-                {loading ? "Chargement…" : lastRefresh ? `${frCount} articles FR · Mis à jour ${timeAgo(lastRefresh, now)}` : "Actualités tech"}
+              <div style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 500, marginTop: 2 }}>
+                {loading ? "Chargement du flux tech…" : lastRefresh ? `${frCount} articles FR · Mis à jour ${timeAgo(lastRefresh, now)}` : "Actualités tech"}
                 {prefetchProgress && <span style={{ marginLeft: 6, color: "#a78bfa" }}>· 📥 Hors-ligne {prefetchProgress.done}/{prefetchProgress.total}</span>}
               </div>
             </div>
-            {/* LIVE badge */}
-            {isLive && (
-              <span style={{
-                background: "#ef4444", color: "#fff", fontSize: 9, fontWeight: 900,
-                padding: "2px 7px", borderRadius: 10, letterSpacing: 0.8,
-                animation: "tiv-pulse 2s infinite", display: "flex", alignItems: "center", gap: 3, flexShrink: 0,
-              }}>
-                <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff" }} />
-                LIVE
-              </span>
-            )}
-            {loading && <span style={{ fontSize: 13, animation: "tiv-spin 1s linear infinite" }}>⌛</span>}
           </div>
 
-          {/* Controls */}
-          <div className="tiv-topbar-controls" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
-                                                {/* Refresh */}
-            <button onClick={() => fetchAll(false)} disabled={loading} className="tiv-btn-refresh">
-              <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
-              <span className="tiv-btn-refresh-label">Regénérer</span>
-            </button>
-          </div>
+          {/* Refresh Action */}
+          <button onClick={() => fetchAll(false)} disabled={loading} className="tiv-btn-refresh" style={{
+            background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
+            color: "#fff", border: "none", borderRadius: 14, padding: "8px 16px",
+            fontSize: 12, fontWeight: 700, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6,
+            boxShadow: "0 4px 14px rgba(139,92,246,0.35)", transition: "all 0.2s"
+          }}>
+            <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
+            <span>Regénérer</span>
+          </button>
         </div>
 
-        {/* Progress bar */}
+        {/* Loading Progress Bar */}
         {loading && (
-          <div style={{ height: 2, background: "var(--mm-border)", marginTop: 8, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg,#8b5cf6,#6366f1)", transition: "width .3s", borderRadius: 2 }} />
+          <div style={{ height: 3, background: "rgba(139,92,246,0.15)", borderRadius: 3, marginBottom: 12, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg,#8b5cf6,#6366f1)", transition: "width .3s", borderRadius: 3 }} />
           </div>
         )}
 
-        <div style={{ padding: "10px 16px 0" }}>
-          {!isSearching && tab !== "digest" && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "0 4px" }}>
-              <select value={sortMode} onChange={e => setSortMode(e.target.value)} style={{ background: "rgba(255,255,255,.05)", color: "var(--mm-fg)", border: "1px solid var(--mm-border)", borderRadius: 8, padding: "4px 8px", fontSize: 11, outline: "none", cursor: "pointer" }}>
+        {/* Scrollable Categories Bar */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, overflowX: "auto",
+          paddingBottom: 6, scrollbarWidth: "none", msOverflowStyle: "none",
+          WebkitOverflowScrolling: "touch", marginBottom: 10
+        }}>
+          {TABS.map(t => {
+            const isActive = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                style={{
+                  background: isActive 
+                    ? "linear-gradient(135deg,#8b5cf6,#6366f1)" 
+                    : isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+                  color: isActive ? "#ffffff" : "var(--mm-fg-muted)",
+                  border: isActive ? "none" : "1px solid var(--mm-border, rgba(139,92,246,0.15))",
+                  borderRadius: 14, padding: "7px 14px",
+                  fontSize: 12, fontWeight: isActive ? 800 : 600,
+                  whiteSpace: "nowrap", cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                  boxShadow: isActive ? "0 4px 14px rgba(139,92,246,0.35)" : "none",
+                  transition: "all 0.2s ease", flexShrink: 0
+                }}
+              >
+                <span>{t.label}</span>
+                {t.id === "fr" && frCount > 0 && (
+                  <span style={{
+                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
+                    color: isActive ? "#fff" : "#f87171",
+                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
+                  }}>{frCount > 99 ? "99+" : frCount}</span>
+                )}
+                {t.id === "top" && freshCount > 0 && (
+                  <span style={{
+                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
+                    color: isActive ? "#fff" : "#f87171",
+                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
+                  }}>{freshCount}</span>
+                )}
+                {t.id === "saved" && savedCount > 0 && (
+                  <span style={{
+                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
+                    color: isActive ? "#fff" : "#f87171",
+                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
+                  }}>{savedCount}</span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Sort & Time Filters */}
+        {!isSearching && tab !== "digest" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", paddingTop: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: isDarkMode ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.6)", padding: "4px 10px", borderRadius: 10, border: "1px solid var(--mm-border, rgba(139,92,246,0.15))" }}>
+              <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 600 }}>Trier par :</span>
+              <select value={sortMode} onChange={e => setSortMode(e.target.value)} style={{ background: "transparent", color: "var(--mm-fg)", border: "none", fontSize: 11, fontWeight: 700, outline: "none", cursor: "pointer" }}>
                 <option value="relevance" style={{ color: "#000" }}>⭐ Pertinence</option>
                 <option value="recent" style={{ color: "#000" }}>🕐 Récent</option>
                 <option value="popular" style={{ color: "#000" }}>🔥 Populaire</option>
               </select>
-              <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} style={{ background: "rgba(255,255,255,.05)", color: "var(--mm-fg)", border: "1px solid var(--mm-border)", borderRadius: 8, padding: "4px 8px", fontSize: 11, outline: "none", cursor: "pointer" }}>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 6, background: isDarkMode ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.6)", padding: "4px 10px", borderRadius: 10, border: "1px solid var(--mm-border, rgba(139,92,246,0.15))" }}>
+              <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 600 }}>Période :</span>
+              <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} style={{ background: "transparent", color: "var(--mm-fg)", border: "none", fontSize: 11, fontWeight: 700, outline: "none", cursor: "pointer" }}>
                 <option value="all" style={{ color: "#000" }}>Tout</option>
                 <option value="today" style={{ color: "#000" }}>Aujourd'hui</option>
                 <option value="week" style={{ color: "#000" }}>Cette semaine</option>
               </select>
             </div>
-          )}
-        </div>
-
-        {/* Tabs Dropdown */}
-        <div style={{ position: "relative", padding: "10px 16px 10px", opacity: isSearching ? 0.45 : 1, pointerEvents: isSearching ? "none" : "auto" }}>
-          <button 
-            onClick={() => setIsTabsOpen(!isTabsOpen)} 
-            className="tiv-tab tiv-tab-active"
-            style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderRadius: 16 }}
-          >
-            <span>{TABS.find(t => t.id === tab)?.label || "Catégories"}</span>
-            <span style={{ transform: isTabsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", fontSize: 10 }}>▼</span>
-          </button>
-          
-          {isTabsOpen && (
-            <div style={{
-              position: "absolute", top: "100%", left: 16, right: 16, zIndex: 30,
-              background: isDarkMode ? "#0f1123" : "#ffffff", border: "1px solid var(--mm-border-strong)",
-              borderRadius: 16, padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-              display: "flex", flexDirection: "column", gap: 4,
-              maxHeight: "300px", overflowY: "auto"
-            }}>
-              {TABS.map(t => (
-                <button key={t.id} onClick={() => { setTab(t.id); setIsTabsOpen(false); }} 
-                  style={{
-                    background: tab === t.id ? "rgba(139,92,246,.15)" : "transparent",
-                    color: tab === t.id ? "var(--mm-fg)" : "var(--mm-fg-muted)",
-                    border: "none", borderRadius: 12, padding: "10px 14px",
-                    textAlign: "left", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    display: "flex", alignItems: "center", gap: 8,
-                    transition: "all .2s"
-                  }}
-                >
-                  {t.label}
-                  {t.id === "fr" && frCount > 0 && <span className="tiv-tab-badge" style={{ marginLeft: "auto" }}>{frCount > 99 ? "99+" : frCount}</span>}
-                  {t.id === "top" && freshCount > 0 && <span className="tiv-tab-badge" style={{ marginLeft: "auto" }}>{freshCount}</span>}
-                  {t.id === "saved" && savedCount > 0 && <span className="tiv-tab-badge" style={{ marginLeft: "auto" }}>{savedCount}</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ── CONTENT ── */}
-      <div style={{ padding: "14px 12px 90px" }}>
+      <div style={{ padding: "0 4px 90px" }}>
 
         {/* ── DIGEST TAB ── */}
         {tab === "digest" && !isSearching && (
