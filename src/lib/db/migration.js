@@ -64,7 +64,10 @@ export async function migrateFromLocalStorage() {
               if (card.createdAt) {
                 const dt = new Date(card.createdAt).getTime()
                 if (!isNaN(dt)) exp._raw.created_at = dt
+              } else if (!exp._raw.created_at) {
+                exp._raw.created_at = Date.now()
               }
+              exp._raw.updated_at = Date.now()
             })
           )
         }
@@ -184,6 +187,7 @@ export async function migrateOrphanSRSData() {
         await record.update(exp => {
           exp.reviewHistory = merged
           // NE PAS toucher : interval, nextReview, stability, difficulty, level
+          exp._raw.updated_at = Date.now()
         })
 
         cardsTouched += 1

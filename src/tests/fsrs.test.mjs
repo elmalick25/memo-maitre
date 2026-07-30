@@ -125,9 +125,12 @@ test('FSRS — nextReview est dans le futur quand interval >= 1', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 import { fsrsFromProduction, PRE_PRODUCTION_INTERVAL_CAP_DAYS } from '../lib/fsrs.js';
 
-test('Plafond pré-production : interval borné à 3j sans masteryStage', () => {
+// NOTE : le plafond pré-production ne s'applique qu'aux fiches d'anglais
+// (catégorie contenant "anglais") — c'est la règle produit : forcer la
+// production orale/écrite avant d'espacer les révisions.
+test('Plafond pré-production : interval borné à 3j sans masteryStage (fiche anglais)', () => {
   // On chauffe une fiche avec plusieurs "Easy" pour dépasser normalement 3j
-  let card = newCard();
+  let card = { ...newCard(), category: '🇬🇧 Anglais' };
   for (let i = 0; i < 6; i++) {
     const r = fsrs(card, 5);
     card = { ...card, ...r, elapsedDays: r.interval };
@@ -138,18 +141,18 @@ test('Plafond pré-production : interval borné à 3j sans masteryStage', () => 
 });
 
 test('Plafond pré-production : "recalled" est encore capé', () => {
-  let card = { ...newCard(), masteryStage: 'recalled' };
+  let card = { ...newCard(), category: '🇬🇧 Anglais', masteryStage: 'recalled' };
   for (let i = 0; i < 6; i++) {
-    const r = fsrs({ ...card, masteryStage: 'recalled' }, 5);
+    const r = fsrs({ ...card, category: '🇬🇧 Anglais', masteryStage: 'recalled' }, 5);
     card = { ...card, ...r, elapsedDays: r.interval };
   }
   assert.ok(card.interval <= PRE_PRODUCTION_INTERVAL_CAP_DAYS);
 });
 
 test('Plafond levé quand masteryStage = "produced"', () => {
-  let card = { ...newCard(), masteryStage: 'produced' };
+  let card = { ...newCard(), category: '🇬🇧 Anglais', masteryStage: 'produced' };
   for (let i = 0; i < 6; i++) {
-    const r = fsrs({ ...card, masteryStage: 'produced' }, 5);
+    const r = fsrs({ ...card, category: '🇬🇧 Anglais', masteryStage: 'produced' }, 5);
     card = { ...card, ...r, elapsedDays: r.interval };
   }
   assert.ok(card.interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS,
@@ -170,4 +173,14 @@ test('fsrsFromProduction : équivalent à un grade "easy" (q=5)', () => {
   assert.equal(a.interval, b.interval);
   assert.equal(a.stability, b.stability);
   assert.equal(a.difficulty, b.difficulty);
+});
+
+test('Hors anglais : aucun plafond pré-production', () => {
+  let card = { ...newCard(), category: '💻 Dev' };
+  for (let i = 0; i < 6; i++) {
+    const r = fsrs({ ...card, category: '💻 Dev' }, 5);
+    card = { ...card, ...r, elapsedDays: r.interval };
+  }
+  assert.ok(card.interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS,
+    `une fiche non-anglaise ne doit pas être capée, reçu ${card.interval}`);
 });

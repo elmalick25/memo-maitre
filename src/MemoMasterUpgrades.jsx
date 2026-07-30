@@ -21,6 +21,8 @@ import { Bar, Line, Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, ArcElement);
 
+export { upgradeCardToRetroEngineering, restructureSelectedCards } from "./lib/retroEngineeringRestructurer";
+
 
 /* ════════════════════════════════════════════════════════════════════════════
  * 1. UTILS PARTAGÉS

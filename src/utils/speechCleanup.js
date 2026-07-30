@@ -83,9 +83,19 @@ export function cleanSpeechTranscript(raw, opts = {}) {
  */
 export function isMeaninglessSpeech(raw) {
   const cleaned = cleanSpeechTranscript(raw);
-  if (cleaned.length < 4) return true;
+  if (cleaned.length < 2) return true;
   const words = cleaned.split(/\s+/).filter(Boolean);
-  if (words.length < 2) return true;
+  if (words.length === 0) return true;
+  // Un seul mot restant après nettoyage n'est PAS forcément du bruit :
+  // "Yes", "No", "Sure", "Ok", "Hello", "Paris"… sont des réponses valides.
+  // On ne rejette que si ce mot unique est lui-même un filler/onomatopée
+  // (déjà filtré par cleanSpeechTranscript en théorie, mais on double-vérifie
+  // ici pour les mots courts du type "in", "ah" qui pourraient survivre).
+  if (words.length === 1) {
+    const w = words[0].toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    if (w.length < 2) return true;
+    if (FILLER_WORDS.includes(w)) return true;
+  }
   return false;
 }
 

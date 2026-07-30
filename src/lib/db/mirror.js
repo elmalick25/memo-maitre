@@ -5,28 +5,61 @@ import { normalizeDate, today } from '../../utils/dateUtils'
 let mirrorMap = new Map()
 let isInitialLoad = true
 
+const mapRecordToCard = (r) => ({
+  id: r.id,
+  front: r.front,
+  back: r.back,
+  example: r.example,
+  category: r.category,
+  type: r.type,
+  imageUrl: r.imageUrl,
+  audioUrl: r.audioUrl,
+  layers: r.layers,
+  level: r.level,
+  nextReview: r.nextReview ? normalizeDate(r.nextReview) : null,
+  createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
+  easeFactor: r.easeFactor,
+  interval: r.interval,
+  repetitions: r.repetitions,
+  reviewHistory: r.reviewHistory,
+  // FIX : ces champs existaient déjà en base (colonnes créées) mais n'étaient
+  // jamais relus ici → toujours réinitialisés au reload (paused revenait à
+  // false, masteryStage/productiveUses revenaient à leur valeur par défaut).
+  paused: !!r.paused,
+  masteryStage: r.masteryStage || undefined,
+  productiveUses: r.productiveUses || [],
+  lastProductiveUseAt: r.lastProductiveUseAt || null,
+})
+
+// requestIdleCallback n'existe pas sur Safari/iOS → fallback setTimeout.
+const idle = (typeof window !== 'undefined' && window.requestIdleCallback)
+  ? window.requestIdleCallback
+  : (cb) => setTimeout(() => cb({ timeRemaining: () => 8 }), 0)
+
+// Mappe les enregistrements par petits paquets, en cédant la main entre
+// chaque paquet, pour ne jamais bloquer le thread principal d'un coup même
+// sur une collection de plusieurs centaines de fiches.
+function mapRecordsInChunks(records, chunkSize = 80) {
+  return new Promise((resolve) => {
+    const out = new Array(records.length)
+    let i = 0
+    const step = () => {
+      const end = Math.min(i + chunkSize, records.length)
+      for (; i < end; i++) out[i] = mapRecordToCard(records[i])
+      if (i < records.length) idle(step)
+      else resolve(out)
+    }
+    step()
+  })
+}
+
 export async function loadInitialExpressionsFromWatermelon() {
   const collection = database.get('expressions')
   const records = await collection.query().fetch()
-  
-  const mapped = records.map(r => ({
-    id: r.id,
-    front: r.front,
-    back: r.back,
-    example: r.example,
-    category: r.category,
-    type: r.type,
-    imageUrl: r.imageUrl,
-    audioUrl: r.audioUrl,
-    layers: r.layers,
-    level: r.level,
-    nextReview: r.nextReview ? normalizeDate(r.nextReview) : null,
-    createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : null,
-    easeFactor: r.easeFactor,
-    interval: r.interval,
-    repetitions: r.repetitions,
-    reviewHistory: r.reviewHistory
-  }))
+
+  const mapped = records.length > 80
+    ? await mapRecordsInChunks(records)
+    : records.map(mapRecordToCard)
 
   mirrorMap = new Map(mapped.map(c => [c.id, c]))
   isInitialLoad = false
@@ -49,11 +82,36 @@ const mapCardToRecord = (card, exp) => {
   exp.interval = card.interval || 1
   exp.repetitions = card.repetitions || 0
   exp.reviewHistory = card.reviewHistory || []
-  
+  // FIX : mêmes champs que ci-dessus, côté écriture — sans ça, une fiche mise
+  // en pause n'était jamais écrite en base et redevenait active au reload.
+  exp.paused = !!card.paused
+  exp.masteryStage = card.masteryStage || 'discovered'
+  exp.productiveUses = card.productiveUses || []
+  exp.lastProductiveUseAt = card.lastProductiveUseAt || null
+
   if (card.createdAt) {
     const dt = new Date(card.createdAt).getTime()
     if (!isNaN(dt)) exp._raw.created_at = dt
+  } else if (!exp._raw.created_at) {
+    exp._raw.created_at = Date.now()
   }
+
+  // Update updated_at to ensure sync engine picks up the change for Firebase
+  exp._raw.updated_at = Date.now()
+}
+
+const isCardDifferent = (oldCard, newCard) => {
+  const fields = ['front', 'back', 'example', 'category', 'type', 'imageUrl', 'audioUrl', 'level', 'nextReview', 'easeFactor', 'interval', 'repetitions', 'masteryStage', 'lastProductiveUseAt'];
+  for (const f of fields) {
+    if (oldCard[f] !== newCard[f]) return true;
+  }
+  // FIX : "paused" était absent de cette comparaison → un simple changement de
+  // pause ne déclenchait jamais d'écriture en base ni de sync (perte silencieuse).
+  if (!!oldCard.paused !== !!newCard.paused) return true;
+  if (JSON.stringify(oldCard.layers || []) !== JSON.stringify(newCard.layers || [])) return true;
+  if (JSON.stringify(oldCard.reviewHistory || []) !== JSON.stringify(newCard.reviewHistory || [])) return true;
+  if (JSON.stringify(oldCard.productiveUses || []) !== JSON.stringify(newCard.productiveUses || [])) return true;
+  return false;
 }
 
 export async function mirrorToWatermelon(newArray) {
@@ -70,7 +128,7 @@ export async function mirrorToWatermelon(newArray) {
     const oldCard = mirrorMap.get(id)
     if (!oldCard) {
       toCreate.push(newCard)
-    } else if (JSON.stringify(oldCard) !== JSON.stringify(newCard)) {
+    } else if (isCardDifferent(oldCard, newCard)) {
       toUpdate.push(newCard)
     }
   }

@@ -63,39 +63,24 @@ function robustJsonParse(raw) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PROMPT v3 — DEUX branches de sélection :
-//   A) Correction / reformulation d'une erreur de l'UTILISATEUR  (prioritaire,
-//      TOUS niveaux, y compris A1-B1 : prépositions, articles, faux-amis,
-//      accords, temps, collocations).
-//   B) Vocabulaire pédagogique de l'AGENT en B2-C1 (comme v2).
+// PROMPT v7 — RÉTRO-INGÉNIERIE SÉMANTIQUE & TRANSITION MÉTAPHORTIQUE :
+//   Fiches ultra-concises (~30-40 lignes) basées UNIQUEMENT sur les erreurs
+//   de l'UTILISATEUR (ex: "do you hear me" → "Can you hear me?").
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Tu es un extracteur pédagogique d'anglais expert (niveau "god mode").
-Tu analyses UNE paire de messages (utilisateur + agent) d'une conversation en anglais.
+const SYSTEM_PROMPT = `Tu es un ingénieur linguistique. Ton objectif est de générer des fiches d'anglais ultra-concises basées sur la RÉTRO-INGÉNIERIE SÉMANTIQUE. Pas de blabla, longueur maximale : ~30-40 lignes.
 
-Ta MISSION est de créer des fiches d'apprentissage pour l'utilisateur, dans DEUX cas :
+RÈGLE OBLIGATOIRE DE TRANSITION SÉMANTIQUE :
+Dans la section Décomposition, tu dois TOUJOURS expliquer le GLISSEMENT MÉTAPHORIQUE : pourquoi un mot physique (ex: "pick up" = ramasser) prend un sens abstrait dans ce contexte précis, et comment la particule transforme l'action physique en concept d'état ou de workflow.
 
-BRANCHE A — CORRECTION DE L'UTILISATEUR (PRIORITAIRE, TOUS NIVEAUX même A1-B1) :
-- L'utilisateur a fait une erreur (grammaire, préposition "in/on/at", article, temps,
-  collocation, faux-ami, prononciation notée à l'écrit, ordre des mots, accord...).
-- L'agent la corrige EXPLICITEMENT ("we say X, not Y") ou IMPLICITEMENT
-  (l'agent réutilise la même idée mais avec la forme correcte).
-- → Crée une fiche avec front = la forme CORRECTE, et dans "back" mentionne
-  clairement l'erreur typique de l'utilisateur (📌 PIÈGE obligatoire ici).
-- N'écarte JAMAIS ce cas parce que le mot serait "trivial". Une préposition
-  ratée est exactement ce qu'on doit ficher.
+CONDITION STRICTE DE GÉNÉRATION (CORRECTION UTILISATEUR EXCLUSIVE) :
+- L'utilisateur a fait une erreur ou une formulation imparfaite (grammaire, préposition, article, temps, collocation, faux-ami, structure, ordre des mots, choix lexical comme "do you hear me" au lieu de "can you hear me?").
+- L'agent la corrige EXPLICITEMENT ("we say X, not Y") ou IMPLICITEMENT (l'agent réutilise la même idée en reformulant correctement).
+- → Crée une fiche avec front = la forme CORRECTE (ex: "Can you hear me?").
+- Met impérativement "source": "user_error".
 
-BRANCHE B — VOCABULAIRE PÉDAGOGIQUE DE L'AGENT :
-- Phrasal verb en contexte ("bring up", "figure out", "for the very first time"...)
-- Expression idiomatique / collocation ("it's a no-brainer", "on the fence")
-- Vocabulaire B2-C1 employé pédagogiquement
-- Structure grammaticale remarquable expliquée ou démontrée
-
-EXCLURE (branche B uniquement) :
-- Small talk pur ("That's great!", "How are you?") si aucun apprentissage.
-- Répétitions triviales du message user sans apport.
-
-Si rien ne mérite d'être fiché → {"cards": []} (mieux vaut vide que du bruit).
-Mais dès qu'il y a la MOINDRE correction visible → sors une fiche (branche A).
+EXCLUSION STRICTE :
+- Si l'utilisateur n'a fait AUCUNE erreur et que l'agent produit simplement du vocabulaire enrichi, du small talk ou des explications générales → RENVOIE STRICTEMENT {"cards": []}.
+- Ne crée JAMAIS de fiche si le message utilisateur était 100% correct.
 
 RÉPONSE : UNIQUEMENT JSON valide, sans texte autour, sans markdown.
 INTERDIT : sauts de ligne réels dans une valeur JSON. Utiliser "\\n".
@@ -104,12 +89,12 @@ Schéma :
 {
   "cards": [
     {
-      "front": "for the very first time",
-      "type": "idiom" | "phrasal_verb" | "vocabulary" | "grammar" | "correction",
+      "front": "Can you hear me?",
+      "type": "correction" | "grammar" | "vocabulary" | "phrasal_verb" | "idiom",
       "difficulty": "A2" | "B1" | "B2" | "C1" | "C2",
-      "source": "user_error" | "agent_teaching",
-      "back": "Traduction : ...\\n\\n✅ QUAND L'UTILISER :\\n...\\n\\n🎬 SENS DANS CE CONTEXTE :\\n...\\n\\n💬 EXEMPLES :\\n• phrase EN\\n  🗣 phonétique française\\n  ↳ traduction FR\\n(x3)\\n\\n🔄 ALTERNATIVES / SYNONYMES :\\n...\\n\\n📌 PIÈGE :\\n...",
-      "example": "I saw the ocean for the very first time."
+      "source": "user_error",
+      "back": "Traduction : Est-ce que tu m'entends ?\\n\\n### ⚙️ 1. Décomposition & Transition Métaphorique\\n* **Can :** Sens physique : *Tester la capacité active en temps réel* ➔ **Glissement sémantique :** Utilisé pour vérifier si le canal audio/signal passe.\\n* **Hear :** Sens physique : *Réception auditive passive dans l'oreille* ➔ **Glissement sémantique :** Perception du flux vocal sans effort d'écoute actif.\\n* **Le Modèle Mental :** L'anglais vérifie l'état technique de la connexion (capacité physique), pas l'attention de l'interlocuteur.\\n\\n### 🔍 2. Comparatif (Pourquoi A et pas B ?)\\n* **Option A (Can you hear me?) :** Teste la disponibilité du canal audio en temps réel.\\n* **Option B (Do you hear me?) :** Exige l'obéissance ou interroge une habitude ('Tu m'écoutes quand je te parle ?').\\n\\n### ⚠️ 3. Anti-Pattern (Le piège)\\n* **Erreur :** Traduire du français 'Est-ce que tu m'entends ?' par 'Do you hear me?' ➔ **Problème :** Perçu comme agressif ou autoritaire au lieu de tester le micro.\\n\\n### 💻 4. Exemples (Format court)\\n* **Tech/Workflow :** \`Can you hear me clearly on this Zoom link?\` ↳ *M'entends-tu clairement sur ce lien Zoom ?*\\n* **Quotidien :** \`Hey, I just plugged in my headphones, can you hear me?\` ↳ *Hé, je viens de brancher mes écouteurs, tu m'entends ?*",
+      "example": "Can you hear me clearly on this Zoom call?"
     }
   ]
 }
@@ -148,12 +133,15 @@ export function useAgentCardDetector({
 }) {
   const lastAnalyzedIndexRef = useRef(-1);
   const isAnalyzingRef = useRef(false);
+  // File d'attente sérialisée : avant, une paire arrivant pendant une analyse
+  // en cours était purement jetée (et jamais réanalysée) → des corrections
+  // n'engendraient aucune fiche. On les met en file au lieu de les perdre.
+  const queueRef = useRef(Promise.resolve());
   const debounceRef = useRef(null);
   const [sessionCreatedCards, setSessionCreatedCards] = useState([]);
 
   // ── Analyse d'une paire user+agent ────────────────────────────────────────
-  const analyzePair = useCallback(async (userMsg, agentMsg, pairIndex) => {
-    if (isAnalyzingRef.current) { dlog("skip: analyse déjà en cours"); return; }
+  const runAnalyzePair = useCallback(async (userMsg, agentMsg, pairIndex) => {
     if (!callClaude) { dlog("skip: callClaude manquant"); return; }
 
     const agentWords = agentMsg.trim().split(/\s+/).filter(Boolean).length;
@@ -204,6 +192,7 @@ export function useAgentCardDetector({
       const newCards = parsed.cards.filter(c => {
         const f = (c.front || "").toLowerCase().trim();
         if (!f) { rejected.push([c.front, "front vide"]); return false; }
+        if (c.source && c.source !== "user_error") { rejected.push([c.front, "source non user_error"]); return false; }
         if (existingFronts.has(f)) { rejected.push([c.front, "déjà en base (exact)"]); return false; }
         for (const ex of existingFronts) {
           if (ex.length > 3 && (ex.includes(f) || f.includes(ex))) {
@@ -214,7 +203,7 @@ export function useAgentCardDetector({
         return true;
       });
       if (rejected.length) dlog("Cartes rejetées:", rejected);
-      if (!newCards.length) { dlog("rejet: toutes les cartes dédoublonnées"); return; }
+      if (!newCards.length) { dlog("rejet: toutes les cartes dédoublonnées ou invalides"); return; }
 
       const enriched = newCards.map(c => ({
         id: (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -234,9 +223,9 @@ export function useAgentCardDetector({
         reviewHistory: [],
         imageUrl: null,
         _agentDetected: true,
-        _type: c.type || "vocabulary",
-        _difficulty: c.difficulty || "B2",
-        _source: c.source || "agent_teaching",
+        _type: c.type || "correction",
+        _difficulty: c.difficulty || "B1",
+        _source: "user_error",
         _pairIndex: pairIndex,
       }));
 
@@ -265,6 +254,14 @@ export function useAgentCardDetector({
       isAnalyzingRef.current = false;
     }
   }, [callClaude, safeParseJSON, expressions, englishCategory, localToday, setExpressions]);
+
+  // Sérialise les analyses : chaque paire est traitée à son tour, aucune n'est perdue.
+  const analyzePair = useCallback((userMsg, agentMsg, pairIndex) => {
+    queueRef.current = queueRef.current
+      .catch(() => {})
+      .then(() => runAnalyzePair(userMsg, agentMsg, pairIndex));
+    return queueRef.current;
+  }, [runAnalyzePair]);
 
   // ── Watcher du transcript ─────────────────────────────────────────────────
   useEffect(() => {

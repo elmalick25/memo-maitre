@@ -5,7 +5,9 @@ import GodTierContent from "./components/GodTierContent";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { callGeminiGenerateContent, getGeminiKeyCount, isGeminiLikelyUnavailable } from "./lib/geminiClient";
 import { aiCall } from "./lib/aiRouter";
-import { today as localToday, addDays } from "./utils/dateUtils";
+import { today as localToday } from "./utils/dateUtils";
+import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
+import SoundwavePlayer from "./components/SoundwavePlayer";
 
 // ── IndexedDB Helper pour la persistance des Blobs audio ─────────────────────
 const DB_NAME = "lab_audio_db";
@@ -71,44 +73,6 @@ async function deleteAudioBlob(id) {
   }
 }
 
-// ── SRS helpers pour les fiches audio (algo SM-2 simplifié) ───────────────────
-// Les fiches audio entrent dans le même cycle de révision que les fiches texte.
-// On stocke level / easeFactor / interval / nextReview / reviewHistory sur
-// chaque audio card. Au "rappel", l'utilisateur écoute l'audio puis évalue
-// son niveau de souvenir, ce qui décale la prochaine révision.
-function scheduleAudioReview(card, grade) {
-  // grade: "again" (0), "good" (1), "easy" (2)
-  const prev = {
-    level: card.level || 0,
-    easeFactor: card.easeFactor || 2.5,
-    interval: card.interval || 1,
-    repetitions: card.repetitions || 0,
-    reviewHistory: card.reviewHistory || [],
-  };
-  let { level, easeFactor, interval, repetitions } = prev;
-
-  if (grade === "again") {
-    level = Math.max(0, level - 1);
-    repetitions = 0;
-    interval = 1;
-    easeFactor = Math.max(1.3, easeFactor - 0.2);
-  } else if (grade === "good") {
-    level = Math.min(7, level + 1);
-    repetitions += 1;
-    interval = repetitions === 1 ? 1 : repetitions === 2 ? 3 : Math.round(interval * easeFactor);
-  } else if (grade === "easy") {
-    level = Math.min(7, level + 2);
-    repetitions += 1;
-    interval = repetitions === 1 ? 3 : Math.round(interval * easeFactor * 1.3);
-    easeFactor = Math.min(3.0, easeFactor + 0.15);
-  }
-  const nextReview = addDays(localToday(), interval);
-  return {
-    ...card,
-    level, easeFactor, interval, repetitions, nextReview,
-    reviewHistory: [...prev.reviewHistory, { date: localToday(), grade }].slice(-30),
-  };
-}
 
 
 
@@ -416,7 +380,7 @@ async function callGroq(systemPrompt, userMsg, maxTokens = 4000, isJson = false)
     });
     if (text) return text;
   } catch (err) { 
-    console.error("aiRouter failed in Lab.jsx:", err);
+    console.error("aiRouter failed in Lab.jsx:", err?.message || err);
   }
   throw new Error("Tous les services AI sont épuisés.");
 }
@@ -936,71 +900,6 @@ ${JSON.stringify(missing).slice(0, 12000)}`;
 
 
 
-// ── 🎵 SoundwavePlayer — Lecteur audio avec visualisation ondes ───────────────
-const SoundwavePlayer = ({ src, isPlaying, onPlay, onPause, onEnded, color = "#EA580C" }) => {
-  const audioRef = useRef(null);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (isPlaying) {
-      audio.play().catch(() => { });
-    } else {
-      audio.pause();
-    }
-  }, [isPlaying]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.addEventListener("ended", onEnded);
-    return () => audio.removeEventListener("ended", onEnded);
-  }, [onEnded]);
-
-  const BAR_COUNT = 5;
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      {/* Bouton Play/Pause */}
-      <button
-        onClick={isPlaying ? onPause : onPlay}
-        style={{
-          width: 36, height: 36, borderRadius: "50%", border: "none",
-          background: isPlaying ? color : `${color}22`,
-          color: isPlaying ? "white" : color,
-          cursor: "pointer", fontSize: 14, flexShrink: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "all 0.2s",
-          boxShadow: isPlaying ? `0 0 14px ${color}60` : "none",
-        }}
-      >
-        {isPlaying ? "⏸" : "▶"}
-      </button>
-
-      {/* Barres ondes sonores */}
-      <div style={{ display: "flex", alignItems: "center", gap: 3, height: 28, "--glow-color": color }}>
-        {Array.from({ length: BAR_COUNT }).map((_, i) => (
-          <div
-            key={i}
-            style={{
-              width: 4, borderRadius: 3,
-              background: color,
-              height: isPlaying ? "100%" : "30%",
-              animation: isPlaying
-                ? `soundwave-bar 0.6s ${i * 0.1}s infinite alternate ease-in-out`
-                : "none",
-              transition: "height 0.3s ease",
-              opacity: isPlaying ? 1 : 0.4,
-            }}
-          />
-        ))}
-      </div>
-
-      <audio ref={audioRef} src={src} preload="metadata" style={{ display: "none" }} />
-    </div>
-  );
-};
-
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1042,140 +941,6 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
   </div>
 );
 
-// ─── Composant interne : réserve organisée en rayons (type BU) ──────────────
-function ReserveList({ reserveCards, addFromReserve, setShowReservePanel, theme, activeColor }) {
-  const [reserveSelected, setReserveSelected] = useState(new Set());
-  const [openShelves, setOpenShelves] = useState({});
-
-  const toggleReserveCard = (i) => {
-    setReserveSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i); else next.add(i);
-      return next;
-    });
-  };
-
-  // Regrouper par module (rayon), en conservant l'index global d'origine
-  const shelves = useMemo(() => {
-    const map = {};
-    reserveCards.forEach((card, i) => {
-      const key = card.sourceDoc || `[Module] ${card.module || "Sans module"}`;
-      if (!map[key]) map[key] = [];
-      map[key].push({ card, i });
-    });
-    return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [reserveCards]);
-
-  const toggleShelfOpen = (name) => setOpenShelves(prev => ({ ...prev, [name]: prev[name] === false ? true : false }));
-  const isShelfOpen = (name) => openShelves[name] !== false; // ouvert par défaut
-
-  const toggleShelfSelect = (items) => {
-    const idxs = items.map(it => it.i);
-    const allSelected = idxs.every(i => reserveSelected.has(i));
-    setReserveSelected(prev => {
-      const next = new Set(prev);
-      idxs.forEach(i => { if (allSelected) next.delete(i); else next.add(i); });
-      return next;
-    });
-  };
-
-  return (
-    <>
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted }}>
-          📚 {shelves.length} rayon{shelves.length > 1 ? "s" : ""} · {reserveCards.length} fiche{reserveCards.length > 1 ? "s" : ""} en réserve
-        </span>
-        {reserveSelected.size > 0 && (
-          <button
-            onClick={() => { addFromReserve(reserveSelected); setShowReservePanel(false); }}
-            style={{
-              marginLeft: "auto", padding: "8px 16px", background: "linear-gradient(135deg,#059669,#10B981)",
-              color: "white", border: "none", borderRadius: 10,
-              cursor: "pointer", fontWeight: 800, fontSize: 13,
-            }}
-          >
-            🚀 Ajouter {reserveSelected.size} fiche{reserveSelected.size > 1 ? "s" : ""} à l'algo
-          </button>
-        )}
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {shelves.map(([shelfName, items]) => {
-          const selectedInShelf = items.filter(it => reserveSelected.has(it.i)).length;
-          const open = isShelfOpen(shelfName);
-          return (
-            <div key={shelfName} style={{ border: `1px solid ${theme.border}`, borderRadius: 16, overflow: "hidden", background: theme.cardBg }}>
-              {/* Étiquette du rayon */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: `${activeColor}10`, borderLeft: `4px solid ${activeColor}` }}>
-                <button onClick={() => toggleShelfOpen(shelfName)} style={{ background: "none", border: "none", cursor: "pointer", color: theme.text, fontSize: 14, fontWeight: 900 }}>
-                  {open ? "▾" : "▸"}
-                </button>
-                <span style={{ fontWeight: 900, color: theme.text, fontSize: 14, flex: 1 }}>
-                  📦 {shelfName}
-                  <span style={{ marginLeft: 8, fontSize: 11, color: theme.textMuted, fontWeight: 700 }}>
-                    {items.length} fiche{items.length > 1 ? "s" : ""}{selectedInShelf > 0 ? ` · ${selectedInShelf} sélectionnée${selectedInShelf > 1 ? "s" : ""}` : ""}
-                  </span>
-                </span>
-                <button onClick={() => toggleShelfSelect(items)} style={{
-                  padding: "6px 12px", background: theme.inputBg, color: theme.text,
-                  border: `1px solid ${theme.border}`, borderRadius: 8, cursor: "pointer",
-                  fontSize: 11, fontWeight: 700,
-                }}>
-                  {items.every(it => reserveSelected.has(it.i)) ? "Tout désélectionner" : "Tout le rayon"}
-                </button>
-              </div>
-
-              {open && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 12 }}>
-                  {items.map(({ card, i }) => (
-                    <div
-                      key={i}
-                      onClick={() => toggleReserveCard(i)}
-                      style={{
-                        background: reserveSelected.has(i) ? `${activeColor}12` : theme.inputBg,
-                        border: `1px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
-                        borderRadius: 12, padding: "12px 14px", cursor: "pointer",
-                        transition: "all 0.15s",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                        <div style={{
-                          width: 18, height: 18, borderRadius: 5, flexShrink: 0, marginTop: 2,
-                          border: `2px solid ${reserveSelected.has(i) ? activeColor : theme.border}`,
-                          background: reserveSelected.has(i) ? activeColor : "transparent",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          transition: "all 0.15s",
-                        }}>
-                          {reserveSelected.has(i) && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, marginBottom: 4 }}>{toText(card.front)}</div>
-                          <div style={{ fontSize: 12, color: theme.textMuted, lineHeight: 1.5 }}>
-                            {toText(card.back).substring(0, 120)}{toText(card.back).length > 120 ? "..." : ""}
-                          </div>
-                          <div style={{ fontSize: 10, color: activeColor, marginTop: 6, fontWeight: 700 }}>
-                            {card.source ? `${card.source} · ` : ""}Ajouté le {card.reservedAt ? new Date(card.reservedAt).toLocaleDateString("fr-FR") : "—"}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-        {shelves.length === 0 && (
-          <div style={{ textAlign: "center", color: theme.textMuted, fontSize: 13, padding: "40px 0" }}>
-            Aucune fiche en réserve pour l'instant.
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-
 export default function Lab({ theme, isDarkMode, categories = [], onAddCards, onShowToast }) {
   const [tab, setTab] = useState("pdf");
 
@@ -1195,18 +960,8 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
   const [pdfPreview, setPdfPreview] = useState(false);
   const pdfInputRef = useRef(null);
 
-  // ─── Réserve : sélection et stockage ───────────────────────────────────────
+  // ─── Sélection de fiches (pour ajout groupé) ───────────────────────────────
   const [selectedCardIndexes, setSelectedCardIndexes] = useState(new Set()); // indices sélectionnés parmi pdfCards
-  const [showReservePanel, setShowReservePanel] = useState(false);
-  const [reserveCards, setReserveCards] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("lab_reserve_cards") || "[]"); } catch { return []; }
-  });
-  const [reserveTab, setReserveTab] = useState("preview"); // "preview" | "reserve"
-
-  // Persist reserveCards
-  useEffect(() => {
-    try { localStorage.setItem("lab_reserve_cards", JSON.stringify(reserveCards)); } catch {}
-  }, [reserveCards]);
 
   // ─── Résumé state (Extreme God Tier) ───────────────────────────────────────
   const [resFile, setResFile] = useState(null);
@@ -1273,14 +1028,6 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
     setExpandedAudioModules(prev => ({ ...prev, [moduleName]: !prev[moduleName] }));
   }, []);
 
-  const reserveAudioCard = (card) => {
-    setReserveCards(prev => [...prev, {
-      ...card, front: card.label, back: "Fiche Audio", example: card.fileName,
-      reservedAt: new Date().toISOString(), sourceDoc: card.sourceDoc || [Audio] , source: "🎙️ Audio"
-    }]);
-    setAudioCards(prev => prev.filter(c => c.id !== card.id));
-    toast("🎙️ Audio mis en réserve !");
-  };
 
 
   // Restore audio URLs on mount
@@ -1303,11 +1050,8 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
     if (audioCards.length > 0) restoreAudio();
   }, []);
 
-  // ── État de la session de révision audio ──────────────────────────────────
-  const [audioReviewOpen, setAudioReviewOpen] = useState(false);
-  const [audioReviewQueue, setAudioReviewQueue] = useState([]);
-  const [audioReviewIndex, setAudioReviewIndex] = useState(0);
-  const [audioReviewRevealed, setAudioReviewRevealed] = useState(false);
+  // ── État de la session audio ──────────────────────────────────
+
 
   const audioInputRef = useRef(null);
   const audioRefs = useRef({});
@@ -1394,10 +1138,11 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
       setPdfProgress(`Génération des fiches — partie ${ci + 1}/${chunks.length}...`);
       try {
         const raw = await callGroq(
-          `Tu es un système de création de fiches de révision GOD-TIER.
+          `Tu es un système de création de fiches de révision atomiques (FSRS).
 ${FIDELITY_RULE}
 ${RICH_CONTENT_RULE}
-Génère UNE FICHE PAR CONCEPT présent dans ce passage — entre 6 et 20 fiches selon la densité du contenu. RÈGLE ABSOLUE : ne saute AUCUN concept, AUCUNE définition, AUCUNE formule, AUCUN exemple, AUCUNE procédure. Si le passage contient 15 notions distinctes, génère 15 fiches. Adapte le TYPE de fiche au contenu : un extrait de code → fiche "code" avec bloc fenced complet ; un tableau → fiche "table" avec table markdown ; une définition → "definition" ; un mélange → "mixed".
+Génère UNE FICHE PAR CONCEPT — entre 6 et 30 fiches selon la densité. RÈGLE ABSOLUE : ne saute AUCUN concept, AUCUNE définition, AUCUNE formule, AUCUN exemple. Adapte le TYPE : code → "code" ; tableau → "table" ; définition → "definition" ; mélange → "mixed".
+${ATOMIC_CARD_RULES}
 Réponds UNIQUEMENT en JSON valide, sans markdown autour :
 {"cards":[{"front":"Question précise","back":"Réponse markdown (peut contenir \`\`\`code\`\`\` et tables |...|)","type":"qa|code|table|definition|concept|mixed","keyword":"mot-clé EXACT du texte","hint":"astuce courte optionnelle"}]}`,
           `MODULE CIBLE : ${pdfModule}\n\nPASSAGE DU DOCUMENT :\n${chunks[ci]}`,
@@ -1449,45 +1194,20 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
           ? pdfCards.filter((_, i) => selectedCardIndexes.has(i))
           : pdfCards);
     if (!cardsToAdd.length) { toast("Aucune fiche sélectionnée.", "error"); return; }
-    if (onAddCards) onAddCards(cardsToAdd.map(c => ({
+    const result = onAddCards ? onAddCards(cardsToAdd.map(c => ({
       front: c.front, back: c.back, example: c.hint || "",
       category: c.category, type: c.type || "qa",
-    })), { source: 'pdf' });
-    toast(`🚀 ${cardsToAdd.length} fiches ajoutées au module "${pdfModule}" !`);
+    })), { source: 'pdf', silent: true }) : null;
+    const added = result?.added ?? cardsToAdd.length;
+    const skipped = result?.skipped ?? 0;
+    toast(skipped > 0
+      ? `🚀 ${added} fiches ajoutées au module "${pdfModule}" (${skipped} doublon(s) ignoré(s))`
+      : `🚀 ${added} fiches ajoutées au module "${pdfModule}" !`);
     // Retirer les ajoutées de pdfCards
     const addedSet = new Set(cardsToAdd.map(c => c.front));
     setPdfCards(prev => prev.filter(c => !addedSet.has(c.front)));
     setSelectedCardIndexes(new Set());
     if (pdfCards.length - cardsToAdd.length === 0) { setPdfPreview(false); setPdfProgress(""); }
-  };
-
-  const putInReserve = (indexesToReserve = null) => {
-    if (!pdfCards.length) return;
-    const toReserve = indexesToReserve !== null
-      ? pdfCards.filter((_, i) => indexesToReserve.has(i))
-      : (selectedCardIndexes.size > 0
-          ? pdfCards.filter((_, i) => selectedCardIndexes.has(i))
-          : []);
-    if (!toReserve.length) { toast("Sélectionne des fiches à mettre en réserve.", "error"); return; }
-    const reserveWithMeta = toReserve.map(c => ({ ...c, reservedAt: new Date().toISOString(), module: pdfModule, source: "📄 PDF" }));
-    setReserveCards(prev => [...prev, ...reserveWithMeta]);
-    // Retirer de pdfCards
-    const reservedSet = new Set(toReserve.map(c => c.front));
-    setPdfCards(prev => prev.filter(c => !reservedSet.has(c.front)));
-    setSelectedCardIndexes(new Set());
-    toast(`📦 ${toReserve.length} fiche${toReserve.length > 1 ? "s" : ""} mise${toReserve.length > 1 ? "s" : ""} en réserve`);
-  };
-
-  const addFromReserve = (indexes) => {
-    const toAdd = reserveCards.filter((_, i) => indexes.has(i));
-    if (!toAdd.length) return;
-    if (onAddCards) onAddCards(toAdd.map(c => ({
-      front: c.front, back: c.back, example: c.hint || c.example || "",
-      category: c.module || pdfModule, type: c.type || "qa",
-      audioId: c.audioId, imageUrl: c.imageUrl
-    })), { source: 'reserve' });
-    toast(`🚀 ${toAdd.length} fiche${toAdd.length > 1 ? "s" : ""} sorties de réserve et ajoutées !`);
-    setReserveCards(prev => prev.filter((_, i) => !indexes.has(i)));
   };
 
   const toggleCardSelection = (i) => {
@@ -1669,8 +1389,12 @@ ${resSummary.slice(0, 8000)}`;
           };
         });
         if (onAddCards) {
-          onAddCards(cards);
-          toast(`✅ ${cards.length} fiches ajoutées au deck !`);
+          const result = onAddCards(cards, { silent: true });
+          const added = result?.added ?? cards.length;
+          const skipped = result?.skipped ?? 0;
+          toast(skipped > 0
+            ? `✅ ${added} fiches ajoutées au deck (${skipped} doublon(s) ignoré(s))`
+            : `✅ ${added} fiches ajoutées au deck !`);
         } else {
           toast("MemoMaster non connecté, impossible d'ajouter.", "error");
         }
@@ -1835,8 +1559,9 @@ ${history}`;
     // On crée une fiche de type "audio" pour chaque enregistrement.
     // Le champ "audioId" pointe vers la clé IndexedDB du blob audio.
     // MemoMaster récupère le blob via getAudioBlob(audioId) à l'affichage.
+    let audioResult = null;
     if (onAddCards) {
-      onAddCards(
+      audioResult = onAddCards(
         newCards.map(c => ({
           front: c.label,        // Nom du fichier = face recto de la fiche
           back: c.label,         // Idem (le contenu sera l'audio)
@@ -1845,49 +1570,16 @@ ${history}`;
           type: "audio",
           audioId: c.id,         // Clé IndexedDB pour retrouver le blob
         })),
-        { source: "audio" }
+        { source: "audio", silent: true }
       );
     }
-
-    toast(`🎵 ${newCards.length} fiche(s) audio ajoutée(s) au module "${audioModule}" ! Tu pourras les réviser dès aujourd'hui.`);
+    const audioAdded = audioResult?.added ?? newCards.length;
+    const audioSkipped = audioResult?.skipped ?? 0;
+    toast(audioSkipped > 0
+      ? `🎵 ${audioAdded} fiche(s) audio ajoutée(s) au module "${audioModule}" (${audioSkipped} doublon(s) ignoré(s))`
+      : `🎵 ${audioAdded} fiche(s) audio ajoutée(s) au module "${audioModule}" ! Tu pourras les réviser dès aujourd'hui.`);
   };
 
-  // ── Helpers SRS audio ─────────────────────────────────────────────────────
-  const audioDueCards = useMemo(
-    () => audioCards.filter(c => c.audioUrl && String(c.nextReview || "") <= String(localToday())),
-    [audioCards]
-  );
-
-  const startAudioReview = () => {
-    if (audioDueCards.length === 0) {
-      toast("Aucune fiche audio à réviser pour le moment 🎉", "info");
-      return;
-    }
-    // Mélanger légèrement la file pour éviter l'ordre alphabétique systématique
-    const queue = [...audioDueCards].sort(() => Math.random() - 0.5);
-    setAudioReviewQueue(queue);
-    setAudioReviewIndex(0);
-    setAudioReviewRevealed(false);
-    setAudioReviewOpen(true);
-  };
-
-  const gradeCurrentAudio = (grade) => {
-    const current = audioReviewQueue[audioReviewIndex];
-    if (!current) return;
-    setAudioCards(prev => {
-      const updated = prev.map(c => c.id === current.id ? scheduleAudioReview(c, grade) : c);
-      saveAudioCards(updated);
-      return updated;
-    });
-    if (audioReviewIndex + 1 >= audioReviewQueue.length) {
-      setAudioReviewOpen(false);
-      setAudioReviewQueue([]);
-      toast(`✅ Session audio terminée — ${audioReviewQueue.length} fiche(s) révisée(s) !`, "success");
-    } else {
-      setAudioReviewIndex(i => i + 1);
-      setAudioReviewRevealed(false);
-    }
-  };
 
   const deleteAudioCard = (id) => {
     deleteAudioBlob(id);
@@ -2010,11 +1702,14 @@ ${history}`;
         info = { imageType: photo.imageType || "mixte", subject: "", extractedText: String(step1 || "").slice(0, 4000), summary: "" };
       }
       const extractedSnippet = (info.extractedText || "").slice(0, 4000).replace(/[\x00-\x1F\x7F]/g, " ");
-      const cardPrompt = `Tu es un expert en mémorisation GOD-TIER.
+      const cardPrompt = `Tu es un expert en mémorisation (FSRS, fiches atomiques).
 ${FIDELITY_RULE}
 ${RICH_CONTENT_RULE}
 À partir de ce contenu de cours (type image: ${info.imageType}, matière: ${info.subject || "inconnue"}),
-génère entre 4 et 8 fiches FIDÈLES au texte extrait. Si le contenu contient du CODE → fiche type "code" avec bloc fenced markdown intégral. Si TABLEAU → fiche type "table" avec table markdown GFM. Sinon "qa"/"definition"/"concept".
+génère entre 6 et 20 fiches ATOMIQUES, FIDÈLES au texte extrait — UNE seule idée testable par fiche.
+COUVERTURE TOTALE : passe en revue CHAQUE définition, formule, chiffre, date, étape, exception ou nuance présente dans l'image. Ne saute RIEN. Mieux vaut 18 fiches courtes qu'en oublier 2.
+QUALITÉ PRO (mémorisation ≥ 85%) : question précise et non-ambiguë, réponse minimale mais complète, indice actif ("hint") pour amorcer le rappel, pas de fiche redondante ni triviale, pas d'énumération fourre-tout. Si CODE → "code" (bloc fenced intégral) ; TABLEAU → "table" (GFM intégral) ; sinon "qa"/"definition"/"concept".
+${ATOMIC_CARD_RULES}
 Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 {"cards":[{"front":"Question précise","back":"Réponse markdown (peut contenir code fences et tables)","type":"qa|code|table|definition|concept|mixed","keyword":"mot-clé exact","hint":"astuce optionnelle"}]}`;
 
@@ -2061,47 +1756,46 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
   const addPhotocardsToDeck = (photo) => {
     if (!photo.cards?.length) return;
-    if (onAddCards) onAddCards(photo.cards.map(c => ({
+    const result = onAddCards ? onAddCards(photo.cards.map(c => ({
       front: c.front, back: c.back, example: c.hint || "",
       category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-    })));
-    toast(`🚀 ${photo.cards.length} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" !`);
-  };
-
-  const reserveAllPhotoCards = () => {
-    const all = photoItems.filter(p => p.status === "done" && p.cards.length > 0).flatMap(p => 
-      p.cards.map(c => ({
-        front: c.front, back: c.back, example: c.hint || "",
-        category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-        reservedAt: new Date().toISOString(), module: p.module, sourceDoc: p.sourceDoc || "[Photo]" , source: "📸 Photo"
-      }))
-    );
-    if (!all.length) { toast("Aucune fiche à mettre en réserve.", "error"); return; }
-    setReserveCards(prev => [...prev, ...all]);
-    toast("📦  fiches photos mises en réserve !");
+    })), { silent: true }) : null;
+    const added = result?.added ?? photo.cards.length;
+    const skipped = result?.skipped ?? 0;
+    toast(skipped > 0
+      ? `🚀 ${added} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" (${skipped} doublon(s) ignoré(s))`
+      : `🚀 ${added} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" !`);
   };
 
   const addAllPhotoCards = () => {
     const all = photoItems.filter(p => p.status === "done" && p.cards.length > 0).flatMap(p => p.cards);
     if (!all.length) { toast("Aucune fiche à envoyer.", "error"); return; }
-    if (onAddCards) onAddCards(all.map(c => ({
+    const result = onAddCards ? onAddCards(all.map(c => ({
       front: c.front, back: c.back, example: c.hint || "",
       category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-    })));
-    toast(`🚀 ${all.length} fiches photos ajoutées !`);
+    })), { silent: true }) : null;
+    const added = result?.added ?? all.length;
+    const skipped = result?.skipped ?? 0;
+    toast(skipped > 0
+      ? `🚀 ${added} fiches photos ajoutées (${skipped} doublon(s) ignoré(s))`
+      : `🚀 ${added} fiches photos ajoutées !`);
   };
 
   const addPhotoTelQuel = (photo) => {
     const category = photo.module || photoModule;
     if (onAddCards) {
-      onAddCards([{
+      const result = onAddCards([{
         front: photo.subject || photo.name.replace(/\.[^.]+$/, ""),
         back: photo.extractedText || "Image",
         category,
         imageUrl: photo.dataUrl,
         type: "concept",
-      }]);
-      toast(`🚀 Fiche "${photo.name}" ajoutée telle quelle au module "${category}" !`);
+      }], { silent: true });
+      if ((result?.added ?? 1) > 0) {
+        toast(`🚀 Fiche "${photo.name}" ajoutée telle quelle au module "${category}" !`);
+      } else {
+        toast(`⚠️ Fiche "${photo.name}" jugée doublon d'une fiche existante, non ajoutée.`, "error");
+      }
     }
   };
 
@@ -2164,7 +1858,6 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
         @keyframes matrix-pan { 0% { background-position: 0px 0px; } 100% { background-position: 20px 20px; } }
         @keyframes ai-pulse { 0% { transform: scale(0.8); opacity: 0.5; } 100% { transform: scale(1.2); opacity: 1; } }
         @keyframes blink-cursor { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-        @keyframes soundwave-bar { 0% { transform: scaleY(0.2); opacity: 0.5; } 100% { transform: scaleY(1); opacity: 1; } }
         @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       `}</style>
@@ -2335,34 +2028,6 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         ? `🚀 Ajouter ${selectedCardIndexes.size} fiche${selectedCardIndexes.size > 1 ? "s" : ""} sélectionnée${selectedCardIndexes.size > 1 ? "s" : ""}`
                         : `🚀 Ajouter toutes (${pdfCards.length})`}
                     </button>
-
-                    {/* Bouton Réserve */}
-                    <button
-                      onClick={() => putInReserve()}
-                      style={{
-                        width: "100%", padding: "12px 20px",
-                        background: selectedCardIndexes.size > 0 ? "linear-gradient(135deg,#7c3aed,#8b5cf6)" : theme.inputBg,
-                        color: selectedCardIndexes.size > 0 ? "white" : theme.textMuted,
-                        border: `1px solid ${selectedCardIndexes.size > 0 ? "#7c3aed" : theme.border}`,
-                        borderRadius: 14, fontWeight: 800, fontSize: 13, cursor: selectedCardIndexes.size > 0 ? "pointer" : "not-allowed",
-                        opacity: selectedCardIndexes.size > 0 ? 1 : 0.5,
-                        transition: "all 0.2s", marginBottom: 10,
-                      }}
-                    >
-                      📦 Mettre en réserve ({selectedCardIndexes.size || 0})
-                    </button>
-
-                    {/* Bouton voir réserve */}
-                    {reserveCards.length > 0 && (
-                      <button onClick={() => setShowReservePanel(true)} style={{
-                        width: "100%", padding: "10px 16px",
-                        background: "rgba(124,58,237,0.1)", color: "#7c3aed",
-                        border: "1px dashed #7c3aed", borderRadius: 12,
-                        fontWeight: 700, fontSize: 13, cursor: "pointer",
-                      }}>
-                        🗄️ Voir la réserve ({reserveCards.length} fiche{reserveCards.length > 1 ? "s" : ""})
-                      </button>
-                    )}
                   </div>
                 </HoloCard>
               </div>
@@ -2697,43 +2362,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       ════════════════════════════════════════════════════════════════════ */}
       {tab === "audio" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {/* Barre de révision audio — visible dès qu'il y a au moins une fiche due */}
-          {audioCards.length > 0 && (
-            <HoloCard className="lab-card-mobile" theme={theme} glowColor="#EA580C" style={{
-              background: audioDueCards.length > 0 ? (theme.cardBg) : theme.cardBg,
-              borderRadius: 18, padding: "14px 18px",
-              border: `1px solid ${audioDueCards.length > 0 ? "#FED7AA" : theme.border}`,
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap"
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 22 }}>🎧</span>
-                <div>
-                  <div style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>
-                    Révision audio
-                  </div>
-                  <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>
-                    {audioDueCards.length > 0
-                      ? `${audioDueCards.length} fiche${audioDueCards.length > 1 ? "s" : ""} audio à réviser aujourd'hui`
-                      : "Aucune fiche audio à réviser pour le moment 🎉"}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={startAudioReview}
-                disabled={audioDueCards.length === 0}
-                style={{
-                  padding: "10px 18px",
-                  background: audioDueCards.length > 0 ? "linear-gradient(135deg, #EA580C, #DC2626)" : theme.inputBg,
-                  color: audioDueCards.length > 0 ? "white" : theme.textMuted,
-                  border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13,
-                  cursor: audioDueCards.length > 0 ? "pointer" : "not-allowed",
-                  boxShadow: audioDueCards.length > 0 ? "0 6px 16px rgba(234,88,12,0.25)" : "none"
-                }}
-              >
-                🚀 Réviser maintenant
-              </button>
-            </HoloCard>
-          )}
+
 
           {/* Zone upload */}
           <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
@@ -2911,104 +2540,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
             </div>
           )}
 
-          {/* ── Modale de révision audio ───────────────────────────────── */}
-          {audioReviewOpen && audioReviewQueue[audioReviewIndex] && (() => {
-            const card = audioReviewQueue[audioReviewIndex];
-            const progress = ((audioReviewIndex + 1) / audioReviewQueue.length) * 100;
-            return (
-              <div
-                onClick={(e) => { if (e.target === e.currentTarget) setAudioReviewOpen(false); }}
-                style={{
-                  position: "fixed", inset: 0, background: "rgba(8,12,28,0.78)",
-                  backdropFilter: "blur(8px)", zIndex: 9999,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  padding: 20, animation: "fadeUp 0.25s ease"
-                }}
-              >
-                <div style={{
-                  background: theme.cardBg, borderRadius: 24, maxWidth: 560, width: "100%",
-                  padding: 28, border: `1px solid ${theme.border}`,
-                  boxShadow: "0 30px 80px rgba(0,0,0,0.4)"
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>
-                      🎧 Révision audio · <span style={{ color: "#EA580C" }}>{audioReviewIndex + 1}</span> / {audioReviewQueue.length}
-                    </div>
-                    <button
-                      onClick={() => setAudioReviewOpen(false)}
-                      style={{ background: "none", border: "none", color: theme.textMuted, fontSize: 22, cursor: "pointer" }}
-                    >✕</button>
-                  </div>
-                  <div style={{ height: 6, background: theme.inputBg, borderRadius: 4, overflow: "hidden", marginBottom: 20 }}>
-                    <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg, #EA580C, #DC2626)", transition: "width 0.4s" }} />
-                  </div>
 
-                  <div style={{
-                    background: theme.inputBg, borderRadius: 18, padding: 22,
-                    border: `1px solid ${theme.border}`, marginBottom: 20
-                  }}>
-                    <div style={{ fontSize: 11, color: "#EA580C", fontWeight: 800, marginBottom: 6, letterSpacing: 1 }}>
-                      MODULE · {card.module}
-                    </div>
-                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 18, marginBottom: 14, lineHeight: 1.3 }}>
-                      {card.label}
-                    </div>
-                    {card.audioUrl ? (
-                      <audio
-                        controls
-                        autoPlay
-                        src={card.audioUrl}
-                        style={{ width: "100%" }}
-                      />
-                    ) : (
-                      <div style={{ color: "#D97706", fontSize: 13, fontWeight: 600 }}>
-                        ⚠️ Le fichier audio n'est plus en mémoire. Recharge-le depuis l'écran d'import pour pouvoir le réviser.
-                      </div>
-                    )}
-                    {!audioReviewRevealed ? (
-                      <button
-                        onClick={() => setAudioReviewRevealed(true)}
-                        style={{
-                          marginTop: 14, width: "100%", padding: "12px",
-                          background: "#EEF2FF", color: "#3451D1", border: "1px solid #C7D2FE",
-                          borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13
-                        }}
-                      >
-                        👁 J'ai écouté — révéler les options
-                      </button>
-                    ) : (
-                      <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 14, fontStyle: "italic" }}>
-                        Évalue ton souvenir de cet audio :
-                      </div>
-                    )}
-                  </div>
-
-                  {audioReviewRevealed && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-                      <button
-                        onClick={() => gradeCurrentAudio("again")}
-                        style={{ padding: "12px", background: "#FEE2E2", color: "#DC2626", border: "1px solid #FCA5A5", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}
-                      >
-                        🔁 À revoir
-                      </button>
-                      <button
-                        onClick={() => gradeCurrentAudio("good")}
-                        style={{ padding: "12px", background: "#DBEAFE", color: "#1D4ED8", border: "1px solid #93C5FD", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}
-                      >
-                        👍 Bien
-                      </button>
-                      <button
-                        onClick={() => gradeCurrentAudio("easy")}
-                        style={{ padding: "12px", background: "#DCFCE7", color: "#15803D", border: "1px solid #86EFAC", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}
-                      >
-                        ✨ Facile
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
         </div>
       )}
 
@@ -3339,65 +2871,6 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               ))}
             </div>
           )}
-        </div>
-      )}
-
-
-      {/* ════ 🗄️ PANNEAU RÉSERVE ════ */}
-      {reserveCards.length > 0 && !showReservePanel && (
-        <button
-          onClick={() => setShowReservePanel(true)}
-          style={{
-            position: "fixed", bottom: 90, right: 20, zIndex: 500,
-            background: "linear-gradient(135deg,#7c3aed,#8b5cf6)",
-            color: "white", border: "none", borderRadius: 20,
-            padding: "12px 18px", fontWeight: 800, fontSize: 13,
-            cursor: "pointer", boxShadow: "0 8px 24px rgba(124,58,237,0.5)",
-            display: "flex", alignItems: "center", gap: 8,
-          }}
-        >
-          🗄️ Réserve · {reserveCards.length}
-        </button>
-      )}
-
-      {showReservePanel && (
-        <div
-          onClick={() => setShowReservePanel(false)}
-          style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-            zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: theme.cardBg, borderRadius: "24px 24px 0 0",
-              padding: 24, maxWidth: 680, width: "100%", maxHeight: "85vh",
-              overflow: "auto", border: `1px solid ${theme.border}`, borderBottom: "none",
-              boxShadow: "0 -8px 40px rgba(0,0,0,0.4)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <div>
-                <h3 style={{ margin: 0, color: theme.text, fontSize: 20, fontWeight: 900 }}>🗄️ Module Réserve</h3>
-                <p style={{ margin: "4px 0 0", color: theme.textMuted, fontSize: 13 }}>
-                  {reserveCards.length} fiche{reserveCards.length > 1 ? "s" : ""} en attente · Sélectionne celles que tu veux ajouter à l'algo
-                </p>
-              </div>
-              <button onClick={() => setShowReservePanel(false)} style={{
-                background: "transparent", border: "none", color: theme.textMuted,
-                fontSize: 20, cursor: "pointer", padding: 4,
-              }}>✕</button>
-            </div>
-            <ReserveList
-              reserveCards={reserveCards}
-              addFromReserve={addFromReserve}
-              setShowReservePanel={setShowReservePanel}
-              theme={theme}
-              activeColor={activeColor}
-            />
-          </div>
         </div>
       )}
     </div>

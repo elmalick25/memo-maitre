@@ -56,3 +56,8 @@ body {
   box-sizing: border-box;
   overflow: visible;
 }
+
+@keyframes soundwave-bar {
+  0% { transform: scaleY(0.2); opacity: 0.5; }
+  100% { transform: scaleY(1); opacity: 1; }
+}

@@ -1,5 +1,5 @@
 // src/lib/fsrs.js
-import { addDays, today } from "../utils/dateUtils.js";
+import { addDays, today, diffDays } from "../utils/dateUtils.js";
 
 const FSRS_PARAMS = [
   0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0589, 1.5330,
@@ -19,7 +19,13 @@ const TARGET_R = 0.9;
 export const PRE_PRODUCTION_INTERVAL_CAP_DAYS = 3;
 const PRODUCTIVE_STAGES = new Set(['produced', 'mastered']);
 
-function shouldCapInterval(masteryStage) {
+function shouldCapInterval(card) {
+  const { masteryStage, category } = card;
+  // Le plafond pré-production (imposant une pratique orale/chat) ne concerne QUE l'anglais
+  if (!category || !category.toLowerCase().includes("anglais")) {
+    return false;
+  }
+
   if (!masteryStage) return true; // pas de stage connu → on protège par défaut
   return !PRODUCTIVE_STAGES.has(masteryStage);
 }
@@ -50,8 +56,10 @@ function fsrsInitDifficulty(grade) {
 
 function fsrsNextDifficulty(D, grade) {
   const w = FSRS_PARAMS;
-  const deltaD = -w[13] * (grade - 3);
-  return Math.min(10, Math.max(1, D + deltaD * ((10 - D) / 9)));
+  const next_d = D - w[6] * (grade - 3);
+  const D0_3 = Math.min(10, Math.max(1, w[4] - Math.exp(w[5] * (3 - 1)) + 1));
+  const D_mean = w[7] * D0_3 + (1 - w[7]) * next_d;
+  return Math.min(10, Math.max(1, D_mean));
 }
 
 function fsrsNextStabilityRecall(D, S, R, grade) {
@@ -68,7 +76,12 @@ function fsrsNextStabilityForgot(D, S, R) {
 
 export function fsrs(card, q) {
   const grade = toFSRSGrade(q);
-  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null, easeFactor = null, masteryStage = null } = card;
+  let { stability = null, difficulty = null, interval = 1, repetitions = 0, elapsedDays = null, nextReview = null, easeFactor = null, masteryStage = null } = card;
+
+  if (elapsedDays === null && nextReview !== null && interval > 0) {
+    const daysLate = diffDays(today(), nextReview);
+    elapsedDays = Math.max(0, interval + daysLate);
+  }
   const t = elapsedDays ?? interval;
 
   // Migration des anciennes fiches SM-2 (qui ont des répétitions mais pas de stabilité FSRS)
@@ -96,18 +109,18 @@ export function fsrs(card, q) {
 
   // Plafond pré-production : n'altère PAS stability/difficulty, uniquement
   // l'intervalle effectif utilisé pour nextReview.
-  if (interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS && shouldCapInterval(masteryStage)) {
+  if (interval > PRE_PRODUCTION_INTERVAL_CAP_DAYS && shouldCapInterval(card)) {
     interval = PRE_PRODUCTION_INTERVAL_CAP_DAYS;
   }
 
   const retention = Math.round(fsrsR(interval, stability) * 100);
-  const nextReview = addDays(today(), interval);
+  const nextReviewDate = addDays(today(), interval);
   return {
     stability: +stability.toFixed(4),
     difficulty: +difficulty.toFixed(4),
     interval,
     repetitions,
-    nextReview,
+    nextReview: nextReviewDate,
     retention
   };
 }

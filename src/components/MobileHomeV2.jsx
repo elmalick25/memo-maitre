@@ -84,7 +84,7 @@ export default function MobileHomeV2({
 
         <button
           type="button"
-          onClick={() => onStartSession(null)}
+          onClick={() => onStartSession?.(null)}
           style={{ 
             background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
             padding: "24px", borderRadius: 24, border: "none", color: "white",
@@ -103,60 +103,104 @@ export default function MobileHomeV2({
         </button>
 
         <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--text)", marginBottom: 16, marginLeft: 4 }}>Modules en retard</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
-          {dueModules.map(mod => (
-            <button
-              key={mod.name}
-              type="button"
-              onClick={() => onStartSession(mod.name)}
-              style={{
-                display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between",
-                padding: "16px", background: "var(--bg)", borderRadius: 20,
-                border: "1px solid var(--border)", color: "var(--text)", cursor: "pointer", textAlign: "left",
-                minHeight: "110px", boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
-                transition: "transform 0.2s"
-              }}
-            >
-              <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.3, marginBottom: 16, wordBreak: "break-word" }}>{mod.name}</div>
-              <div style={{ background: "rgba(77, 107, 254, 0.1)", color: "#4D6BFE", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
-                {mod.count} fiche{mod.count > 1 ? "s" : ""}
-              </div>
-            </button>
-          ))}
-        </div>
+        {dueModules.length === 0 ? (
+          <p style={{ color: "var(--muted, #64748b)", fontSize: 14, marginLeft: 4 }}>
+            Aucun module en retard pour l'instant.
+          </p>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+            {dueModules.map(mod => (
+              <button
+                key={mod.name}
+                type="button"
+                onClick={() => onStartSession?.(mod.name)}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between",
+                  padding: "16px", background: "var(--bg)", borderRadius: 20,
+                  border: "1px solid var(--border)", color: "var(--text)", cursor: "pointer", textAlign: "left",
+                  minHeight: "110px", boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
+                  transition: "transform 0.2s"
+                }}
+              >
+                <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.3, marginBottom: 16, wordBreak: "break-word" }}>{mod.name}</div>
+                <div style={{ background: "rgba(77, 107, 254, 0.1)", color: "#4D6BFE", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
+                  {mod.count} fiche{mod.count > 1 ? "s" : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="mhv2">
-      {/* ── HERO compact ── */}
+      {/* ── HERO — Redesign "wow effect" (aurora + glass + ring) ── */}
       <div className="mhv2-hero" role="banner">
-        <p className="mhv2-hero-greet">{greeting} · Niveau {level}</p>
-        <h1 className="mhv2-hero-name">{userName}</h1>
-        <div className="mhv2-hero-stats">
-          <span className="mhv2-hero-stat" title={`${xp} / ${xpToNext} XP`}>
-            <strong>{xp}</strong> XP
-          </span>
-          <span className="mhv2-hero-stat" title={`Série de ${streak} jours`}>
-            🔥 <strong>{streak}</strong>j
-          </span>
-          <span className="mhv2-hero-stat" title={`Énergie ${energy}%`}>
-            ⚡ <strong>{energy}</strong>%
-          </span>
+        <div className="mhv2-hero-aurora" aria-hidden="true" />
+        <div className="mhv2-hero-noise" aria-hidden="true" />
+        <div className="mhv2-hero-shine" aria-hidden="true" />
+
+        <div className="mhv2-hero-row">
+          <div className="mhv2-hero-avatar" aria-hidden="true">
+            <svg className="mhv2-hero-ring" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="mhv2RingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#a78bfa" />
+                  <stop offset="50%" stopColor="#f472b6" />
+                  <stop offset="100%" stopColor="#fbbf24" />
+                </linearGradient>
+              </defs>
+              <circle cx="50" cy="50" r="44" className="mhv2-ring-track" />
+              <circle
+                cx="50" cy="50" r="44" className="mhv2-ring-fill"
+                strokeDasharray={2 * Math.PI * 44}
+                strokeDashoffset={2 * Math.PI * 44 * (1 - xpPct / 100)}
+              />
+            </svg>
+            <div className="mhv2-hero-avatar-face">
+              <span className="mhv2-hero-avatar-init">{(userName || "?").trim().charAt(0).toUpperCase()}</span>
+              <span className="mhv2-hero-avatar-level">Nv&nbsp;{level}</span>
+            </div>
+          </div>
+
+          <div className="mhv2-hero-head">
+            <span className="mhv2-hero-greet">{greeting} · Niveau {level}</span>
+            <h1 className="mhv2-hero-name">{userName}</h1>
+            <span className="mhv2-hero-sub">
+              {xpPct}% vers <strong>Niv&nbsp;{level + 1}</strong>
+            </span>
+          </div>
         </div>
-        {/* mini barre XP intégrée */}
-        <div
-          aria-label={`Progression XP ${xpPct}%`}
-          style={{
-            marginTop: 12, height: 4, background: "rgba(255,255,255,0.2)",
-            borderRadius: 2, overflow: "hidden", position: "relative"
-          }}
-        >
-          <div style={{
-            width: `${xpPct}%`, height: "100%", background: "#fff",
-            transition: "width .3s"
-          }} />
+
+        <div className="mhv2-hero-xpbar" aria-label={`Progression XP ${xpPct}%`}>
+          <div className="mhv2-hero-xpbar-fill" style={{ width: `${xpPct}%` }} />
+          <span className="mhv2-hero-xpbar-label">{xp}<em>/{xpToNext} XP</em></span>
+        </div>
+
+        <div className="mhv2-hero-stats">
+          <div className="mhv2-hero-stat" title={`Série de ${streak} jours`}>
+            <span className="mhv2-hero-stat-ico" data-tone="fire">🔥</span>
+            <span className="mhv2-hero-stat-body">
+              <strong>{streak}</strong>
+              <em>Jour{streak > 1 ? "s" : ""}</em>
+            </span>
+          </div>
+          <div className="mhv2-hero-stat" title={`Énergie ${energy}%`}>
+            <span className="mhv2-hero-stat-ico" data-tone="volt">⚡</span>
+            <span className="mhv2-hero-stat-body">
+              <strong>{energy}</strong>
+              <em>Énergie</em>
+            </span>
+          </div>
+          <div className="mhv2-hero-stat" title={`${xp} XP`}>
+            <span className="mhv2-hero-stat-ico" data-tone="star">✨</span>
+            <span className="mhv2-hero-stat-body">
+              <strong>{xp}</strong>
+              <em>XP total</em>
+            </span>
+          </div>
         </div>
       </div>
 
@@ -164,23 +208,26 @@ export default function MobileHomeV2({
       <button
         type="button"
         className="mhv2-cta"
+        disabled={!hasDue && typeof onExploreLab !== "function"}
         onClick={() => {
           if (hasDue) {
             if (dueModules.length > 1) {
               setIsSelectingModule(true);
+            } else if (dueModules.length === 1) {
+              onStartSession?.(dueModules[0].name);
             } else {
-              onStartSession(null);
+              onStartSession?.(null);
             }
           } else {
-            onExploreLab();
+            onExploreLab?.();
           }
         }}
       >
         <span className="mhv2-cta-icon">
           {hasDue ? "▶" : "🧪"}
-          <span className="mhv2-cta-title">
-            {hasDue ? "Réviser maintenant" : "Explorer le Lab"}
-          </span>
+        </span>
+        <span className="mhv2-cta-title">
+          {hasDue ? "Réviser maintenant" : "Explorer le Lab"}
         </span>
         <span className="mhv2-cta-sub">
           {hasDue

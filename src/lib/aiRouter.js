@@ -23,7 +23,7 @@
 const env = (k) => (typeof import.meta !== "undefined" ? import.meta.env?.[k] : "") || "";
 
 const KEYS = {
-  cerebras:  [env("VITE_CEREBRAS_API_KEY")],
+  cerebras:  [env("VITE_CEREBRAS_API_KEY"), env("VITE_CEREBRAS_API_KEY_1"), env("VITE_CEREBRAS_API_KEY_2"), env("VITE_CEREBRAS_API_KEY_3"), env("VITE_CEREBRAS_API_KEY_4"), env("VITE_CEREBRAS_API_KEY_5"), env("VITE_CEREBRAS_API_KEY_6"), env("VITE_CEREBRAS_API_KEY_7")],
   groq:      [env("VITE_GROQ_API_KEY_5"), env("VITE_GROQ_API_KEY_6"), env("VITE_GROQ_API_KEY_7"), env("VITE_GROQ_API_KEY"), env("VITE_GROQ_API_KEY_2")],
   mistral:   [env("VITE_MISTRAL_API_KEY_1"), env("VITE_MISTRAL_API_KEY_2"), env("VITE_MISTRAL_API_KEY_3"), env("VITE_MISTRAL_API_KEY_4"), env("VITE_MISTRAL_API_KEY_5"), env("VITE_MISTRAL_API_KEY_6"), env("VITE_MISTRAL_API_KEY_7")],
   or:        [env("VITE_OPENROUTER_API_KEY"), env("VITE_OPENROUTER_API_KEY_2"), env("VITE_OPENROUTER_API_KEY_3")],
@@ -34,13 +34,33 @@ const KEYS = {
   deepseek:  [env("VITE_DEEPSEEK_API_KEY")],
 };
 
-function getValidKey(provider) {
+// ─── Cooldown par clé ── une clé qui vient de recevoir un 429 est mise en
+// pause quelques secondes plutôt que d'être re-choisie au hasard tout de suite.
+const _keyCooldowns = new Map(); // `${provider}:${key}` -> timestamp (ms) de fin de pause
+
+function keyId(provider, key) { return `${provider}:${key}`; }
+
+function isKeyCoolingDown(provider, key) {
+  const until = _keyCooldowns.get(keyId(provider, key));
+  return typeof until === "number" && Date.now() < until;
+}
+
+function markKeyCooldown(provider, key, ms = 20_000) {
+  if (!key) return;
+  _keyCooldowns.set(keyId(provider, key), Date.now() + ms);
+}
+
+function getValidKey(provider, { avoidCooldown = true } = {}) {
   const k = KEYS[provider] || [];
   const valid = k.filter(Boolean);
   if (!valid.length && provider === "mistral" && typeof localStorage !== "undefined") {
     return localStorage.getItem("MISTRAL_API_KEY") || "";
   }
-  return valid.length ? valid[Math.floor(Math.random() * valid.length)] : "";
+  if (!valid.length) return "";
+
+  const usable = avoidCooldown ? valid.filter(k2 => !isKeyCoolingDown(provider, k2)) : valid;
+  const pool = usable.length ? usable : valid; // si TOUTES en pause, on tente quand même plutôt que d'échouer
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 function filterChain(chain) {
@@ -161,8 +181,26 @@ const MODELS = {
   ],
 };
 
-// L'ancien système de rotation et de cooldown a été migré sur le proxy/backend ou désactivé
-const markCooldown = (p, i, ms = 60_000) => {};
+// ─── File d'attente globale ── espace les requêtes sortantes (anti-429 en rafale) ──
+// Toutes les requêtes passent par ce goulot : au plus 1 requête toutes les
+// MIN_GAP_MS, exécutées dans l'ordre d'arrivée. Simple mais suffisant pour
+// éviter les rafales parallèles (ex: génération de fiches en lot) qui
+// grillent les clés d'un provider en quelques centaines de ms.
+const QUEUE_MIN_GAP_MS = 1500;
+let _queueTail = Promise.resolve();
+
+function enqueueCall(fn) {
+  const run = _queueTail.then(async () => {
+    await sleep(QUEUE_MIN_GAP_MS);
+    return fn();
+  });
+  // On avale les erreurs sur la chaîne interne pour ne jamais bloquer la file,
+  // l'erreur réelle est toujours propagée à l'appelant via `run`.
+  _queueTail = run.then(() => {}, () => {});
+  return run;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Timeout helper ───────────────────────────────────────────────────────────
 const TIMEOUT_MS_DEFAULT = 30_000;
@@ -239,13 +277,14 @@ async function callOne({ provider, model, messages, maxTokens, json, stream, tem
 
   const _t = withTimeout(signal);
   let res;
-  try { 
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: _t.signal }); 
+  try {
+    res = await enqueueCall(() => fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: _t.signal }));
   } finally { 
     _t.clear(); 
   }
   
   if (!res.ok) {
+    if (res.status === 429) markKeyCooldown(provider, key);
     const t = await res.text().catch(() => "");
     throw new Error(`HTTP_${res.status}_${provider}_${t.slice(0, 120)}`);
   }
@@ -253,26 +292,93 @@ async function callOne({ provider, model, messages, maxTokens, json, stream, tem
   return { res, isCohere };
 }
 
+// ─── Cache de réponses ── évite de re-payer un appel IA pour une requête
+// strictement identique (ex: régénération de la même fiche, même prompt Lab).
+// TTL par défaut 1h ; désactivable via opts.cache = false ; forcé à off pour
+// temperature élevée (>0.5) car le but est alors d'avoir de la variété.
+const CACHE_PREFIX = "airc_";
+const CACHE_INDEX_KEY = "airc_index";
+const CACHE_MAX_ENTRIES = 200;
+const CACHE_DEFAULT_TTL_MS = 60 * 60 * 1000;
+
+function hashString(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function buildCacheKey({ task, system, user, messages, imageUrl, json }) {
+  const payload = JSON.stringify({ task, system, user, messages, imageUrl, json });
+  return CACHE_PREFIX + hashString(payload);
+}
+
+function getCached(cacheKey) {
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    const entry = JSON.parse(raw);
+    if (!entry || Date.now() > entry.exp) { localStorage.removeItem(cacheKey); return null; }
+    return entry;
+  } catch { return null; }
+}
+
+function setCached(cacheKey, value, ttlMs) {
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify({ ...value, exp: Date.now() + ttlMs }));
+    const idxRaw = localStorage.getItem(CACHE_INDEX_KEY);
+    const idx = idxRaw ? JSON.parse(idxRaw) : [];
+    const next = idx.filter(k => k !== cacheKey);
+    next.push(cacheKey);
+    while (next.length > CACHE_MAX_ENTRIES) {
+      const evicted = next.shift();
+      localStorage.removeItem(evicted);
+    }
+    localStorage.setItem(CACHE_INDEX_KEY, JSON.stringify(next));
+  } catch { /* cache best-effort — jamais bloquant */ }
+}
+
 // ── Public : appel non-streaming ─────────────────────────────────────────────
 export async function aiCall(opts) {
-  const { task = "chat", system, user, messages, imageUrl, maxTokens, json = false, temperature, signal } = opts;
+  const { task = "chat", system, user, messages, imageUrl, maxTokens, json = false, temperature, signal, cache = true } = opts;
+
+  const useCache = cache && (temperature === undefined || temperature <= 0.5);
+  const cacheKey = useCache ? buildCacheKey({ task, system, user, messages, imageUrl, json }) : null;
+  if (cacheKey) {
+    const hit = getCached(cacheKey);
+    if (hit) return { text: hit.text, model: hit.model, provider: hit.provider, raw: hit.raw, cached: true };
+  }
+
   const chain = filterChain(MODELS[task] || MODELS.chat);
   if (!chain.length) throw new Error(`NO_KEYS_FOR_TASK_${task}`);
   const msgs = buildMessages({ system, user, messages, imageUrl });
   let lastErr;
   for (const m of chain) {
-    try {
-      const { res, isCohere } = await callOne({
-        provider: m.p, model: m.m, messages: msgs,
-        maxTokens: maxTokens || m.max,
-        json: json || m.json,
-        temperature: temperature ?? m.temp,
-        signal,
-      });
-      const data = await res.json();
-      const text = isCohere ? extractCohereText(data) : (data?.choices?.[0]?.message?.content ?? "");
-      return { text, model: m.m, provider: m.p, raw: data };
-    } catch (e) { lastErr = e; }
+    // Sur 429, on retente une fois avec une autre clé du même provider après
+    // un court backoff, avant de passer au provider suivant de la chaîne.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { res, isCohere } = await callOne({
+          provider: m.p, model: m.m, messages: msgs,
+          maxTokens: maxTokens || m.max,
+          json: json || m.json,
+          temperature: temperature ?? m.temp,
+          signal,
+        });
+        const data = await res.json();
+        const text = isCohere ? extractCohereText(data) : (data?.choices?.[0]?.message?.content ?? "");
+        const result = { text, model: m.m, provider: m.p, raw: data };
+        if (cacheKey) setCached(cacheKey, result, CACHE_DEFAULT_TTL_MS);
+        return result;
+      } catch (e) {
+        lastErr = e;
+        const is429 = /HTTP_429/.test(e?.message || "");
+        if (is429 && attempt === 0 && getValidKey(m.p)) {
+          await sleep(2000); // backoff avant de retenter sur une autre clé du même provider
+          continue;
+        }
+        break;
+      }
+    }
   }
   throw new Error(`All providers failed for task '${task}': ${lastErr?.message || "unknown"}`);
 }

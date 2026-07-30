@@ -1,0 +1,660 @@
+/* ════════════════════════════════════════════════════════════════════════════
+ * Practice mode tab bar (Chat / Débat / Roleplay / Écriture / Oral / Dictée / Vidéos)
+ * Redesigned as a cohesive segmented control with per-mode accent colors,
+ * a clear active state, and a subtle organizing label on wider screens.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+.ep-tabbar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.ep-tabbar-label {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--mm-fg-faint, rgba(255, 255, 255, 0.38));
+  padding-left: 2px;
+}
+.ep-tabbar-label::after {
+  content: "";
+  width: 1px;
+  height: 18px;
+  background: var(--mm-border, rgba(255, 255, 255, 0.12));
+  margin-left: 8px;
+}
+
+@media (min-width: 900px) {
+  .ep-tabbar-label { display: inline-flex; }
+}
+
+.ep-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--mm-border, rgba(255, 255, 255, 0.08));
+  border-radius: 16px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+.ep-tabbar::-webkit-scrollbar { display: none; }
+
+[data-theme="light"] .ep-tabbar,
+.light .ep-tabbar {
+  background: rgba(15, 23, 42, 0.03);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.ep-tab {
+  --tab-accent: #8b5cf6;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  padding: 9px 15px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--mm-fg-muted, rgba(255, 255, 255, 0.5));
+  font-family: var(--mm-font-display, inherit);
+  font-weight: 650;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    color 0.22s var(--mm-ease-out, ease),
+    background 0.22s var(--mm-ease-out, ease),
+    border-color 0.22s var(--mm-ease-out, ease),
+    box-shadow 0.22s var(--mm-ease-out, ease),
+    transform 0.18s var(--mm-ease-out, ease);
+}
+
+.ep-tab-icon {
+  font-size: 15px;
+  line-height: 1;
+  filter: grayscale(60%) opacity(0.7);
+  transform: scale(1);
+  transition: filter 0.22s var(--mm-ease-out, ease), transform 0.25s var(--mm-ease-spring, ease);
+}
+
+.ep-tab:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--mm-fg, rgba(255, 255, 255, 0.85));
+  transform: translateY(-1px);
+}
+.ep-tab:hover:not(.is-active) .ep-tab-icon {
+  filter: grayscale(15%) opacity(0.95);
+}
+
+.ep-tab:focus-visible {
+  outline: 2px solid var(--tab-accent);
+  outline-offset: 2px;
+}
+
+.ep-tab.is-active {
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--tab-accent) 34%, transparent),
+    color-mix(in oklab, var(--tab-accent) 14%, transparent)
+  );
+  border-color: color-mix(in oklab, var(--tab-accent) 55%, transparent);
+  color: #ffffff;
+  font-weight: 800;
+  box-shadow:
+    0 4px 14px -2px color-mix(in oklab, var(--tab-accent) 50%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  transform: translateY(-1px);
+}
+
+[data-theme="light"] .ep-tab.is-active,
+.light .ep-tab.is-active {
+  color: color-mix(in oklab, var(--tab-accent) 70%, #0f172a);
+}
+
+.ep-tab.is-active .ep-tab-icon {
+  filter: none;
+  transform: scale(1.1);
+}
+
+.ep-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -1px;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--tab-accent);
+  box-shadow: 0 0 6px var(--tab-accent);
+}
+
+/* Mobile collapse toggle — restyled to match the segmented control language */
+.ep-tabs-toggle {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.22), rgba(99, 102, 241, 0.28));
+  color: #fff;
+  font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+.ep-tabs-toggle:active { transform: scale(0.98); }
+
+@media (max-width: 640px) {
+  .ep-tab { padding: 8px 12px; font-size: 12.5px; }
+  .ep-tab-icon { font-size: 14px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * GOD TIER ENGLISH VIEW STYLES (Light & Dark Theme Adaptive)
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/* Hero Banner Container */
+.ep-hero-card {
+  position: relative;
+  border-radius: 24px;
+  padding: 24px 28px;
+  margin-bottom: 20px;
+  overflow: hidden;
+  background: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.18), transparent 60%),
+              radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.15), transparent 60%),
+              var(--mm-bg-elev, #0b0d1e);
+  border: 1px solid var(--mm-border, rgba(139, 92, 246, 0.25));
+  box-shadow: 0 16px 36px -8px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(20px);
+  transition: all 0.3s ease;
+}
+
+[data-theme="light"] .ep-hero-card,
+.light .ep-hero-card {
+  background: radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.08), transparent 60%),
+              radial-gradient(circle at 90% 80%, rgba(217, 70, 239, 0.06), transparent 60%),
+              #ffffff;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  box-shadow: 0 12px 32px -4px rgba(15, 23, 42, 0.08);
+}
+
+/* Title Gradient text */
+.ep-hero-title {
+  font-family: var(--mm-font-display, "Outfit", sans-serif);
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+  background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 50%, #ec4899 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+[data-theme="light"] .ep-hero-title,
+.light .ep-hero-title {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #db2777 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Glass Card Helper */
+.ep-glass-panel {
+  background: var(--mm-bg-card, rgba(15, 17, 35, 0.65));
+  border: 1px solid var(--mm-border, rgba(139, 92, 246, 0.2));
+  border-radius: 20px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+}
+
+[data-theme="light"] .ep-glass-panel,
+.light .ep-glass-panel {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+/* Interactive Card Hover */
+.ep-glass-panel-hover:hover {
+  transform: translateY(-3px);
+  border-color: var(--mm-primary-glow, #a78bfa);
+  box-shadow: 0 16px 36px -6px rgba(139, 92, 246, 0.25);
+}
+
+/* Chat User Bubble */
+.ep-user-bubble {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: #ffffff;
+  border-radius: 20px 20px 4px 20px;
+  padding: 14px 20px;
+  box-shadow: 0 8px 24px -4px rgba(99, 102, 241, 0.35);
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+[data-theme="light"] .ep-user-bubble,
+.light .ep-user-bubble {
+  background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+  box-shadow: 0 8px 20px -2px rgba(79, 70, 229, 0.25);
+}
+
+/* Chat Coach Bubble */
+.ep-coach-bubble {
+  background: var(--mm-bg-card, rgba(15, 23, 42, 0.75));
+  color: var(--mm-fg, #f8fafc);
+  border: 1px solid var(--mm-border, rgba(139, 92, 246, 0.25));
+  border-radius: 20px 20px 20px 4px;
+  padding: 16px 22px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(16px);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+[data-theme="light"] .ep-coach-bubble,
+.light .ep-coach-bubble {
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.07);
+}
+
+/* Input Dock Container */
+.ep-input-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 24px;
+  background: rgba(11, 13, 30, 0.85);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+[data-theme="light"] .ep-input-dock,
+.light .ep-input-dock {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+}
+
+.ep-input-dock:focus-within {
+  border-color: var(--mm-primary, #8b5cf6);
+  box-shadow: 0 12px 36px rgba(139, 92, 246, 0.3);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ✍️ WRITING LAB — Manuscript / graded-essay concept
+ * Serif (Lora) for authored/annotated content, sans (Outfit) for UI chrome.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ep-write-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  flex-wrap: wrap; gap: 14px; margin-bottom: 22px;
+}
+.ep-write-header-title { display: flex; align-items: center; gap: 12px; }
+.ep-write-header-icon {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--mm-primary) 16%, transparent);
+  color: var(--mm-primary-glow, var(--mm-primary));
+  border: 1px solid color-mix(in oklab, var(--mm-primary) 30%, transparent);
+}
+.ep-write-header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ep-write-btn-sm { padding: 8px 14px !important; font-size: 13px !important; border-radius: 10px !important; }
+
+.ep-write-toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.ep-write-prompt-input { flex: 1 1 260px; border-radius: 12px !important; }
+
+.ep-write-desk { position: relative; }
+.ep-write-textarea {
+  width: 100%; box-sizing: border-box;
+  padding: 22px 20px 34px;
+  border-radius: 14px;
+  border: 1px solid var(--mm-border);
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent, transparent calc(1.75em - 1px),
+      color-mix(in oklab, var(--mm-fg) 6%, transparent) calc(1.75em - 1px),
+      color-mix(in oklab, var(--mm-fg) 6%, transparent) 1.75em
+    ),
+    var(--mm-bg-elev);
+  color: var(--mm-fg);
+  font-family: var(--mm-font-serif, "Lora", Georgia, serif);
+  font-size: 15.5px;
+  line-height: 1.75em;
+  resize: vertical;
+  transition: border-color .15s, box-shadow .15s;
+}
+.ep-write-textarea:focus {
+  outline: none;
+  border-color: var(--mm-primary);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--mm-primary) 18%, transparent);
+}
+.ep-write-textarea::placeholder { font-style: italic; color: var(--mm-fg-faint); }
+.ep-write-wordcount {
+  position: absolute; bottom: 12px; right: 14px;
+  font-family: var(--mm-font-mono); font-size: 11px; font-weight: 600;
+  letter-spacing: .03em; color: var(--mm-fg-muted);
+  background: var(--mm-bg-elev); padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--mm-border);
+}
+
+.ep-write-submit {
+  margin-top: 14px; width: 100%;
+  padding: 13px 24px !important; border-radius: 12px !important;
+  font-size: 14.5px !important;
+}
+
+/* ── Graded report ────────────────────────────────────────────────────── */
+.ep-write-report {
+  margin-top: 26px; padding: 24px;
+  background: var(--mm-bg-elev); border-radius: 18px;
+  border: 1px solid var(--mm-border);
+}
+.ep-write-report-head { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; }
+.ep-write-report-eyebrow {
+  font-family: var(--mm-font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mm-fg-muted);
+  margin-bottom: 4px;
+}
+.ep-write-report-comment {
+  font-family: var(--mm-font-serif, "Lora", Georgia, serif);
+  font-style: italic; font-size: 15px; color: var(--mm-fg); line-height: 1.5;
+}
+
+/* The "seal" — a graded-document stamp, not a generic gradient badge */
+.ep-write-seal {
+  position: relative; flex-shrink: 0;
+  width: 68px; height: 68px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--mm-bg-card);
+}
+.ep-write-seal-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px dashed color-mix(in oklab, var(--mm-tier-color, var(--mm-primary)) 65%, transparent);
+}
+.ep-write-seal-score {
+  font-family: var(--mm-font-serif, "Lora", Georgia, serif);
+  font-weight: 700; font-style: italic; font-size: 24px;
+  color: var(--mm-tier-color, var(--mm-primary));
+}
+.ep-write-seal[data-tier="high"] { --mm-tier-color: var(--mm-success, #10b981); }
+.ep-write-seal[data-tier="mid"]  { --mm-tier-color: #f59e0b; }
+.ep-write-seal[data-tier="low"]  { --mm-tier-color: var(--mm-danger, #ef4444); }
+
+.ep-write-criteria {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0; margin-bottom: 22px;
+  border-top: 1px solid var(--mm-border); border-bottom: 1px solid var(--mm-border);
+}
+.ep-write-criterion {
+  padding: 14px 16px;
+  border-right: 1px solid var(--mm-border);
+}
+.ep-write-criterion:last-child { border-right: none; }
+.ep-write-criterion-label {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--mm-font-display); font-size: 11.5px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--mm-primary-glow, var(--mm-primary));
+  margin-bottom: 6px;
+}
+.ep-write-criterion-text { font-size: 13px; color: var(--mm-fg-muted); line-height: 1.5; }
+
+.ep-write-annotated-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 14px; gap: 10px; flex-wrap: wrap;
+}
+.ep-write-annotated-title {
+  font-family: var(--mm-font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--mm-fg-muted);
+}
+.ep-write-annotated-body {
+  background: var(--mm-bg);
+  border: 1px solid var(--mm-border); border-radius: 12px;
+  padding: 20px;
+  font-family: var(--mm-font-serif, "Lora", Georgia, serif);
+  font-size: 15px; line-height: 1.75;
+}
+
+@media (max-width: 640px) {
+  .ep-write-criteria { grid-template-columns: 1fr; }
+  .ep-write-criterion { border-right: none; border-bottom: 1px solid var(--mm-border); }
+  .ep-write-criterion:last-child { border-bottom: none; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🎓 SHARED LAB CHROME — used by Speaking Lab & Dictation Lab
+ * Same header language as Writing Lab, tri-tier evaluation color system.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ep-lab-panel { padding: 0; }
+
+.ep-lab-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 20px 26px;
+  background: var(--mm-grad-primary);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.ep-lab-header-icon--on-banner {
+  width: 40px; height: 40px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.14);
+  color: #fff;
+}
+.ep-lab-title--on-banner {
+  font-family: var(--mm-font-display); font-weight: 800; font-size: 17px; color: #fff;
+}
+.ep-lab-subtitle--on-banner {
+  font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px;
+}
+
+.ep-lab-eyebrow {
+  font-family: var(--mm-font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--mm-fg-muted);
+}
+.ep-lab-eyebrow-muted { font-weight: 500; text-transform: none; letter-spacing: 0; opacity: .8; }
+
+/* ── Generic tri-tier evaluation color system ─────────────────────────────
+   Wrap any element in className="ep-tier" data-tier="high|mid|low" and any
+   descendant can reference var(--mm-tier-color) for a consistent semantic
+   green / amber / red across Writing, Speaking and Dictation. ──────────── */
+.ep-tier[data-tier="high"] { --mm-tier-color: var(--mm-success, #10b981); }
+.ep-tier[data-tier="mid"]  { --mm-tier-color: var(--mm-warning, #f59e0b); }
+.ep-tier[data-tier="low"]  { --mm-tier-color: var(--mm-danger, #ef4444); }
+
+.ep-spin { animation: mm-spin 0.9s linear infinite; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 🎙️ SPEAKING LAB
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ep-speak-stage {
+  background: var(--mm-bg-elev); border-radius: 20px;
+  padding: 24px 20px; margin: 0 24px 24px; position: relative; overflow: hidden;
+}
+.ep-speak-canvas { width: 100%; height: 70px; border-radius: 12px; margin-bottom: 16px; }
+.ep-speak-waveform { display: flex; align-items: flex-end; gap: 2px; height: 70px; margin-bottom: 16px; padding: 0 4px; }
+.ep-speak-placeholder {
+  height: 70px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-bottom: 16px; font-size: 13px; color: var(--mm-fg-muted); text-align: center;
+}
+.ep-speak-rec-row { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 16px; }
+.ep-speak-rec-dot-wrap { display: flex; align-items: center; gap: 8px; }
+.ep-speak-rec-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--mm-danger); animation: mm-pulse 0.8s infinite; }
+.ep-speak-rec-label { font-weight: 800; color: var(--mm-danger); font-size: 12px; letter-spacing: 1.5px; }
+.ep-speak-countdown { font-weight: 800; font-size: 32px; color: var(--mm-fg); font-family: var(--mm-font-mono); }
+
+.ep-speak-record-btn { width: 100%; padding: 15px 24px !important; border-radius: 14px !important; font-size: 14px !important; }
+.ep-speak-record-btn.is-recording { background: var(--mm-danger); border-color: transparent; color: white; }
+
+.ep-speak-transcript {
+  background: var(--mm-bg-elev); border-radius: 14px; padding: 14px 20px; margin: 0 24px 24px;
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.ep-speak-transcript-icon { color: var(--mm-primary-glow, var(--mm-primary)); flex-shrink: 0; margin-top: 2px; }
+.ep-speak-transcript-text { font-size: 15px; color: var(--mm-fg); font-style: italic; line-height: 1.5; }
+
+.ep-speak-hero {
+  background: var(--mm-bg-elev); border-radius: 20px; padding: 20px 24px; margin: 0 24px 20px;
+  display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+  border: 1px solid color-mix(in oklab, var(--mm-tier-color) 30%, transparent);
+}
+.ep-speak-ring-wrap { position: relative; width: 108px; height: 108px; flex-shrink: 0; }
+.ep-speak-ring { width: 108px; height: 108px; transform: rotate(-90deg); }
+.ep-speak-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ep-speak-ring-score { font-size: 25px; font-weight: 800; color: var(--mm-tier-color); line-height: 1; font-family: var(--mm-font-display); }
+.ep-speak-ring-max { font-size: 10px; color: var(--mm-fg-muted); }
+.ep-speak-ring-label { font-size: 9px; font-weight: 700; color: var(--mm-tier-color); margin-top: 2px; }
+
+.ep-speak-accent-col { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 180px; }
+.ep-speak-accent-pill { background: var(--mm-bg-card); border-radius: 12px; padding: 10px 14px; display: flex; gap: 10px; align-items: center; color: var(--mm-fg-muted); }
+.ep-speak-accent-value { font-weight: 700; color: var(--mm-fg); font-size: 13px; }
+.ep-speak-word-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.ep-speak-word-pill {
+  background: color-mix(in oklab, var(--mm-tier-color) 14%, transparent);
+  border: 1px solid color-mix(in oklab, var(--mm-tier-color) 40%, transparent);
+  border-radius: 8px; padding: 3px 10px; font-size: 12px; font-weight: 700; color: var(--mm-tier-color);
+}
+.ep-speak-stats-col { display: flex; flex-direction: column; gap: 8px; min-width: 120px; }
+.ep-speak-stat-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: color-mix(in oklab, var(--mm-tier-color) 12%, transparent);
+  border-radius: 10px; padding: 6px 12px;
+}
+.ep-speak-stat-label { font-size: 11px; color: var(--mm-fg-muted); }
+.ep-speak-stat-val { font-weight: 800; font-size: 16px; color: var(--mm-tier-color); }
+
+.ep-speak-errors { background: var(--mm-bg-elev); border-radius: 16px; padding: 16px 20px; margin: 0 24px 20px; border: 1px solid color-mix(in oklab, var(--mm-tier-color) 30%, transparent); }
+.ep-speak-error-track { flex: 1; height: 8px; background: color-mix(in oklab, var(--mm-tier-color) 15%, transparent); border-radius: 4px; overflow: hidden; }
+.ep-speak-error-fill { height: 100%; background: var(--mm-tier-color); border-radius: 4px; transition: width 1s ease; }
+
+.ep-speak-legend { display: flex; align-items: center; margin: 0 24px 12px; gap: 12px; flex-wrap: wrap; }
+.ep-speak-legend-item { font-size: 11px; font-weight: 700; color: var(--mm-tier-color); }
+
+.ep-speak-word-card {
+  margin: 0 24px; background: color-mix(in oklab, var(--mm-tier-color) 7%, var(--mm-bg-elev));
+  border-radius: 16px; padding: 16px 18px;
+  border: 1px solid color-mix(in oklab, var(--mm-tier-color) 32%, transparent);
+}
+.ep-speak-word-card-word { font-weight: 800; font-size: 18px; color: var(--mm-fg); min-width: 90px; }
+.ep-speak-word-card-score { font-weight: 800; font-size: 18px; color: var(--mm-tier-color); text-align: right; min-width: 52px; }
+.ep-speak-word-card-score-max { font-size: 10px; font-weight: 400; color: var(--mm-fg-muted); }
+.ep-speak-ipa-chip {
+  display: flex; align-items: center; gap: 5px;
+  background: color-mix(in oklab, var(--mm-tier-color) 14%, transparent);
+  border-radius: 8px; padding: 4px 10px;
+}
+.ep-speak-ipa-chip-label { font-size: 10px; font-weight: 700; color: var(--mm-tier-color); letter-spacing: .5px; }
+.ep-speak-ipa-chip-text { font-family: var(--mm-font-mono); font-size: 13px; color: var(--mm-fg); letter-spacing: .5px; }
+.ep-speak-score-track { flex: 1; min-width: 60px; height: 6px; background: color-mix(in oklab, var(--mm-fg) 10%, transparent); border-radius: 3px; overflow: hidden; }
+.ep-speak-score-fill { height: 100%; background: var(--mm-tier-color); border-radius: 3px; transition: width 1.2s ease; }
+.ep-speak-issue-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.5; padding-top: 8px; margin-top: 8px; border-top: 1px solid color-mix(in oklab, var(--mm-tier-color) 25%, transparent); }
+.ep-speak-issue-label { display: flex; align-items: center; gap: 5px; color: var(--mm-tier-color); font-weight: 700; white-space: nowrap; }
+
+.ep-speak-note {
+  display: flex; gap: 10px; align-items: flex-start; margin: 0 24px;
+  background: color-mix(in oklab, var(--mm-tier-color) 10%, transparent);
+  color: var(--mm-tier-color); border-radius: 14px; padding: 12px 18px; font-size: 13px; line-height: 1.6;
+}
+.ep-speak-note--neutral { background: var(--mm-bg-elev); color: var(--mm-fg-muted); border: 1px solid var(--mm-border); }
+.ep-speak-retry-btn { margin: 20px 24px 24px; width: calc(100% - 48px); padding: 14px !important; border-radius: 14px !important; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ✍️ DICTATION LAB
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+.ep-dict-levels { display: flex; gap: 8px; margin-bottom: 20px; }
+.ep-dict-level-btn {
+  flex: 1; padding: 10px; border-radius: 10px; cursor: pointer; font-weight: 700; font-size: 12px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  border: 2px solid var(--mm-border); background: var(--mm-bg-elev); color: var(--mm-fg-muted);
+  transition: all .18s var(--mm-ease-out); font-family: inherit;
+}
+.ep-dict-level-btn.is-active {
+  border-color: var(--mm-tier-color); color: var(--mm-tier-color);
+  background: color-mix(in oklab, var(--mm-tier-color) 12%, transparent);
+}
+.ep-dict-level-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mm-tier-color); }
+
+.ep-dict-generate-btn { width: 100%; padding: 15px !important; border-radius: 14px !important; font-size: 14px !important; margin-bottom: 24px; }
+
+.ep-dict-progress-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.ep-dict-progress-label { font-weight: 700; color: var(--mm-primary-glow, var(--mm-primary)); font-size: 13px; }
+.ep-dict-progress-chip { background: var(--mm-bg-elev); padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 700; border: 1px solid var(--mm-border); color: var(--mm-fg-muted); }
+
+.ep-dict-listen-card {
+  background: var(--mm-bg-elev); border-radius: 16px; padding: 24px; margin-bottom: 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px; border: 1px solid var(--mm-border);
+}
+.ep-dict-play-btn {
+  width: 74px; height: 74px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--mm-grad-primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--mm-shadow-glow); transition: transform .18s var(--mm-ease-out);
+}
+.ep-dict-play-btn:hover { transform: scale(1.06); }
+.ep-dict-play-btn:active { transform: scale(.98); }
+.ep-dict-listen-hint { font-size: 13.5px; color: var(--mm-fg-muted); text-align: center; line-height: 1.5; }
+
+.ep-dict-history-text {
+  padding: 14px 16px; border-radius: 12px; background: var(--mm-bg-elev);
+  border: 1px dashed var(--mm-border); color: var(--mm-fg); font-size: 15px; line-height: 1.6;
+  opacity: .75; white-space: pre-wrap; font-family: var(--mm-font-serif);
+}
+
+.ep-dict-textarea { font-size: 15.5px !important; padding: 16px !important; border-radius: 12px !important; resize: none; font-family: var(--mm-font-serif) !important; }
+
+.ep-dict-next-btn, .ep-dict-finish-btn {
+  flex: 1; padding: 15px !important; border-radius: 12px !important; font-weight: 700 !important; font-size: 14px !important;
+  display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; border: none;
+}
+.ep-dict-finish-btn { background: var(--mm-tier-color); color: #fff; box-shadow: 0 8px 20px -6px color-mix(in oklab, var(--mm-tier-color) 60%, transparent); }
+
+.ep-dict-report { margin-top: 20px; border-radius: 16px; border: 2px solid color-mix(in oklab, var(--mm-tier-color) 55%, transparent); overflow: hidden; }
+.ep-dict-report-head {
+  padding: 16px 20px; display: flex; align-items: center; gap: 16px;
+  background: color-mix(in oklab, var(--mm-tier-color) 16%, var(--mm-bg-elev));
+}
+.ep-dict-report-score { font-size: 38px; font-weight: 800; color: var(--mm-tier-color); font-family: var(--mm-font-display); line-height: 1; }
+.ep-dict-report-score-unit { font-size: 18px; font-weight: 600; }
+.ep-dict-report-verdict { font-weight: 800; font-size: 15px; color: var(--mm-tier-color); }
+.ep-dict-report-caption { font-size: 12px; color: var(--mm-fg-muted); margin-top: 2px; }
+.ep-dict-report-body { padding: 20px; background: var(--mm-bg-elev); }
+.ep-dict-original-text {
+  background: var(--mm-bg); padding: 16px; border-radius: 12px; font-size: 15px; color: var(--mm-fg);
+  line-height: 1.8; border: 1px solid var(--mm-border); font-family: var(--mm-font-serif);
+}
+
+@media (max-width: 640px) {
+  .ep-speak-hero { flex-direction: column; align-items: stretch; }
+  .ep-speak-stats-col { flex-direction: row; flex-wrap: wrap; }
+}

@@ -4,6 +4,8 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import { speakWithFallback, NovaBadge } from "./lib/HuggingFaceVoice";
+import { safeParseJSON } from "./lib/jsonRepair";
+import { transcribeMediaFile, ocrBurnedSubtitles } from "./lib/mediaTranscribe";
 import useProductiveUse, { englishCategoryFilter } from "./hooks/useProductiveUse";
 import ProductionChallenge from "./components/ProductionChallenge";
 // ── Utilitaire : extraire l'ID YouTube ──────────────────────────────────────
@@ -134,21 +136,66 @@ async function fetchTranscript(videoId) {
   throw new Error("Impossible de récupérer les sous-titres automatiquement après " + attempts.length + " tentatives. Colle le texte de la transcription dans le champ « Coller manuellement » et clique sur Analyser. (" + (lastErr?.message || 'erreur inconnue') + ")");
 }
 
-// ── safeParseJSON ─────────────────────────────────────────────────────────────
-function safeParseJSON(str) {
-  let s = str.trim();
-  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fence) s = fence[1].trim();
-  try { return JSON.parse(s); } catch { }
-  // Tentative de réparation : fermer les structures ouvertes (objet ou tableau)
-  const trimmed = s.replace(/,\s*$/, "");
-  const opensWithArray = trimmed.trimStart().startsWith("[");
-  const repaired = opensWithArray
-    ? trimmed.replace(/([^\]])\s*$/, "$1]")
-    : trimmed.replace(/([^}])\s*$/, "$1}");
-  try { return JSON.parse(repaired); } catch { }
-  throw new Error("JSON invalide : " + s.slice(0, 200));
+// ── safeParseJSON : déporté dans lib/jsonRepair.js (répare les JSON tronqués) ──
+// (import en haut du fichier)
+
+
+// ── Normalisation de la réponse LLM ─────────────────────────────────────────
+// callClaude peut renvoyer une string OU { text } (mode grounding) : sans ça,
+// safeParseJSON recevait "[object Object]" et l'analyse renvoyait 0 expression.
+function llmText(raw) {
+  if (typeof raw === "string") return raw;
+  if (raw && typeof raw === "object") return String(raw.text || raw.content || "");
+  return "";
 }
+
+// Le modèle renvoie parfois directement un tableau au lieu de {"expressions":[...]}.
+function pickExpressions(parsed) {
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.expressions)) return parsed.expressions;
+  if (parsed && Array.isArray(parsed.items)) return parsed.items;
+  return [];
+}
+
+// ── Extraction d'expressions : appel IA robuste ─────────────────────────────
+// 1) mode JSON + fenêtre de sortie large (les réponses étaient tronquées → JSON invalide)
+// 2) température basse pour un JSON stable
+// 3) 2e essai avec un schéma allégé si la 1re réponse reste inexploitable
+const EXPR_SCHEMA_FULL = `{"expressions":[
+  {
+    "expr": "L'expression anglaise",
+    "ipa": "Prononciation figurée (phonétique maison FR)",
+    "meaning": "Traduction courte et naturelle",
+    "decomposition": "* **Mot 1 :** Sens physique : *...* ➔ **Glissement sémantique :** ...",
+    "mentalModel": "L'image mécanique globale en 1 phrase",
+    "comparative": "* **Option A (L'expr) :** ...\\n* **Option B (Faux-ami) :** ...",
+    "antipattern": "* **Erreur :** ... ➔ **Problème :** ...",
+    "examples": [{"en": "Phrase exemple 1 (Quotidien)", "fr": "Traduction 1"}, {"en": "Phrase exemple 2 (Tech/Workflow)", "fr": "Traduction 2"}, {"en": "Phrase exemple 3 (Professionnel)", "fr": "Traduction 3"}],
+    "synonyms": ["synonyme 1", "synonyme 2"]
+  }
+]}`;
+
+const EXPR_SCHEMA_LIGHT = `{"expressions":[{"expr":"...","ipa":"...","meaning":"...","decomposition":"...","mentalModel":"...","examples":[{"en":"Phrase 1","fr":"Traduction 1"},{"en":"Phrase 2","fr":"Traduction 2"},{"en":"Phrase 3","fr":"Traduction 3"}]}]}`;
+
+export async function extractExpressions(callClaude, chunkText) {
+  const run = async (schema, target, maxTokens) => {
+    const raw = await callClaude(
+      `Tu es un ingénieur en rétro-ingénierie linguistique. Extrais les expressions idiomatiques, phrasal verbs, collocations et mots clés utiles (B1-C2) du passage. Vise ${target} entrées MAXIMUM, fournis AU MOINS 3 EXEMPLES en anglais par expression, et reste concis pour que la réponse JSON soit COMPLÈTE. Réponds UNIQUEMENT avec du JSON valide, sans texte autour, sans balises de code.`,
+      `PASSAGE:\n${chunkText}\n\nFormat JSON exact :\n${schema}`,
+      { maxTokens, temperature: 0.2, json: true, task: "fast-json" }
+    );
+    return safeParseJSON(llmText(raw));
+  };
+
+  try {
+    return await run(EXPR_SCHEMA_FULL, "10 à 14", 8000);
+  } catch (e) {
+    console.warn("Extraction : 1er essai illisible, retry schéma allégé.", e?.message || e);
+    return await run(EXPR_SCHEMA_LIGHT, "8", 6000);
+  }
+}
+
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
@@ -171,6 +218,9 @@ export default function EnglishInTheWild({
   const [step, setStep] = useState("input"); // input | loading | results
   const [loadingMsg, setLoadingMsg] = useState("");
   const [error, setError] = useState("");
+  const [mediaBusy, setMediaBusy] = useState("");
+  const mediaInputRef = useRef(null);
+  const mediaModeRef = useRef("audio"); // "audio" (Whisper) | "ocr" (sous-titres incrustés)
 
   // ── Résultats ─────────────────────────────────────────────────────────────
   const [expressions10, setExpressions10] = useState([]); // [{expr, ipa, meaning, example, tip}]
@@ -198,6 +248,7 @@ export default function EnglishInTheWild({
   const [shadowingPhase, setShadowingPhase] = useState("idle"); // idle|listen|record|feedback
   const shadowRecorderRef = useRef(null);
   const shadowChunksRef = useRef([]);
+  const shadowTimerRef = useRef(null);
 
   // ── Sauvegarde ────────────────────────────────────────────────────────────
   const [savedToMemo, setSavedToMemo] = useState([]);   // indices des expressions sauvegardées
@@ -331,7 +382,7 @@ retourne UNIQUEMENT ce JSON :
   "synonyms": ["chance", "fortuitousness"]
 }`;
       const raw = await callClaude(prompt, "Vocab Mining");
-      const parsed = safeParseJSON(raw);
+      const parsed = safeParseJSON(llmText(raw));
       setMiningState(prev => ({ ...prev, loading: false, data: parsed }));
     } catch (e) {
       showToast?.(`Erreur de mining pour "${word}"`, "error");
@@ -394,7 +445,7 @@ retourne UNIQUEMENT ce JSON :
   // ════════════════════════════════════════════════════════════════════════════
   // ANALYSE PRINCIPALE
   // ════════════════════════════════════════════════════════════════════════════
-  const analyze = async () => {
+  const analyzeInner = async () => {
     const id = extractYouTubeId(url.trim());
     if (!id) { setError("URL YouTube invalide."); return; }
 
@@ -434,11 +485,10 @@ retourne UNIQUEMENT ce JSON :
     // Garder le transcript complet, chunker pour l'IA
     setTranscript(rawTranscript);
 
-    // 2. Extraction complète — chunks de 4000 chars avec overlap
-    // 🚀 PARALLÉLISATION : on traite 3 chunks à la fois pour des vidéos longues (2h+)
-    //    sans saturer l'API. Une vidéo de 60min ≈ ~25 chunks → ~9 vagues (au lieu de 25 séquentielles).
-    const CHUNK_SIZE = 4000;
-    const OVERLAP = 400;
+    // 2. Extraction complète — chunks plus petits pour que la réponse JSON
+    //    tienne dans la fenêtre de sortie du modèle (cause des JSON tronqués).
+    const CHUNK_SIZE = 2200;
+    const OVERLAP = 250;
     const chunks = [];
     for (let i = 0; i < rawTranscript.length; i += CHUNK_SIZE - OVERLAP) {
       chunks.push(rawTranscript.slice(i, i + CHUNK_SIZE));
@@ -458,28 +508,9 @@ retourne UNIQUEMENT ce JSON :
 
     const extractChunk = async (chunkText, ci) => {
       try {
-        const exprRaw = await callClaude(
-          `Tu es un expert en pédagogie et en enseignement de l'anglais. Je construis des fiches de révision pour mémoriser des expressions anglaises que j'extrais de la chaîne YouTube "Learn English avec TV Series". Analyse ce passage de transcription YouTube et extrais ABSOLUMENT TOUTES les expressions idiomatiques, phrasal verbs, collocations, slang, tournures utiles, mots avancés (B2-C2). Sois EXHAUSTIF : vise 15 à 30 expressions par passage si possible. Ne limite JAMAIS le nombre. Réponds UNIQUEMENT en JSON valide, aucun texte autour, aucune balise markdown.`,
-          `PASSAGE:\n${chunkText}\n\nRéponds avec ce format JSON exact :
-{"expressions":[
-  {
-    "expr": "L'expression extraite",
-    "ipa": "Prononciation figurée (phonétique francisée) très simple à lire pour un francophone (ex: 'What are you doing' -> 'wat-ar you douwing', 'brain' -> 'breyn'). Évite l'API.",
-    "meaning": "Traduction principale en français",
-    "usage": "C'est la partie LA PLUS IMPORTANTE. Tu DOIS toujours commencer ton explication par 'Utilise cette expression pour...' ou 'S'utilise quand...'. Sois très clair sur le contexte et le registre (familier, formel...).",
-    "avoid": "À ne pas confondre / Éviter (s'il y a des pièges, sinon laisse vide)",
-    "nuanceInContext": "Explique la nuance exacte de l'expression dans ce cas précis",
-    "examples": [
-      {"en": "Phrase exemple 1", "fr": "Traduction obligatoire en français"},
-      {"en": "Phrase exemple 2", "fr": "Traduction obligatoire en français"},
-      {"en": "Phrase exemple 3", "fr": "Traduction obligatoire en français"}
-    ],
-    "synonyms": ["synonyme 1 obligatoire", "synonyme 2 obligatoire"]
-  }
-]}`
-        );
-        const parsed = safeParseJSON(exprRaw);
-        const newExprs = (parsed.expressions || []).filter(e => {
+        const parsed = await extractExpressions(callClaude, chunkText);
+
+        const newExprs = pickExpressions(parsed).filter(e => e && e.expr).filter(e => {
           const key = normKey(e.expr);
           if (!key || seenExprs.has(key)) return false;
           seenExprs.add(key);
@@ -506,6 +537,9 @@ retourne UNIQUEMENT ce JSON :
     });
     await Promise.all(workers);
     setExpressions10(exprData);
+    if (!exprData.length) {
+      throw new Error("L'IA n'a renvoyé aucune expression exploitable pour cette vidéo. Réessaie, ou importe le fichier vidéo pour lire les sous-titres incrustés.");
+    }
 
     // Extrait limité pour dictée / quiz / shadowing (pas besoin du transcript entier)
     const excerpt = rawTranscript.slice(0, 6000);
@@ -518,7 +552,7 @@ retourne UNIQUEMENT ce JSON :
         `Tu es un professeur d'anglais. À partir de la transcription, extrais un passage naturel de 3-4 phrases (40-70 mots) adapté pour une dictée. Réponds UNIQUEMENT en JSON valide.`,
         `TRANSCRIPTION:\n${excerpt}\n\nFormat JSON exact :\n{"passage":"...","blankedPassage":"...","blanks":[{"index":0,"word":"..."}]}\n\nLe "blankedPassage" est le passage avec 5-7 mots remplacés par "___". Le tableau "blanks" liste les mots manquants dans l'ordre d'apparition. "index" est la position (0-based) du blanc dans l'ordre d'apparition.`
       );
-      dictData = safeParseJSON(dictRaw);
+      dictData = safeParseJSON(llmText(dictRaw));
     } catch (e) {
       console.warn("Dictation parse error", e);
     }
@@ -532,7 +566,7 @@ retourne UNIQUEMENT ce JSON :
         `Tu es un professeur d'anglais. Génère 4 questions de compréhension à choix multiples basées sur la transcription. Réponds UNIQUEMENT en JSON valide.`,
         `TRANSCRIPTION:\n${excerpt}\n\nFormat JSON :\n{"questions":[{"q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A","explanation":"..."}]}`
       );
-      const parsed = safeParseJSON(qRaw);
+      const parsed = safeParseJSON(llmText(qRaw));
       qData = parsed.questions || [];
     } catch (e) {
       console.warn("Questions parse error", e);
@@ -547,7 +581,7 @@ retourne UNIQUEMENT ce JSON :
         `Tu es un coach de prononciation anglaise. Choisis la phrase la plus intéressante phonétiquement de la transcription pour un exercice de shadowing (15-25 mots, bonne intonation naturelle). Réponds UNIQUEMENT en JSON valide.`,
         `TRANSCRIPTION:\n${excerpt}\n\nFormat JSON :\n{"phrase":"...","phonetics":"...","tips":["conseil 1","conseil 2","conseil 3"]}`
       );
-      shadowData = safeParseJSON(shadowRaw);
+      shadowData = safeParseJSON(llmText(shadowRaw));
     } catch (e) {
       console.warn("Shadowing parse error", e);
     }
@@ -565,7 +599,7 @@ retourne UNIQUEMENT ce JSON :
   };
 
   // ── Analyser texte collé manuellement ─────────────────────────────────────
-  const analyzeText = async () => {
+  const analyzeTextInner = async () => {
     if (!transcript.trim() || transcript.trim().length < 100) {
       setError("Le texte est trop court (minimum 100 caractères).");
       return;
@@ -588,34 +622,59 @@ retourne UNIQUEMENT ce JSON :
     setShadowingPhase("idle");
     setShadowingUserText("");
 
-    const excerpt = transcript.slice(0, 6000);
+    const rawText = transcript.trim();
+    const CHUNK_SIZE = 2200;
+    const OVERLAP = 250;
+    const chunks = [];
+    for (let i = 0; i < rawText.length; i += CHUNK_SIZE - OVERLAP) {
+      chunks.push(rawText.slice(i, i + CHUNK_SIZE));
+      if (i + CHUNK_SIZE >= rawText.length) break;
+    }
 
-    setLoadingMsg("🧠 Extraction des 10 expressions clés…");
+    setLoadingMsg(`🧠 Extraction intégrale des expressions… (0/${chunks.length} parties)`);
     let exprData = [];
-    try {
-      const exprRaw = await callClaude(
-        `Tu es un expert en pédagogie et en enseignement de l'anglais. Je construis des fiches de révision pour mémoriser des expressions anglaises. Analyse ce texte et extrais les 10 expressions les plus utiles pour un apprenant avancé (B2-C1). Réponds UNIQUEMENT en JSON valide, aucun texte autour, aucune balise markdown.`,
-        `TEXTE:\n${excerpt}\n\nRéponds avec ce format JSON exact :
-{"expressions":[
-  {
-    "expr": "L'expression extraite",
-    "ipa": "Prononciation figurée (phonétique francisée) très simple à lire pour un francophone (ex: 'What are you doing' -> 'wat-ar you douwing', 'brain' -> 'breyn'). Évite l'API.",
-    "meaning": "Traduction principale en français",
-    "usage": "C'est la partie LA PLUS IMPORTANTE. Tu DOIS toujours commencer ton explication par 'Utilise cette expression pour...' ou 'S'utilise quand...'. Sois très clair sur le contexte et le registre (familier, formel...).",
-    "avoid": "À ne pas confondre / Éviter (s'il y a des pièges, sinon laisse vide)",
-    "nuanceInContext": "Explique la nuance exacte de l'expression dans ce cas précis",
-    "examples": [
-      {"en": "Phrase exemple 1", "fr": "Traduction obligatoire en français"},
-      {"en": "Phrase exemple 2", "fr": "Traduction obligatoire en français"},
-      {"en": "Phrase exemple 3", "fr": "Traduction obligatoire en français"}
-    ],
-    "synonyms": ["synonyme 1 obligatoire", "synonyme 2 obligatoire"]
-  }
-]}`
-      );
-      exprData = safeParseJSON(exprRaw).expressions || [];
-    } catch { }
+    const seenExprs = new Set();
+    let processedCount = 0;
+
+    const normKey = (s) => (s || "").toLowerCase()
+      .replace(/[^\p{L}\p{N}\s'-]/gu, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const extractChunk = async (chunkText, ci) => {
+      try {
+        const parsed = await extractExpressions(callClaude, chunkText);
+        const newExprs = pickExpressions(parsed).filter(e => e && e.expr).filter(e => {
+          const key = normKey(e.expr);
+          if (!key || seenExprs.has(key)) return false;
+          seenExprs.add(key);
+          return true;
+        });
+        exprData = [...exprData, ...newExprs];
+        setExpressions10([...exprData]);
+      } catch (e) {
+        console.warn(`Text chunk ${ci} parse error`, e);
+      } finally {
+        processedCount++;
+        setLoadingMsg(`🧠 Extraction intégrale… (${processedCount}/${chunks.length} parties · ${exprData.length} expressions trouvées)`);
+      }
+    };
+
+    const CONCURRENCY = 3;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(CONCURRENCY, chunks.length) }, async () => {
+      while (cursor < chunks.length) {
+        const ci = cursor++;
+        await extractChunk(chunks[ci], ci);
+      }
+    });
+    await Promise.all(workers);
     setExpressions10(exprData);
+    if (!exprData.length) {
+      throw new Error("L'IA n'a renvoyé aucune expression exploitable pour ce texte. Réessaie dans une minute.");
+    }
+
+    const excerpt = rawText.slice(0, 6000);
 
     setLoadingMsg("✍️ Génération de la dictée…");
     let dictData = null;
@@ -624,7 +683,7 @@ retourne UNIQUEMENT ce JSON :
         `Génère une dictée à partir du texte. Réponds UNIQUEMENT en JSON valide.`,
         `TEXTE:\n${excerpt}\n\n{"passage":"...","blankedPassage":"...","blanks":[{"index":0,"word":"..."}]}`
       );
-      dictData = safeParseJSON(dictRaw);
+      dictData = safeParseJSON(llmText(dictRaw));
     } catch { }
     setDictation(dictData);
 
@@ -635,7 +694,7 @@ retourne UNIQUEMENT ce JSON :
         `Génère 4 questions QCM de compréhension. Réponds UNIQUEMENT en JSON valide.`,
         `TEXTE:\n${excerpt}\n\n{"questions":[{"q":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A","explanation":"..."}]}`
       );
-      qData = safeParseJSON(qRaw).questions || [];
+      qData = safeParseJSON(llmText(qRaw)).questions || [];
     } catch { }
     setQuestions(qData);
 
@@ -646,7 +705,7 @@ retourne UNIQUEMENT ce JSON :
         `Choisis une phrase pour le shadowing. Réponds UNIQUEMENT en JSON valide.`,
         `TEXTE:\n${excerpt}\n\n{"phrase":"...","phonetics":"...","tips":["...","...","..."]}`
       );
-      shadowData = safeParseJSON(shadowRaw);
+      shadowData = safeParseJSON(llmText(shadowRaw));
     } catch { }
     setShadowing(shadowData);
 
@@ -656,66 +715,115 @@ retourne UNIQUEMENT ce JSON :
   };
 
   // ── Sauvegarder une expression dans MemoMaster ────────────────────────────
-  const saveExpression = (expr, i) => {
-    if (!setExpressions) return;
-    // eslint-disable-next-line react-hooks/purity
-    const id = ``;
-    
-    // Format the back of the card beautifully for MemoMaster
-    let backContent = expr.meaning;
-    
-    if (expr.usage) {
-      backContent += `\n\n✅ QUAND L'UTILISER :\n${expr.usage}`;
+  // ── Construction d'une fiche MemoMaster au format Rétro-Ingénierie ────────
+  // Logique unique partagée par la sauvegarde unitaire et la sauvegarde en
+  // masse (avant : deux copies divergentes, l'une sans champ `example`).
+  const buildCardFromExpr = (expr, id) => {
+    let backContent = `Traduction : ${expr.meaning || ""}`;
+
+    if (expr.decomposition || expr.usage) {
+      backContent += `\n\n### ⚙️ 1. Décomposition & Transition Métaphorique\n${expr.decomposition || `* **Sens :** ${expr.usage}`}`;
+      if (expr.mentalModel) {
+        backContent += `\n* **Le Modèle Mental :** ${expr.mentalModel}`;
+      }
     }
-    if (expr.avoid) {
-      backContent += `\n\n🚫 À NE PAS CONFONDRE / ÉVITER :\n${expr.avoid}`;
+    if (expr.comparative || expr.synonyms?.length > 0) {
+      backContent += `\n\n### 🔍 2. Comparatif (Pourquoi A et pas B ?)\n${expr.comparative || `* **Option A (${expr.expr}) :** Tournure recommandée.\n* **Option B :** Synonymes : ${expr.synonyms?.join(", ") || "N/A"}`}`;
     }
-    if (expr.nuanceInContext) {
-      backContent += `\n\n🎬 SENS DANS CE CONTEXTE :\n${expr.nuanceInContext}`;
+    if (expr.avoid || expr.antipattern) {
+      backContent += `\n\n### ⚠️ 3. Anti-Pattern (Le piège)\n${expr.antipattern || `* **Erreur :** À ne pas confondre avec : ${expr.avoid}`}`;
     }
     if (expr.examples?.length > 0) {
-      backContent += `\n\n💬 EXEMPLES :\n` + expr.examples.map(e => `• ${e.en || e}${e.fr ? `\n  ↳ ${e.fr}` : ""}`).join("\n\n");
-    }
-    if (expr.synonyms?.length > 0) {
-      backContent += `\n\n🔄 ALTERNATIVES / SYNONYMES : ${expr.synonyms.join(", ")}`;
+      backContent += `\n\n### 💻 4. Exemples (Format court)\n` + expr.examples.map((e, idx) => `* **Exemple ${idx + 1} :** \`${e.en || e}\` ↳ *${e.fr || ""}*`).join("\n");
     }
 
-    const newCard = {
+    const firstExample = Array.isArray(expr.examples) && expr.examples.length
+      ? (expr.examples[0].en || expr.examples[0] || "")
+      : "";
+
+    return {
       id,
-      front: expr.expr,
+      front: String(expr.expr || "").trim(),
       back: backContent,
-      // Champ IPA pour l'affichage de la prononciation dans CardItem
+      // `example` est utilisé par la révision / le TTS : il manquait dans la
+      // sauvegarde en masse, ce qui donnait des fiches incomplètes.
+      example: typeof firstExample === "string" ? firstExample : "",
       ipa: expr.ipa || "",
       tag: "idiom",
       category: "🇬🇧 Anglais",
       source: "English in the Wild",
-      // Champs FSRS complets (fix bug SRS : sans level, la carte n'apparaît pas en révision)
+      // Champs FSRS complets (sans eux, la fiche n'apparaît jamais en révision)
       level: 0,
       easeFactor: 2.5,
       interval: 1,
       repetitions: 0,
+      stability: null,
+      difficulty: null,
+      masteryStage: "encountered",
       reviewHistory: [],
       nextReview: new Date().toISOString().slice(0, 10),
       createdAt: new Date().toISOString(),
       imageUrl: null,
     };
+  };
+
+  const normalizeFront = (v) => String(v || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  const saveExpression = (expr, i) => {
+    if (!setExpressions || !expr?.expr) return;
+    const front = normalizeFront(expr.expr);
+    const alreadyThere = (expressions || []).some(e => normalizeFront(e.front) === front);
+    if (alreadyThere) {
+      setSavedToMemo(prev => (prev.includes(i) ? prev : [...prev, i]));
+      showToast?.(`"${expr.expr}" existe déjà dans MemoMaster.`, "info");
+      return;
+    }
+    // eslint-disable-next-line react-hooks/purity
+    const newCard = buildCardFromExpr(expr, `wild_${Date.now()}_${i}`);
     setExpressions(prev => [newCard, ...prev]);
     setSavedToMemo(prev => [...prev, i]);
     showToast?.(`💾 "${expr.expr}" ajouté à MemoMaster !`, "success");
   };
 
-  // ── TTS pour shadowing (ElevenLabs voix humaine + fallback) ──────────────
+  const saveAllExpressions = () => {
+    if (!setExpressions || !expressions10?.length) return;
+    const now = Date.now();
+    const existing = new Set((expressions || []).map(e => normalizeFront(e.front)));
+    const newCards = [];
+    const newIndices = [];
+
+    expressions10.forEach((expr, i) => {
+      if (savedToMemo.includes(i) || !expr?.expr) return;
+      const key = normalizeFront(expr.expr);
+      if (!key || existing.has(key)) { newIndices.push(i); return; }
+      existing.add(key);
+      newCards.push(buildCardFromExpr(expr, `wild_${now}_${i}`));
+      newIndices.push(i);
+    });
+
+    if (newCards.length > 0) {
+      setExpressions(prev => [...newCards, ...prev]);
+      setSavedToMemo(prev => [...new Set([...prev, ...newIndices])]);
+      showToast?.(`⚡ ${newCards.length} expression(s) ajoutée(s) à MemoMaster !`, "success");
+    } else {
+      setSavedToMemo(prev => [...new Set([...prev, ...newIndices])]);
+      showToast?.("Toutes les expressions sont déjà sauvegardées !", "info");
+    }
+  };
+
+  // ── TTS pour shadowing ──────────────────────────────────────────────────
   const speakShadowing = async () => {
     if (!shadowing?.phrase) return;
     try {
       setShadowingPlaying(true);
-      await speakWithFallback(
-        shadowing.phrase,
-        { voiceId: "EXAVITQu4vr4xnSDxMaL", rate: 0.85 },
-        speakWithElevenLabs
-      );
+      await speakWithFallback(shadowing.phrase, { rate: 0.85 });
     } catch {
-      await speakWithBrowserTTS(shadowing.phrase, "en-US", 0.85);
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        const u = new SpeechSynthesisUtterance(shadowing.phrase);
+        u.lang = "en-US";
+        u.rate = 0.85;
+        window.speechSynthesis.speak(u);
+      }
     } finally {
       setShadowingPlaying(false);
     }
@@ -732,12 +840,10 @@ retourne UNIQUEMENT ce JSON :
       rec.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         setShadowingPhase("feedback");
-        // Feedback IA basé sur le texte (sans Whisper, on demande à l'utilisateur de taper)
         showToast?.("🎙️ Enregistrement terminé. Tape ce que tu as dit pour recevoir ton feedback.", "info");
       };
       rec.start();
       shadowRecorderRef.current = rec;
-      setShadowingRecording(true);
       setShadowingPhase("record");
       // Auto-stop après 15s
       shadowTimerRef.current = setTimeout(() => stopShadowingRecord(), 15000);
@@ -747,13 +853,71 @@ retourne UNIQUEMENT ce JSON :
   };
 
   const stopShadowingRecord = () => {
-    clearTimeout(shadowTimerRef.current);
+    if (shadowTimerRef.current) clearTimeout(shadowTimerRef.current);
     if (shadowRecorderRef.current?.state === "recording") shadowRecorderRef.current.stop();
-    setShadowingRecording(false);
-    // Mise à jour directe de la phase (Bug 4) : ne pas dépendre uniquement du
-    // callback onstop qui peut être retardé ou ne pas se déclencher.
     setShadowingPhase("feedback");
   };
+
+  // ── Wrappers publics : garantissent qu'on ne reste JAMAIS bloqué sur l'écran
+  // "loading" si une étape jette (réseau, quota IA, JSON cassé). Avant ce fix,
+  // une erreur imprévue laissait le module figé → "le bouton ne marche pas".
+  const analyze = async () => {
+    try {
+      await analyzeInner();
+    } catch (e) {
+      console.error("[EnglishInTheWild] analyze", e);
+      setError("❌ " + (e?.message || "Erreur inattendue pendant l'analyse.") + "\n\nAstuce : colle la transcription manuellement puis clique sur « Analyser ce texte ».");
+      setStep("input");
+    }
+  };
+
+  const analyzeText = async () => {
+    try {
+      await analyzeTextInner();
+    } catch (e) {
+      console.error("[EnglishInTheWild] analyzeText", e);
+      setError("❌ " + (e?.message || "Erreur inattendue pendant l'analyse du texte."));
+      setStep("input");
+    }
+  };
+
+  // ── Import d'un fichier vidéo/audio local ─────────────────────────────────
+  // Indispensable quand les sous-titres sont INCRUSTÉS dans l'image : YouTube
+  // n'expose alors aucune piste de sous-titres à récupérer.
+  const pickMedia = (mode) => {
+    mediaModeRef.current = mode;
+    setError("");
+    mediaInputRef.current?.click();
+  };
+
+  const onMediaSelected = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const mode = mediaModeRef.current;
+    setError("");
+    setMediaBusy(mode === "ocr" ? "🔤 Lecture des sous-titres incrustés…" : "🎧 Préparation de l'audio…");
+    try {
+      const text = mode === "ocr"
+        ? await ocrBurnedSubtitles(file, { onProgress: setMediaBusy })
+        : await transcribeMediaFile(file, { onProgress: setMediaBusy });
+
+      if (!text || text.length < 100) {
+        throw new Error("Texte extrait trop court. Essaie l'autre méthode (audio ⇄ sous-titres incrustés).");
+      }
+      setTranscript(text);
+      setVideoTitle(file.name.replace(/\.[^.]+$/, ""));
+      setMediaBusy("");
+      showToast?.(`📝 ${text.length} caractères extraits — analyse en cours…`, "success");
+      await analyzeText();
+    } catch (err) {
+      console.error("[EnglishInTheWild] media extraction", err);
+      setMediaBusy("");
+      setError("❌ " + (err?.message || "Extraction impossible."));
+    }
+  };
+
+
 
   const analyzeShadowingText = async () => {
     if (!shadowingUserText.trim() || !shadowing?.phrase) return;
@@ -764,7 +928,7 @@ retourne UNIQUEMENT ce JSON :
         `Tu es un coach de prononciation anglaise. Compare ce que l'utilisateur a dit (transcription manuelle) avec la phrase cible. Donne un feedback détaillé et encourageant. Réponds UNIQUEMENT en JSON valide.`,
         `PHRASE CIBLE: "${shadowing.phrase}"\nCE QUE L'UTILISATEUR A DIT: "${shadowingUserText}"\n\n{"score":85,"praise":"...","improvements":["...","..."],"rhythm":"...","nextStep":"..."}`
       );
-      const fb = safeParseJSON(raw);
+      const fb = safeParseJSON(llmText(raw));
       setShadowingFeedback(fb);
     } catch {
       // FIX B15: on garde la phase courante pour que le textarea reste accessible
@@ -860,6 +1024,13 @@ retourne UNIQUEMENT ce JSON :
         }}>
           {loadingMsg}
         </div>
+        <button
+          type="button"
+          onClick={() => { setStep("input"); setLoadingMsg(""); }}
+          style={{ ...btn(isDarkMode ? "#1F1F1F" : "#E5E7EB"), color: theme.text, fontSize: 13 }}
+        >
+          ✖️ Annuler
+        </button>
         {expressions10.length > 0 && (
           <div style={{ fontSize: 13, color: "#10B981", fontWeight: 700, textAlign: "center" }}>
             {expressions10.length} expression{expressions10.length > 1 ? "s" : ""} trouvée{expressions10.length > 1 ? "s" : ""} jusqu'ici…
@@ -919,7 +1090,35 @@ retourne UNIQUEMENT ce JSON :
           )}
         </div>
 
+        {/* Sous-titres INCRUSTÉS dans l'image : import du fichier vidéo */}
+        <div style={card}>
+          <div style={{ fontWeight: 800, fontSize: 15, color: theme.text, marginBottom: 4 }}>🎞️ Sous-titres incrustés dans la vidéo ?</div>
+          <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>
+            Quand les sous-titres font partie de l'image (Kung Fu Panda, clips édités…), YouTube n'expose aucune piste à récupérer.
+            Télécharge la vidéo puis importe-la ici : on transcrit l'audio (Whisper) ou on lit le texte à l'écran (OCR).
+          </div>
+          <input
+            ref={mediaInputRef}
+            type="file"
+            accept="video/*,audio/*"
+            onChange={onMediaSelected}
+            style={{ display: "none" }}
+          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <button onClick={() => pickMedia("audio")} disabled={!!mediaBusy} style={{ ...btn("#4D6BFE", !!mediaBusy), flex: 1, minWidth: 200 }}>
+              🎧 Transcrire l'audio (Whisper)
+            </button>
+            <button onClick={() => pickMedia("ocr")} disabled={!!mediaBusy} style={{ ...btn("#8B5CF6", !!mediaBusy), flex: 1, minWidth: 200 }}>
+              🔤 Lire les sous-titres à l'écran (OCR)
+            </button>
+          </div>
+          {mediaBusy && (
+            <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, color: "#4D6BFE" }}>{mediaBusy}</div>
+          )}
+        </div>
+
         {/* Fallback : texte manuel */}
+
         <div style={card}>
           <div style={{ fontWeight: 800, fontSize: 15, color: theme.text, marginBottom: 4 }}>✏️ Ou colle directement la transcription</div>
           <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 12 }}>Si YouTube bloque l'accès aux sous-titres, copie le texte manuellement depuis YouTube Studio ou Rev.ai.</div>
@@ -1067,6 +1266,19 @@ retourne UNIQUEMENT ce JSON :
       {/* ── TAB : Expressions ───────────────────────────────────────────── */}
       {activeTab === "expressions" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {expressions10.length > 0 && (
+            <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, padding: "14px 20px", background: isDarkMode ? "#0A0A20" : "#F0F3FF", border: "1.5px solid #4D6BFE40" }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>
+                ⚡ {expressions10.length} expression(s) extraite(s) intégralement
+              </div>
+              <button
+                onClick={saveAllExpressions}
+                style={{ ...btn("linear-gradient(135deg, #10B981 0%, #059669 100%)"), padding: "10px 18px", fontSize: 13 }}
+              >
+                ⚡ Tout ajouter à MemoMaster ({expressions10.length})
+              </button>
+            </div>
+          )}
           {expressions10.length === 0 ? (
             <div style={{ ...card, textAlign: "center", color: theme.textMuted }}>Aucune expression extraite.</div>
           ) : expressions10.map((ex, i) => (
@@ -1505,7 +1717,7 @@ retourne UNIQUEMENT ce JSON :
               <div>
                 <h2 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 8px", color: theme.text }}>{miningState.word}</h2>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <button onClick={() => speakWithBrowserTTS(miningState.word)} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(77,107,254,0.1)", color: "#4D6BFE", cursor: "pointer", fontSize: 18 }}>🔊</button>
+                  <button onClick={() => speakWithFallback(miningState.word)} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(77,107,254,0.1)", color: "#4D6BFE", cursor: "pointer", fontSize: 18 }}>🔊</button>
                   {miningState.data?.ipa && <span style={{ fontSize: 16, fontFamily: "monospace", color: theme.textMuted }}>{miningState.data.ipa}</span>}
                   {miningState.data?.ceferLevel && <span style={{ padding: "4px 8px", background: "rgba(16,185,129,0.1)", color: "#10B981", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>{miningState.data.ceferLevel}</span>}
                   {miningState.data?.partOfSpeech && <span style={{ padding: "4px 8px", background: "rgba(245,158,11,0.1)", color: "#D97706", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>{miningState.data.partOfSpeech}</span>}

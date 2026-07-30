@@ -1,16 +1,32 @@
-# React + Vite
+# 🧠 MemoMaster (memo-app)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+> Application web PWA *offline-first* d'apprentissage intelligent, de répétition espacée (SRS), de pratique vocale de l'anglais et de suivi de certifications techniques.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 📖 Documentation Complexe (A à Z)
 
-## React Compiler
+La documentation complète et détaillée décrivant l'architecture, la base de données, les modules IA/vocal, les fonctionnalités et le déploiement est disponible dans le fichier :
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+👉 **[MemoMaster-Documentation-A-Z.md](file:///c:/Users/LENOVO/memo-app/docs/MemoMaster-Documentation-A-Z.md)**
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 🚀 Démarrage Rapide
+
+```bash
+# 1. Installation des dépendances
+npm install
+
+# 2. Lancement du serveur de développement
+npm run dev
+
+# 3. Build de production
+npm run build
+```
+
+## 🛠️ Stack Technique
+- **Frontend** : React 19 + Vite + Framer Motion + Visx / Chart.js
+- **Base de Données Locale** : WatermelonDB (IndexedDB / LokiJS)
+- **Authentification & Sync** : Firebase Auth & Firestore
+- **IA & Vocal** : LiveKit (VAD / WebSockets), ElevenLabs, Gemini, Groq

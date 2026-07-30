@@ -35,7 +35,9 @@ src.zip
 eslint_report.*
 report.json
 build_error.txt
+lint_output.txt
 temp_step.txt
+__pycache__/
 
 # Firebase temp
 .firebase/

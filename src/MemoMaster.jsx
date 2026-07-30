@@ -2,15 +2,18 @@
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, startTransition, forwardRef } from "react";
 import { mirrorToWatermelon, loadInitialExpressionsFromWatermelon } from './lib/db/mirror';
-import { syncWithFirebase, forceResetSync } from './lib/db/sync';
+import { syncWithFirebase, forceResetSync, repairSyncNow } from './lib/db/sync';
 
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage, fbStorage, getFbUser, onAuthReady } from "./lib/firebase";
+import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthReady } from "./lib/firebase";
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage } from "./lib/masteryStages";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 import { fsrs, fsrsR } from "./lib/fsrs";
+import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
+import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, nextLapseCount } from "./lib/memoryLab";
+import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
 import { getAudioObjectUrl } from "./lib/audioStore";
 import useAudioFeedback from "./hooks/useAudioFeedback";
 import useConfetti from "./hooks/useConfetti";
@@ -20,6 +23,9 @@ const EnglishPractice = lazy(() => import("./EnglishPractice"));
 const Lab = lazy(() => import("./Lab"));
 import CertificationsDashboard from "./components/CertificationsDashboard";
 import OpenSourceRadar from "./components/OpenSourceRadar";
+import SoundwavePlayer from "./components/SoundwavePlayer";
+import BulkRestructureBar from "./components/BulkRestructureBar";
+import { restructureSelectedCards } from "./lib/retroEngineeringRestructurer";
 
 
 import PhantomRecruiter from "./components/PhantomRecruiter";
@@ -218,6 +224,8 @@ async function transcribeAudio(audioBlob, language = "fr") {
 // importées depuis le Lab (audioId → blob stocké en IndexedDB).
 function AudioFichePlayer({ card }) {
   const [src, setSrc] = useState(card?.audioUrl || null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
   useEffect(() => {
     let revoked = null;
     let active = true;
@@ -242,7 +250,14 @@ function AudioFichePlayer({ card }) {
   return (
     <div style={{ marginTop: 16, marginBottom: 8 }}>
       <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.7, marginBottom: 6 }}>🎧 Fiche audio — écoute puis évalue</div>
-      <audio controls src={src} style={{ width: "100%" }} />
+      <SoundwavePlayer
+        src={src}
+        isPlaying={isPlaying}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+        color="#4D6BFE"
+      />
     </div>
   );
 }
@@ -303,15 +318,27 @@ export default function MemoMaster() {
         if (!e?.id || seen.has(e.id)) return false;
         seen.add(e.id);
         return true;
-      }).map(e => ({
-        ...e,
-        front: e.front || '',
-        back: e.back || '',
-        category: e.category || 'Général',
-        type: e.type || 'qa',
-        level: Number(e.level || 0),
-        nextReview: e.nextReview ? normalizeDate(e.nextReview) : null
-      }));
+      }).map(e => {
+        const nFront = e.front || '';
+        const nBack = e.back || '';
+        const nCat = e.category || 'Général';
+        const nType = e.type || 'qa';
+        const nLevel = Number(e.level || 0);
+        const nNextReview = e.nextReview ? normalizeDate(e.nextReview) : null;
+        
+        if (e.front === nFront && e.back === nBack && e.category === nCat && e.type === nType && e.level === nLevel && e.nextReview === nNextReview) {
+          return e;
+        }
+        return {
+          ...e,
+          front: nFront,
+          back: nBack,
+          category: nCat,
+          type: nType,
+          level: nLevel,
+          nextReview: nNextReview
+        };
+      });
       const persistCards = () => mirrorToWatermelon(normalizedNext).then(() => syncWithFirebase()).catch(console.warn);
       if (typeof window !== "undefined" && window.requestIdleCallback) {
         window.requestIdleCallback(persistCards);
@@ -557,6 +584,9 @@ export default function MemoMaster() {
   const [dragOverForge, setDragOverForge] = useState(false);
   const [dropForgeLoading, setDropForgeLoading] = useState(false);
   const [optimizeLoading, setOptimizeLoading] = useState(false);
+  const [optimizeAllLoading, setOptimizeAllLoading] = useState(false);
+  const [optimizeAllProgress, setOptimizeAllProgress] = useState({ done: 0, total: 0 });
+  const [leechRescueLoading, setLeechRescueLoading] = useState(false);
 
   // ── GOD LEVEL UX: Table de Craft Visuelle (Batch Canvas) ──
   const [batchCanvasTransform, setBatchCanvasTransform] = useState({ x: 0, y: 0, scale: 1 });
@@ -911,6 +941,7 @@ export default function MemoMaster() {
   const [cardsHoveredId, setCardsHoveredId] = useState(null); // Pour le Neural Hover
   const [expandedCard, setExpandedCard] = useState(null); // Deep Dive Holographique
   const [selectedCards, setSelectedCards] = useState([]); // God Hand - Mass Selection
+  const [selectionMode, setSelectionMode] = useState(false); // Active via bouton "Sélection" — clic simple = coche
   const [timelineScrollRatio, setTimelineScrollRatio] = useState(0); // Timeline view scroll
   const [graphTransform, setGraphTransform] = useState({ x: 0, y: 0, scale: 1 }); // Graph view pan/zoom
   const graphDragRef = useRef({ isDragging: false, startX: 0, startY: 0 });
@@ -944,10 +975,26 @@ export default function MemoMaster() {
   }, [view]);
 
   // ── SCROLL DETECTION (HUD) ────────────────────────────────────────────────
+  // Passive + rAF-throttlé + on ne setState QUE quand on franchit le seuil,
+  // sinon on force un re-render de tout MemoMaster (10 000 lignes) à chaque
+  // pixel scrollé → gros freeze visible à la molette / au drag mobile.
   const [isScrolled, setIsScrolled] = useState(false);
   useEffect(() => {
-    const handleScroll = () => setIsScrolled(window.scrollY > 20);
-    window.addEventListener("scroll", handleScroll);
+    let ticking = false;
+    let lastState = false;
+    const handleScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        const next = window.scrollY > 20;
+        if (next !== lastState) {
+          lastState = next;
+          setIsScrolled(next);
+        }
+        ticking = false;
+      });
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
@@ -967,28 +1014,47 @@ export default function MemoMaster() {
   }, []);
 
   useEffect(() => {
+    // ⚡ Avant : setInterval(1s) → re-render de MemoMaster (10k lignes) chaque seconde,
+    // ce qui provoquait des micro-freezes visibles pendant le scroll.
+    // Maintenant : tick toutes les 30s (l'horloge n'a que la précision minute,
+    // et la session est affichée en minutes). ≈ 60× moins de re-renders.
     const tick = () => {
       const now = new Date();
       setSidebarClock(now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
-      setAppSessionTime(prev => prev + 1);
+      setAppSessionTime(prev => prev + 30);
     };
     tick();
-    const interval = setInterval(tick, 1000);
+    const interval = setInterval(tick, 30_000);
     return () => clearInterval(interval);
   }, []);
 
   // Rafraîchit la date courante à minuit pour forcer le recalcul de todayReviews
   const [currentDate, setCurrentDate] = useState(today());
+  // Rafraîchit la date courante à minuit ET dès que l'appli reprend le focus
+  // (indispensable pour le PWA mobile laissé ouvert toute la nuit : setTimeout
+  // n'est pas fiable en arrière-plan → PC et mobile affichaient des compteurs
+  // différents parce que `currentDate` restait figée sur la veille côté mobile).
   useEffect(() => {
+    const refreshIfStale = () => {
+      const t = today();
+      setCurrentDate((prev) => (prev !== t ? t : prev));
+    };
     const now = new Date();
-    const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now;
-    const timer = setTimeout(() => {
-      setCurrentDate(today());
-    }, msUntilMidnight);
-    return () => clearTimeout(timer);
+    const msUntilMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) - now + 500;
+    const timer = setTimeout(refreshIfStale, msUntilMidnight);
+    const onVis = () => { if (document.visibilityState === "visible") refreshIfStale(); };
+    window.addEventListener("focus", refreshIfStale);
+    window.addEventListener("pageshow", refreshIfStale);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("focus", refreshIfStale);
+      window.removeEventListener("pageshow", refreshIfStale);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [currentDate]);
 
-  const todayReviews = useMemo(() => expressions.filter((e) => isDue(e.nextReview, currentDate) && (e.level || 0) < 7), [expressions, currentDate]);
+  const todayReviews = useMemo(() => expressions.filter((e) => isDue(e.nextReview, currentDate) && (e.level || 0) < 7 && !e.paused), [expressions, currentDate]);
   const masteredCount = useMemo(() => expressions.filter((e) => e.level >= 7).length, [expressions]);
 
   // ── Scroll-to-top à chaque changement de vue ──
@@ -1142,6 +1208,24 @@ export default function MemoMaster() {
     })();
   }, []);
 
+  const [manualSyncing, setManualSyncing] = useState(false);
+
+  // ─── Sync manuelle ── force un re-pull Firestore pour categories/sessions/
+  // stats/badges/projects (redevenus "1 lecture/session" depuis le fix quota).
+  // Réutilise le pipeline de rechargement déjà câblé sur onAuthReady().
+  const handleManualSync = useCallback(() => {
+    if (manualSyncing) return;
+    setManualSyncing(true);
+    forceSyncNow();
+    triggerAuthReady();
+    setToast({ msg: "🔄 Synchronisation en cours…", type: "info" });
+    setTimeout(() => {
+      setManualSyncing(false);
+      setToast({ msg: "✅ Données à jour depuis le serveur.", type: "success" });
+      setTimeout(() => setToast(null), 3000);
+    }, 1500);
+  }, [manualSyncing]);
+
   // ─── Recharge les données si l'utilisateur change (ex: connexion Google) ───
   useEffect(() => {
     onAuthReady(() => {
@@ -1290,7 +1374,7 @@ export default function MemoMaster() {
 
   const checkBadges = useCallback((exps, st, sess, currentBadges) => {
     const mastered = exps.filter((e) => e.level >= 7).length;
-    const dueCount = exps.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+    const dueCount = exps.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
     const state = {
       totalCards: exps.length,
       streak: st.streak,
@@ -1461,7 +1545,8 @@ export default function MemoMaster() {
     // newLevel : q=0 → retour à 0 | q=1 (Hard) → reste au niveau actuel | q=5 → +1
     const newLevel = q === 0 ? 0 : q === 1 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
     const histEntry = { date: today(), q, newLevel, interval: updated.interval };
-    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry] } : e));
+    const _newLapse = nextLapseCount(exp, q);
+    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry], lapseCount: _newLapse } : e));
 
     if (newLevel >= 7 && exp.level < 7) {
       fireConfetti();
@@ -1752,37 +1837,25 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
       let structureInstructions = "";
       if (isEnglish) {
         structureInstructions = `
-⚠️ FICHE D'ANGLAIS — STRUCTURE OBLIGATOIRE pour "back" (respecter EXACTEMENT cet ordre, ces emojis, et ces sections) :
+⚠️ POUR CHAQUE FICHE D'ANGLAIS, "back" DOIT suivre EXACTEMENT la RÉTRO-INGÉNIERIE SÉMANTIQUE (mêmes titres Markdown, même ordre, concis ~30-40 lignes max) :
 
-✅ QUAND L'UTILISER :
-[Une phrase claire qui explique dans QUEL contexte / pour QUEL besoin on utilise cette expression. Maximum 2 phrases.]
+Traduction : [Traduction courte et naturelle]
 
-🎬 SENS DANS CE CONTEXTE :
-[Une phrase d'exemple concrète et vivante (style YouTuber/coach) qui montre l'expression en situation. En français.]
+### ⚙️ 1. Décomposition & Transition Métaphorique
+* **[Mot 1] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
+* **[Mot 2] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
+* **Le Modèle Mental :** [En 1 phrase : l'image mécanique globale]
 
-💬 EXEMPLES :
-• [Phrase 1 en anglais]
-  🗣 [Phonétique "maison" 100% basée sur les sons du français — pas d'API ni d'IPA. Ex: "I am the best" → "aï am ze beste"]
-  ↳ [Traduction française]
+### 🔍 2. Comparatif (Pourquoi A et pas B ?)
+* **Option A ([Expression]) :** [Ce que le native visualise]
+* **Option B ([Alternative faux-ami]) :** [Pourquoi le sens dévie ou casse la logique]
 
-• [Phrase 2 en anglais]
-  🗣 [Phonétique maison FR]
-  ↳ [Traduction française]
+### ⚠️ 3. Anti-Pattern (Le piège)
+* **Erreur :** [Ce qu'on dit en traduisant du FR] ➔ **Problème :** [Le vrai sens perçu par un anglophone]
 
-• [Phrase 3 en anglais — un peu plus avancée]
-  🗣 [Phonétique maison FR]
-  ↳ [Traduction française]
-
-🔄 ALTERNATIVES / SYNONYMES : [3 à 5 alternatives anglaises, séparées par des virgules]
-
-📌 PIÈGE / NUANCE : [Une nuance d'usage, un faux-ami, ou une erreur classique que font les francophones avec cette expression. UNE phrase.]
-
-RÈGLES STRICTES POUR LA PHONÉTIQUE MAISON :
-- 100% basée sur les sons du français (le lecteur ne connaît PAS l'API/IPA).
-- Sons typiques : "the" → "ze" ou "ze" ; "th" sourd → "s" ; "h" aspiré → "h" (rendre l'aspiration) ; "r" anglais → "r" doux ; "i" court → "i" ; "ee" long → "i:" ou "iii" ; "oo" → "ou" ; "u" → "eu" ou "a" selon le mot.
-- Une phonétique par phrase complète, pas mot par mot isolé.
-- Toujours en minuscules, sans guillemets internes.
-- Doit pouvoir être LUE À VOIX HAUTE par un francophone sans entraînement et sonner anglais.`;
+### 💻 4. Exemples (Format court)
+* **Tech/Workflow :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*
+* **Quotidien :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*`;
       } else if (isCode) {
         structureInstructions = `
 ⚠️ FICHE DE CODE — STRUCTURE OBLIGATOIRE pour "back" (respecter EXACTEMENT) :
@@ -1831,7 +1904,9 @@ Format strict: {"front":"...","back":"...","example":"..."}
 - example : un exemple concret et pratique (peut être vide si déjà inclus dans back)
 ${structureInstructions}
 
-QUALITÉ ATTENDUE : niveau "god mode". Chaque fiche doit être aussi riche et utile que la meilleure fiche Anki premium. Pas de remplissage générique.`;
+QUALITÉ ATTENDUE : atomicité maximale pour une rétention FSRS proche de 100 %. Pas de remplissage générique.
+
+${ATOMIC_CARD_RULES}`;
       const raw = await callClaude(systemPrompt, `Génère une fiche sur: ${aiPrompt}`);
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
@@ -1878,32 +1953,25 @@ QUALITÉ ATTENDUE : niveau "god mode". Chaque fiche doit être aussi riche et ut
       let structureInstructions = "";
       if (isEnglish) {
         structureInstructions = `
-⚠️ POUR CHAQUE FICHE D'ANGLAIS, "back" DOIT suivre EXACTEMENT cette structure (mêmes emojis, même ordre) :
+⚠️ POUR CHAQUE FICHE D'ANGLAIS, "back" DOIT suivre EXACTEMENT la RÉTRO-INGÉNIERIE SÉMANTIQUE (mêmes titres Markdown, même ordre, concis ~30-40 lignes max) :
 
-✅ QUAND L'UTILISER :
-[Contexte d'usage en 1-2 phrases françaises]
+Traduction : [Traduction courte et naturelle]
 
-🎬 SENS DANS CE CONTEXTE :
-[Une phrase exemple vivante en français qui montre l'expression en situation]
+### ⚙️ 1. Décomposition & Transition Métaphorique
+* **[Mot 1] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
+* **[Mot 2] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
+* **Le Modèle Mental :** [En 1 phrase : l'image mécanique globale]
 
-💬 EXEMPLES :
-• [Phrase 1 en anglais]
-  🗣 [Phonétique "maison" 100% basée sur les sons du français — pas d'IPA. Ex: "I am the best" → "aï am ze beste"]
-  ↳ [Traduction française]
+### 🔍 2. Comparatif (Pourquoi A et pas B ?)
+* **Option A ([Expression]) :** [Ce que le native visualise]
+* **Option B ([Alternative faux-ami]) :** [Pourquoi le sens dévie ou casse la logique]
 
-• [Phrase 2 en anglais]
-  🗣 [Phonétique maison FR]
-  ↳ [Traduction française]
+### ⚠️ 3. Anti-Pattern (Le piège)
+* **Erreur :** [Ce qu'on dit en traduisant du FR] ➔ **Problème :** [Le vrai sens perçu par un anglophone]
 
-• [Phrase 3 en anglais]
-  🗣 [Phonétique maison FR]
-  ↳ [Traduction française]
-
-🔄 ALTERNATIVES / SYNONYMES : [3 à 5 alternatives anglaises séparées par des virgules]
-
-📌 PIÈGE / NUANCE : [Une nuance ou erreur classique de francophone]
-
-RÈGLES STRICTES DE LA PHONÉTIQUE MAISON : 100% basée sur les sons français, lisible sans entraînement par un francophone ("the"→"ze", "th" sourd→"s", "h" aspiré→"h", "ee" long→"i:", "oo"→"ou"). Une phonétique par phrase, en minuscules, sans guillemets internes.`;
+### 💻 4. Exemples (Format court)
+* **Tech/Workflow :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*
+* **Quotidien :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*`;
       } else if (isCode) {
         structureInstructions = `
 ⚠️ POUR CHAQUE FICHE DE CODE, "back" DOIT suivre EXACTEMENT cette structure :
@@ -1937,7 +2005,7 @@ RÈGLES STRICTES : le bloc de code DOIT être encadré par \`\`\`<langage> / \`\
 📌 À RETENIR : [le takeaway clé]`;
       }
 
-      const systemPrompt = `Tu es un assistant pédagogique expert (niveau "god mode"). Génère exactement ${aiBatchCount} fiches de révision RICHES, variées et de qualité premium. Réponds UNIQUEMENT en JSON strict (pas de markdown autour, pas de texte avant/après) : {"cards":[{"front":"...","back":"...","example":"..."},...]}.${structureInstructions ? "\n" + structureInstructions : ""}`;
+      const systemPrompt = `Tu es un assistant pédagogique expert. Génère exactement ${aiBatchCount} fiches de révision atomiques (une idée par fiche) optimisées pour FSRS. Réponds UNIQUEMENT en JSON strict : {"cards":[{"front":"...","back":"...","example":"..."},...]}.${structureInstructions ? "\n" + structureInstructions : ""}\n\n${ATOMIC_CARD_RULES}`;
       const raw = await callClaude(systemPrompt, `Génère ${aiBatchCount} fiches sur: ${aiPrompt}`);
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
@@ -2011,7 +2079,9 @@ Réponds TOUJOURS au format JSON STRICT suivant :
 }
 Si l'utilisateur demande de modifier des cartes précédentes, renvoie la NOUVELLE liste mise à jour. S'il n'y a pas de cartes à afficher, renvoie un tableau "cards" vide.
 
-${SPEECH_HYGIENE_PROMPT}`;
+${SPEECH_HYGIENE_PROMPT}
+
+${ATOMIC_CARD_RULES}`;
 
       const conversation = newHistory.map(m => `${m.role === 'user' ? 'Utilisateur' : 'Assistant'}: ${m.text} ${m.cards?.length ? JSON.stringify(m.cards) : ''}`).join("\n\n");
       const raw = await callClaude(sysPrompt, conversation);
@@ -2062,8 +2132,10 @@ ${SPEECH_HYGIENE_PROMPT}`;
     }
 
     if (uniqueCards.length === 0 && cards.length > 0) {
-      showToast(`⚠️ Toutes les fiches (${cards.length}) sont des doublons et ont été ignorées.`);
-      return;
+      if (!meta.silent) {
+        showToast(`⚠️ Toutes les fiches (${cards.length}) sont des doublons et ont été ignorées.`);
+      }
+      return { added: 0, skipped: cards.length, total: cards.length };
     }
 
     const newExps = uniqueCards.map((c, i) => ({
@@ -2071,7 +2143,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
       front: c.front || "",
       back: c.back || "",
       example: c.example || "",
-      category: c.category || "Lab",
+      category: (c.category || "Lab").trim(),
       type: c.type || "qa",
       level: 0,
       nextReview: todayStr,
@@ -2080,7 +2152,9 @@ ${SPEECH_HYGIENE_PROMPT}`;
       interval: 1,
       repetitions: 0,
       reviewHistory: [],
-      imageUrl: null
+      imageUrl: c.imageUrl || null,
+      audioId: c.audioId || null,
+      audioUrl: c.audioUrl || null
     }));
 
     // ── FIX BUG "module créé via Lab invisible dans Modules / Constellation" ──
@@ -2119,11 +2193,17 @@ ${SPEECH_HYGIENE_PROMPT}`;
       pdfsAnalyzed: (prev.pdfsAnalyzed || 0) + (meta.source === 'pdf' ? 1 : 0),
     }));
     
-    if (skippedCount > 0) {
-      showToast(`🎉 ${newExps.length} fiches ajoutées (${skippedCount} doublon(s) ignoré(s)) !`);
-    } else {
-      showToast(`🎉 ${newExps.length} fiches ajoutées depuis le Lab !`);
+    if (!meta.silent) {
+      if (skippedCount > 0) {
+        showToast(`🎉 ${newExps.length} fiches ajoutées (${skippedCount} doublon(s) ignoré(s)) !`);
+      } else {
+        showToast(`🎉 ${newExps.length} fiches ajoutées depuis le Lab !`);
+      }
     }
+
+    // Retourne le vrai résultat pour que l'appelant (Lab.jsx) affiche un toast
+    // exact au lieu de supposer que toutes les fiches envoyées ont été ajoutées.
+    return { added: newExps.length, skipped: skippedCount, total: cards.length };
   };
 
   // ── Bridge Académie → FSRS ────────────────────────────────────────────────
@@ -2135,7 +2215,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
     playSound("whoosh");
     setAiFromTextLoading(true);
     try {
-      const raw = await callClaude(`À partir du texte fourni, extrais les 5 à 7 concepts clés en fiches de révision JSON. Format strict: {"cards":[{"front":"...","back":"...","example":"..."},...]}`, `Module: ${addForm.category}\n\nTexte:\n${aiFromText.slice(0, 3000)}`);
+      const raw = await callClaude(`À partir du texte fourni, extrais AUTANT DE FICHES ATOMIQUES que nécessaire (généralement 5 à 15). Découpe agressivement : plutôt 15 fiches courtes qu'une fiche dense. Format strict: {"cards":[{"front":"...","back":"...","example":"..."},...]}\n\n${ATOMIC_CARD_RULES}`, `Module: ${addForm.category}\n\nTexte:\n${aiFromText.slice(0, 3000)}`);
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
       setBatchPreview(Array.isArray(parsed.cards || parsed) ? (parsed.cards || parsed) : []);
@@ -2207,27 +2287,365 @@ ${SPEECH_HYGIENE_PROMPT}`;
     setOptimizeLoading(true);
     playSound("whoosh");
     try {
-      const prompt = `Tu es un expert FSRS (Free Spaced Repetition Scheduler). Cette flashcard est trop chargée ou mal formulée, ce qui nuit à la mémorisation à long terme. Objectif: Scinde-la en plusieurs cartes plus petites et "atomiques" (un seul concept par carte), ou reformule-la pour qu'elle soit plus directe. Réponds UNIQUEMENT au format JSON: {"cards":[{"front":"...","back":"...","example":"..."}]}`;
+      const prompt = `Tu es un expert FSRS. Objectif : transformer cette fiche pour que sa rétention prédite tende vers 100 %. Pour cela, scinde-la en fiches ATOMIQUES (une seule idée testable par fiche) ou reformule pour éliminer toute ambiguïté. Si la fiche est déjà atomique, resserre-la (recto plus court, verso plus précis). Réponds UNIQUEMENT au format JSON: {"cards":[{"front":"...","back":"...","example":"..."}]}\n\n${ATOMIC_CARD_RULES}`;
       const input = `Front: ${addForm.front}\nBack: ${addForm.back}\nExample: ${addForm.example}`;
-      const raw = await callClaude(prompt, input);
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      const cards = Array.isArray(parsed?.cards) ? parsed.cards : [];
+      const raw = await callClaude(prompt, input, { task: "batch-json", json: true, maxTokens: 4096, temperature: 0.3 });
+      const rawText = typeof raw === "string" ? raw : (raw?.text || "");
+      const clean = rawText.replace(/```json|```/gi, "").trim();
+      let parsed = null;
+      try { parsed = safeParseJSON(clean); } catch (_) { parsed = null; }
+      let cards = Array.isArray(parsed?.cards) ? parsed.cards : (Array.isArray(parsed) ? parsed : []);
+      cards = cards
+        .filter(c => c && typeof c.front === "string" && typeof c.back === "string" && c.front.trim() && c.back.trim())
+        .map(c => ({ front: c.front.trim(), back: c.back.trim(), example: (c.example || "").toString().trim() }));
 
       if (cards.length === 1) {
-        setAddForm(f => ({ ...f, front: cards[0].front || "", back: cards[0].back || "", example: cards[0].example || "" }));
+        setAddForm(f => ({ ...f, front: cards[0].front, back: cards[0].back, example: cards[0].example }));
         showToast("✨ Carte optimisée et reformulée !");
       } else if (cards.length > 1) {
-        setBatchPreview(cards);
+        // Layout attendu par la vue « batch » (id/x/y + liens) — sans ça la table de craft rend rien.
+        const layouted = cards.map((c, i) => ({
+          ...c,
+          id: `opt_node_${Date.now()}_${i}`,
+          x: 60 + (i % 3) * 320 + (Math.random() * 40 - 20),
+          y: 80 + Math.floor(i / 3) * 220 + (Math.random() * 40 - 20),
+        }));
+        const links = [];
+        for (let i = 1; i < layouted.length; i++) links.push({ source: layouted[i - 1].id, target: layouted[i].id });
+        setBatchLinks(links);
+        setBatchCanvasTransform({ x: 0, y: 0, scale: 1 });
+        setBatchPreview(layouted);
         setShowBatchPreview(true);
         setAddSubView("batch");
         showToast(`✨ Carte scindée en ${cards.length} cartes atomiques !`);
         setAddForm(f => ({ ...f, front: "", back: "", example: "" })); // On vide pour éviter le doublon
       } else {
-        showToast("Aucune amélioration trouvée.", "info");
+        showToast("L'IA n'a pas renvoyé de JSON exploitable. Réessaie.", "info");
       }
-    } catch (e) { showToast("Erreur lors de l'optimisation IA", "error"); }
+    } catch (e) { console.error("[handleOptimizeFSRS]", e); showToast("Erreur lors de l'optimisation IA — réessaie dans un instant.", "error"); }
     setOptimizeLoading(false);
+  };
+
+  // ── Sauver une fiche "leech" (échoue en boucle) : reformulation IA ────────
+  const handleRescueLeech = async (targetCard) => {
+    const card = targetCard || reviewQueue[reviewIndex];
+    if (!card) return;
+    setLeechRescueLoading(true);
+    playSound("whoosh");
+    try {
+      const stats = analyzeLeech(card);
+      const raw = await callClaude(buildLeechRescuePrompt(), buildLeechRescueUserPayload(card, stats));
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = safeParseJSON(clean);
+      const cards = Array.isArray(parsed?.cards) ? parsed.cards : [];
+      const strategy = parsed?.strategy || "reformulation";
+      if (!cards.length) {
+        showToast("L'IA n'a rien renvoyé d'utilisable.", "error");
+        setLeechRescueLoading(false);
+        return;
+      }
+      try { saveVersion(card.id); } catch (_) { /* saveVersion optionnel */ }
+
+      const first = cards[0];
+      const additions = [];
+      const now = new Date().toISOString();
+      for (let k = 1; k < cards.length; k++) {
+        const c = cards[k];
+        if (!c || !c.front || !c.back) continue;
+        additions.push({
+          id: `${card.id}-rescue-${k}-${Math.random().toString(36).slice(2, 8)}`,
+          category: card.category,
+          type: card.type || "qa",
+          front: String(c.front).trim(),
+          back: String(c.back).trim(),
+          example: String(c.example || "").trim(),
+          level: 0, repetitions: 0, stability: null, difficulty: null,
+          easeFactor: null, interval: 1, nextReview: today(),
+          createdAt: now, updatedAt: now, reviewHistory: [], lapseCount: 0,
+          rescuedFrom: card.id, rescueStrategy: strategy,
+        });
+      }
+
+      setExpressions(prev => {
+        const updatedPrev = prev.map(e => e.id === card.id ? {
+          ...e,
+          front: String(first.front || "").trim() || e.front,
+          back: String(first.back || "").trim() || e.back,
+          example: String(first.example || "").trim(),
+          // reset FSRS pour que la nouvelle formulation reparte de zéro
+          level: 0, repetitions: 0, stability: null, difficulty: null,
+          easeFactor: null, interval: 1, nextReview: today(),
+          lapseCount: 0, // on efface l'historique de lapses pour éviter un flag "leech" persistant
+          updatedAt: now,
+          rescuedAt: now,
+          rescueStrategy: strategy,
+        } : e);
+        return [...updatedPrev, ...additions];
+      });
+
+      // Refléter aussi dans la queue de révision courante (si applicable)
+      setReviewQueue(prevQ => prevQ.map(c => c.id === card.id ? {
+        ...c,
+        front: String(first.front || "").trim() || c.front,
+        back: String(first.back || "").trim() || c.back,
+        example: String(first.example || "").trim(),
+        lapseCount: 0,
+      } : c));
+
+      showToast(`🩹 Fiche sauvée (${strategy})${additions.length ? ` — +${additions.length} variantes ajoutées` : ""}`);
+    } catch (e) {
+      showToast("Erreur pendant la reformulation IA.", "error");
+    }
+    setLeechRescueLoading(false);
+  };
+
+  // ── Démarrer une session « Points faibles » (leeches + due + consolidation)
+  const startWeakSpotsSession = () => {
+    const target = 20;
+    const queue = composeWeakSpotSession(expressions, { target, todayISO: today() });
+    if (!queue.length) {
+      showToast("Aucune fiche faible détectée — tu maîtrises bien ! 🎯", "info");
+      return;
+    }
+    startReview(null, "standard", queue);
+    showToast(`🎯 Session Points Faibles : ${queue.length} fiches ciblées`);
+  };
+
+  // ── Restructurer les fiches sélectionnées au format Rétro-Ingénierie Sémantique ──
+  // ⚠️ `selectedCards` contient des IDS (mode God Hand), pas des objets fiche :
+  // on résout donc les vraies fiches avant d'appeler le service, sinon le LLM
+  // recevait des strings (front/back undefined) et rien n'était restructuré.
+  const handleRestructureSelectedRetroEngineering = async () => {
+    const targets = selectedCards.length > 0
+      ? expressions.filter(e => selectedCards.includes(e.id))
+      : (filteredExps.length ? filteredExps : expressions);
+    if (!targets.length) {
+      showToast("Aucune fiche sélectionnée.", "info");
+      return;
+    }
+    setOptimizeAllLoading(true);
+    setOptimizeAllProgress({ done: 0, total: targets.length });
+    try {
+      await restructureSelectedCards({
+        selectedCards: targets,
+        allCards: expressions,
+        setExpressions,
+        callClaude,
+        showToast,
+        onProgress: (cur, tot) => setOptimizeAllProgress({ done: cur, total: tot }),
+      });
+      setSelectedCards([]);
+      setSelectionMode(false);
+    } catch (e) {
+      console.warn("[restructure] ", e);
+      showToast("Erreur lors de la restructuration.", "error");
+    } finally {
+      setOptimizeAllLoading(false);
+      setOptimizeAllProgress({ done: 0, total: 0 });
+    }
+  };
+
+
+  // ── Optimiser un lot de fiches quelconque (viser ~100% rétention FSRS) ──
+  // Coeur générique réutilisé par : "Optimiser le module" ET "Optimiser la sélection".
+  const runOptimizeBatch = async (targets, confirmMsg) => {
+    if (!targets.length) {
+      showToast("Aucune fiche à optimiser.", "info");
+      return;
+    }
+    if (!window.confirm(confirmMsg)) return;
+
+    setOptimizeAllLoading(true);
+    setOptimizeAllProgress({ done: 0, total: targets.length });
+    playSound("whoosh");
+
+    const BATCH = 6; // par lots pour ne pas saturer l'IA ni perdre le contexte
+    const systemPrompt = `Tu es un expert FSRS/SuperMemo. Pour CHAQUE fiche fournie (identifiée par son "id"), produis 1 à N fiches ATOMIQUES optimisées de sorte que la rétention FSRS prédite tende vers 100%. Scinde agressivement si nécessaire, resserre les formulations, élimine toute ambiguïté. Conserve l'"id" source dans chaque sortie pour tracer l'origine.\n\nRéponds UNIQUEMENT en JSON strict :\n{"results":[{"id":"<source-id>","cards":[{"front":"...","back":"...","example":"..."}]}]}\n\n${ATOMIC_CARD_RULES}`;
+
+    const updates = []; // { sourceId, newCards[] }
+    let ok = 0, fail = 0;
+
+    for (let i = 0; i < targets.length; i += BATCH) {
+      const slice = targets.slice(i, i + BATCH);
+      const userMsg = JSON.stringify(slice.map(c => ({
+        id: c.id,
+        front: c.front,
+        back: c.back,
+        example: c.example || ""
+      })), null, 2);
+      try {
+        const raw = await callClaude(systemPrompt, userMsg, { task: "batch-json", json: true, maxTokens: 8000, temperature: 0.3 });
+        const rawText = typeof raw === "string" ? raw : (raw?.text || "");
+        const clean = rawText.replace(/```json|```/gi, "").trim();
+        let parsed = null;
+        try { parsed = safeParseJSON(clean); } catch (_) { parsed = null; }
+        let results = Array.isArray(parsed?.results) ? parsed.results : [];
+        // Fallbacks : certains modèles répondent {cards:[...]} ou un tableau nu au lieu de {results:[...]}
+        if (!results.length && Array.isArray(parsed?.cards)) {
+          results = parsed.cards.map((c, idx) => ({ id: slice[idx]?.id, cards: [c] }));
+        }
+        if (!results.length && Array.isArray(parsed)) {
+          results = parsed.map((r, idx) => ({
+            id: r?.id || slice[idx]?.id,
+            cards: Array.isArray(r?.cards) ? r.cards : (r?.front && r?.back ? [r] : []),
+          }));
+        }
+        let okThisBatch = 0;
+        for (let ri = 0; ri < results.length; ri++) {
+          const r = results[ri];
+          if (!r || !Array.isArray(r.cards) || r.cards.length === 0) continue;
+          // Résolution défensive de l'ID : id renvoyé si présent dans le slice, sinon fallback positionnel.
+          const sourceId = (r.id && slice.some(s => s.id === r.id)) ? r.id : slice[ri]?.id;
+          if (!sourceId) continue;
+          const valid = r.cards
+            .filter(c => c && typeof c.front === "string" && typeof c.back === "string" && c.front.trim() && c.back.trim())
+            .map(c => ({ front: c.front.trim(), back: c.back.trim(), example: (c.example || "").toString().trim() }));
+          if (!valid.length) continue;
+          updates.push({ sourceId, newCards: valid });
+          ok++;
+          okThisBatch++;
+        }
+        fail += Math.max(0, slice.length - okThisBatch);
+      } catch (e) {
+        console.error("[handleOptimizeAllInModule] batch", e);
+        fail += slice.length;
+      }
+      setOptimizeAllProgress({ done: Math.min(i + BATCH, targets.length), total: targets.length });
+    }
+
+    if (updates.length === 0) {
+      showToast("L'IA n'a renvoyé aucune optimisation utilisable. Réessaie dans un instant.", "error");
+      setOptimizeAllLoading(false);
+      setOptimizeAllProgress({ done: 0, total: 0 });
+      return;
+    }
+
+    // Appliquer : sauvegarder version, remplacer la fiche source par la 1ère,
+    // et ajouter les fiches supplémentaires si scission.
+    try {
+      updates.forEach(u => { try { saveVersion(u.sourceId); } catch (_) {} });
+    } catch (_) { /* saveVersion optionnel */ }
+
+    setExpressions(prev => {
+      const byId = new Map(prev.map(e => [e.id, e]));
+      const now = new Date().toISOString();
+      const additions = [];
+      updates.forEach(({ sourceId, newCards }) => {
+        const src = byId.get(sourceId);
+        if (!src) return;
+        // Remplace la fiche existante par la première variante optimisée.
+        // Reset des champs FSRS pour laisser la nouvelle formulation ré-évoluer.
+        const first = newCards[0];
+        byId.set(sourceId, {
+          ...src,
+          front: first.front,
+          back: first.back,
+          example: first.example,
+          level: 0,
+          repetitions: 0,
+          stability: null,
+          difficulty: null,
+          easeFactor: null,
+          interval: 1,
+          nextReview: today(),
+          updatedAt: now,
+          optimizedBy: "fsrs-batch",
+        });
+        // Ajoute les scissions supplémentaires comme nouvelles fiches.
+        for (let k = 1; k < newCards.length; k++) {
+          const c = newCards[k];
+          additions.push({
+            id: `${sourceId}-opt-${k}-${Math.random().toString(36).slice(2, 8)}`,
+            category: src.category,
+            type: src.type || "qa",
+            front: c.front,
+            back: c.back,
+            example: c.example,
+            level: 0,
+            repetitions: 0,
+            stability: null,
+            difficulty: null,
+            easeFactor: null,
+            interval: 1,
+            nextReview: today(),
+            createdAt: now,
+            updatedAt: now,
+            reviewHistory: [],
+            optimizedBy: "fsrs-batch",
+            parentId: sourceId,
+          });
+        }
+      });
+      return [...Array.from(byId.values()), ...additions];
+    });
+
+    setOptimizeAllLoading(false);
+    setOptimizeAllProgress({ done: 0, total: 0 });
+    const totalNew = updates.reduce((acc, u) => acc + u.newCards.length, 0);
+    showToast(`✨ ${ok} fiche(s) optimisée(s) → ${totalNew} fiche(s) atomiques.${fail ? ` (${fail} échec(s))` : ""}`, "success");
+  };
+
+  // ── Optimiser TOUTES les fiches du module courant (viser ~100% rétention FSRS) ──
+  const handleOptimizeAllInModule = () => {
+    if (filterCat === "Toutes") {
+      showToast("Sélectionne un module précis avant d'optimiser en masse.", "warning");
+      return;
+    }
+    runOptimizeBatch(
+      filteredExps,
+      `Optimiser ${filteredExps.length} fiche(s) du module "${filterCat}" ?\nL'IA va scinder / resserrer chaque fiche pour viser 100% de rétention. Les originaux seront remplacés (versions sauvegardées).`
+    );
+  };
+
+  // ── Optimiser uniquement les fiches sélectionnées (mode Sélection / God Hand) ──
+  const handleOptimizeSelected = () => {
+    const targets = expressions.filter(e => selectedCards.includes(e.id));
+    runOptimizeBatch(
+      targets,
+      `Optimiser ${targets.length} fiche(s) sélectionnée(s) ?\nL'IA va scinder / resserrer chaque fiche pour viser 100% de rétention. Les originaux seront remplacés (versions sauvegardées).`
+    ).then(() => {
+      setSelectedCards([]);
+      setSelectionMode(false);
+    });
+  };
+
+  // ✨ Optimise UNE seule fiche (viser 100% rétention FSRS) — bouton par fiche
+  const handleOptimizeOneCard = async (exp) => {
+    if (!exp) return;
+    if (!window.confirm(`Optimiser cette fiche pour viser 100% de rétention ?\nL'IA va la resserrer / scinder si besoin. L'original est sauvegardé (version).`)) return;
+    playSound("whoosh");
+    const systemPrompt = `Tu es un expert FSRS/SuperMemo. Pour la fiche fournie, produis 1 à N fiches ATOMIQUES optimisées pour tendre vers 100% de rétention. Scinde si nécessaire, resserre les formulations. Réponds UNIQUEMENT en JSON strict :\n{"cards":[{"front":"...","back":"...","example":"..."}]}\n\n${ATOMIC_CARD_RULES}`;
+    const userMsg = JSON.stringify({ id: exp.id, front: exp.front, back: exp.back, example: exp.example || "" }, null, 2);
+    try {
+      const raw = await callClaude(systemPrompt, userMsg, { task: "single-json", json: true, maxTokens: 2500, temperature: 0.3 });
+      const rawText = typeof raw === "string" ? raw : (raw?.text || "");
+      const clean = rawText.replace(/```json|```/gi, "").trim();
+      let parsed = null;
+      try { parsed = safeParseJSON(clean); } catch (_) { parsed = null; }
+      const cards = Array.isArray(parsed?.cards) ? parsed.cards : (Array.isArray(parsed) ? parsed : []);
+      const valid = cards
+        .filter(c => c && typeof c.front === "string" && typeof c.back === "string" && c.front.trim() && c.back.trim())
+        .map(c => ({ front: c.front.trim(), back: c.back.trim(), example: (c.example || "").toString().trim() }));
+      if (!valid.length) { showToast("L'IA n'a rien renvoyé d'utilisable.", "error"); return; }
+      try { saveVersion(exp.id); } catch (_) {}
+      const now = new Date().toISOString();
+      setExpressions(prev => {
+        const byId = new Map(prev.map(e => [e.id, e]));
+        const first = valid[0];
+        const src = byId.get(exp.id);
+        if (src) byId.set(exp.id, { ...src, front: first.front, back: first.back, example: first.example, level: 0, repetitions: 0, stability: null, difficulty: null, easeFactor: null, interval: 1, nextReview: today(), updatedAt: now, optimizedBy: "fsrs-single" });
+        const additions = [];
+        for (let k = 1; k < valid.length; k++) {
+          const c = valid[k];
+          additions.push({ id: `${exp.id}-opt-${k}-${Math.random().toString(36).slice(2, 8)}`, category: exp.category, type: exp.type || "qa", front: c.front, back: c.back, example: c.example, level: 0, repetitions: 0, stability: null, difficulty: null, easeFactor: null, interval: 1, nextReview: today(), createdAt: now, updatedAt: now, reviewHistory: [], optimizedBy: "fsrs-single", parentId: exp.id });
+        }
+        return [...Array.from(byId.values()), ...additions];
+      });
+      showToast(`✨ Fiche optimisée → ${valid.length} fiche(s) atomiques.`, "success");
+    } catch (e) {
+      console.error("[handleOptimizeOneCard]", e);
+      showToast("Optimisation échouée. Réessaie.", "error");
+    }
   };
 
   const startVoice = async (field) => {
@@ -2406,7 +2824,8 @@ ${SPEECH_HYGIENE_PROMPT}`;
   };
 
   const getSmartQueue = useCallback((queue) => {
-    return [...queue].sort((a, b) => {
+    // 1) Tri par priorité (proximité examen + difficulté)
+    const sorted = [...queue].sort((a, b) => {
       const catA = categories.find((c) => c.name === a.category);
       const catB = categories.find((c) => c.name === b.category);
       const daysA = catA?.examDate ? Math.ceil((new Date(catA.examDate) - new Date()) / 86400000) : 999;
@@ -2416,6 +2835,10 @@ ${SPEECH_HYGIENE_PROMPT}`;
       const diffB = b.difficulty !== undefined ? b.difficulty : (5 - (b.easeFactor || 2.5)) * 2;
       return diffB - diffA;
     });
+    // 2) Anti-interférence : évite deux fiches sémantiquement proches à la
+    // suite (interférence rétro/proactive — cf. Anderson 1974). Aucune
+    // modification de composition, uniquement l'ordre.
+    return antiInterferenceReorder(sorted);
   }, [categories]);
 
   const handleEnterFlow = () => {
@@ -3595,7 +4018,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
       const mastered = catExps.filter(e => e.level >= 7).length;
       const total = catExps.length;
       const avgLevel = total ? (catExps.reduce((s, e) => s + e.level, 0) / total).toFixed(1) : 0;
-      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
       return { name: cat.name, total, mastered, avgLevel, due, color: cat.color };
     });
     setStatsModuleComparison(comp);
@@ -3832,7 +4255,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
       const mastered = catExps.filter(e => e.level >= 7).length;
       const total = catExps.length;
       const avgDiff = total ? (catExps.reduce((s, e) => s + (e.difficulty || (5 - (e.easeFactor || 2.5)) * 2), 0) / total).toFixed(1) : 0;
-      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
       const lastReview = catExps.reduce((latest, e) => {
         const last = (e.reviewHistory || []).slice(-1)[0]?.date;
         return last > latest ? last : latest;
@@ -3906,7 +4329,7 @@ ${SPEECH_HYGIENE_PROMPT}`;
     const alerts = [];
     categories.forEach(cat => {
       const catExps = expressions.filter(e => e.category === cat.name);
-      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+      const due = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
       if (due > 10) alerts.push({ module: cat.name, message: `${due} fiches en retard urgent !`, type: "danger" });
       else if (due > 5) alerts.push({ module: cat.name, message: `${due} fiches à revoir rapidement`, type: "warning" });
       if (cat.examDate) {
@@ -3967,6 +4390,130 @@ ${SPEECH_HYGIENE_PROMPT}`;
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${catName}_export.json`; a.click();
     showToast("📦 Module exporté !");
   };
+
+  // ── Pause de fiches ── met en pause les fiches pas encore apprises d'un
+  // module (level 0, jamais révisées) pour qu'elles n'apparaissent ni dans
+  // "en retard" ni dans les sessions de révision, le temps de les étudier.
+  const pauseNewCards = (catName) => {
+    const toPause = expressions.filter(e => e.category === catName && !e.paused && (e.level || 0) === 0);
+    if (!toPause.length) { showToast("Aucune fiche nouvelle à mettre en pause dans ce module.", "error"); return; }
+    const ids = new Set(toPause.map(e => e.id));
+    const now = Date.now();
+    setExpressions(prev => prev.map(e => ids.has(e.id) ? { ...e, paused: true, pausedAt: now } : e));
+    showToast(`⏸️ ${toPause.length} fiche(s) mises en pause — elles n'apparaîtront plus en révision.`);
+  };
+
+  const releaseAllPaused = (catName) => {
+    const toRelease = expressions.filter(e => e.category === catName && e.paused);
+    if (!toRelease.length) return;
+    setExpressions(prev => prev.map(e => (e.category === catName && e.paused) ? { ...e, paused: false, pausedAt: null } : e));
+    showToast(`🔓 ${toRelease.length} fiche(s) libérée(s) — disponibles en révision.`);
+  };
+
+  // ── Réviser les fiches en pause ── ouvre le mode "Étude libre" : lecture
+  // sans notation des fiches en pause d'un module, pour les apprendre avant
+  // de les remettre dans le circuit de révision normal.
+  const reviewPausedCards = (catName) => {
+    try {
+      const paused = (expressions || []).filter(e => e && e.category === catName && e.paused);
+      if (!paused.length) { showToast("Aucune fiche en pause dans ce module.", "error"); return; }
+      startStudySession(catName, paused);
+    } catch (err) {
+      console.error("[reviewPausedCards] échec :", err);
+      showToast("⚠️ Impossible d'ouvrir l'étude des fiches en pause. Réessaie.", "error");
+    }
+  };
+
+  // ── Étude libre ── session de lecture (recto+verso visibles, sans notation)
+  // pour apprendre les fiches en pause à son rythme, avant de les libérer.
+  const [studyModule, setStudyModule] = useState(null);
+  const [studyQueue, setStudyQueue] = useState([]);
+  const [studyIndex, setStudyIndex] = useState(0);
+  const [studyLearnedIds, setStudyLearnedIds] = useState([]);
+
+  const startStudySession = (catName, cards) => {
+    setStudyModule(catName);
+    setStudyQueue(cards);
+    setStudyIndex(0);
+    setStudyLearnedIds([]);
+    setView("study");
+  };
+
+  // Marque la fiche courante comme apprise : elle sort de la pause et
+  // rejoint la révision normale, puis on passe à la suivante.
+  const markStudyCardLearned = (id) => {
+    setExpressions(prev => prev.map(e => e.id === id ? { ...e, paused: false, pausedAt: null } : e));
+    setStudyLearnedIds(prev => [...prev, id]);
+    if (studyIndex < studyQueue.length - 1) setStudyIndex(i => i + 1);
+    else { showToast("🎉 Fiches en pause parcourues !"); setView("categories"); }
+  };
+
+  const studyGoNext = () => {
+    if (studyIndex < studyQueue.length - 1) setStudyIndex(i => i + 1);
+    else { setView("categories"); }
+  };
+  const studyGoPrev = () => { if (studyIndex > 0) setStudyIndex(i => i - 1); };
+
+  // ── Dosage automatique quotidien ── au lieu de laisser les fiches en
+  // pause s'accumuler indéfiniment (elles ne se relisent jamais toutes
+  // seules), on en libère automatiquement un petit lot chaque jour — les
+  // plus anciennes en premier — pour qu'elles reviennent progressivement
+  // dans la révision normale sans action manuelle.
+  const [pauseDripQuota, setPauseDripQuota] = useState(() => {
+    const saved = parseInt(localStorage.getItem("memomaitre_pauseDripQuota"), 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 8;
+  });
+  useEffect(() => {
+    try { localStorage.setItem("memomaitre_pauseDripQuota", String(pauseDripQuota)); } catch { }
+  }, [pauseDripQuota]);
+
+  const runPauseDripIfNeeded = useCallback(() => {
+    const todayStr = today();
+    let lastDrip = null;
+    try { lastDrip = localStorage.getItem("memomaitre_lastPauseDripDate"); } catch { }
+    if (lastDrip === todayStr) return;
+    setExpressions(prev => {
+      const paused = prev.filter(e => e.paused);
+      if (!paused.length) return prev;
+      const sorted = [...paused].sort((a, b) => (a.pausedAt || 0) - (b.pausedAt || 0));
+      const toReleaseIds = new Set(sorted.slice(0, pauseDripQuota).map(e => e.id));
+      if (!toReleaseIds.size) return prev;
+      showToast(`🔓 ${toReleaseIds.size} fiche(s) en pause libérée(s) automatiquement (dosage quotidien) — direction révision.`);
+      return prev.map(e => toReleaseIds.has(e.id) ? { ...e, paused: false, pausedAt: null } : e);
+    });
+    try { localStorage.setItem("memomaitre_lastPauseDripDate", todayStr); } catch { }
+  }, [pauseDripQuota]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    runPauseDripIfNeeded();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
+
+  // Sort une fiche de la pause pendant qu'on la révise (ex: on vient de
+  // l'apprendre) pour qu'elle réintègre le cycle de révision normal.
+  const unpauseCard = (id) => {
+    setExpressions(prev => prev.map(e => e.id === id ? { ...e, paused: false, pausedAt: null } : e));
+    setReviewQueue(prev => prev.map(c => c.id === id ? { ...c, paused: false } : c));
+    showToast("🔓 Fiche ajoutée à la révision normale !", "success");
+  };
+
+  const releaseSelectedPaused = (ids) => {
+    if (!ids || !ids.size) return;
+    setExpressions(prev => prev.map(e => ids.has(e.id) ? { ...e, paused: false, pausedAt: null } : e));
+    showToast(`🔓 ${ids.size} fiche(s) ajoutée(s) à la révision.`);
+    setPauseManagerModule(null);
+    setPauseManagerSelected(new Set());
+    setSelectionMode(false);
+    setSelectedCards([]);
+    setFilterLevel("Tous");
+  };
+
+  // Modale de choix des fiches à libérer (module ouvert + sélection courante)
+  const [pauseManagerModule, setPauseManagerModule] = useState(null);
+  const [pauseManagerSelected, setPauseManagerSelected] = useState(new Set());
+
 
   // Refs pour éviter les stale closures dans le timer
   const examQueueRef = useRef(examQueue);
@@ -4109,8 +4656,9 @@ ${SPEECH_HYGIENE_PROMPT}`;
     let list = filterCat === "Toutes" ? expressions : expressions.filter((e) => _normCat(e.category) === _normCat(filterCat));
     if (filterLevel !== "Tous") {
       if (filterLevel === "Maîtrisées") list = list.filter((e) => e.level >= 7);
-      else if (filterLevel === "En retard") list = list.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7);
+      else if (filterLevel === "En retard") list = list.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused);
       else if (filterLevel === "Nouvelles") list = list.filter((e) => e.level === 0);
+      else if (filterLevel === "En pause") list = list.filter((e) => e.paused);
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -4898,6 +5446,24 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
   return (
     <div style={{ minHeight: "100vh", width: "100%", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
+      {getFbUser() && (
+        <button
+          onClick={handleManualSync}
+          disabled={manualSyncing}
+          title="Forcer une synchronisation avec le serveur (utile après avoir modifié tes données sur un autre appareil)"
+          style={{
+            position: "fixed", top: 10, right: 10, zIndex: 9999,
+            width: 34, height: 34, borderRadius: "50%", border: "none",
+            background: "rgba(30,30,40,0.55)", color: "#fff", fontSize: 15,
+            cursor: manualSyncing ? "default" : "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: manualSyncing ? "pulse 0.8s ease-in-out infinite" : "none",
+            backdropFilter: "blur(6px)",
+          }}
+        >
+          🔄
+        </button>
+      )}
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Fira+Code:wght@400;500;600&display=swap');
        html { margin: 0 !important; padding: 0 !important; width: 100% !important; height: 100% !important; overflow-x: hidden !important; overflow-y: auto !important; scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
@@ -5115,6 +5681,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         @media (max-width: 767px) {
           .app-orb-1, .app-orb-2 { display: none !important; }
         }
+        /* Hide top navigation bar on mobile — cleaner UX */
+        @media (max-width: 767px) {
+          .nav-top { display: none !important; }
+          .main-content { padding-top: calc(env(safe-area-inset-top, 0px) + 8px) !important; }
+        }
         .show-mobile-only { display: none; }
 
         
@@ -5240,6 +5811,22 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         {/* Droite : Badges de statuts HUD */}
         <div style={{ width: "30%", display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", transition: "opacity 0.3s", opacity: isScrolled ? 0.6 : 1 }}>
+          <button 
+            onClick={() => {
+              if (window.confirm("🔄 Lancer la synchronisation God-Tier (Deep Sync) ? Cela va scanner et réparer les fiches fantômes entre tes appareils.")) {
+                showToast("Deep Sync lancé...", "info");
+                import('./lib/db/sync').then(({ syncWithFirebase }) => {
+                  syncWithFirebase(true).then((changed) => {
+                    showToast(changed ? "✨ Deep Sync terminé ! Fiches réparées." : "Deep Sync terminé. Tout est à jour.");
+                  }).catch(e => showToast("Erreur Deep Sync: " + e.message, "error"));
+                });
+              }
+            }}
+            style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }} 
+            title="Force Deep Sync"
+          >
+            🔄 Sync
+          </button>
           {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900, backdropFilter: "blur(4px)" }}>⚡ {todayReviews.length}</span>}
           {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 900, boxShadow: "0 0 12px rgba(239,68,68,0.5)" }}>🚨</span>}
         </div>
@@ -5308,7 +5895,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {/* Nav items (Scrollable) */}
           <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "visible", paddingBottom: 16, paddingRight: 6 }}>
             {(() => {
-              const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+              const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
               const masteredCount = expressions.filter(e => e.level >= 7).length;
               const totalCards = expressions.length;
               const masteredPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
@@ -5330,7 +5917,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     { id: "veille", icon: "📰", label: "Actualités", shortcut: "7", hint: "Veille tech & IA en temps réel" },
                     { id: "opensource", icon: "🚀", label: "Radar OS", shortcut: "8", hint: "Trouve ta PR" },
                     { id: "practice", icon: "🗣️", label: "English", shortcut: "6", hint: "Pratique conversationnelle" },
-                    { id: "portfolio", icon: "📁", label: "Portfolio", shortcut: "P", hint: "Mes Mini-Projets" },
                   ]
                 },
                 {
@@ -5431,15 +6017,15 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   <span style={{ fontSize: 10, color: isDarkMode ? "rgba(255,255,255,0.5)" : theme.textMuted, fontWeight: 600 }}>MAÎTRISE GLOBALE</span>
                   <span style={{ fontSize: 11, fontWeight: 900, color: isDarkMode ? "#93A8FF" : theme.highlight }}>
-                    {expressions.length > 0 ? (expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0) : 0}%
+                    {expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%
                   </span>
                 </div>
                 <div style={{ height: 3, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.1)", borderRadius: 2 }}>
-                  <div style={{ height: "100%", width: `${expressions.length > 0 ? (expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0) : 0}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 2, transition: "width 0.8s ease" }} />
+                  <div style={{ height: "100%", width: `${expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 2, transition: "width 0.8s ease" }} />
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 9, color: isDarkMode ? "rgba(255,255,255,0.35)" : theme.textMuted }}>
-                  <span>{expressions.filter(e => e.level >= 7).length} maîtrisées</span>
-                  <span>{expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length} en retard</span>
+                  <span>{masteredCount} maîtrisées</span>
+                  <span>{todayReviews.length} en retard</span>
                 </div>
               </div>
             )}
@@ -5459,7 +6045,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         {/* ═══ MOBILE SPEED DIAL (replaces 5-button bottom nav) ═══ */}
         {isMobile && (() => {
-          const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+          const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
           return (
             <>
@@ -5549,7 +6135,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   { id: "routine", icon: "🌟", label: "Routine" },
                   { id: "practice", icon: "🗣️", label: "English" },
                   { id: "projects", icon: "🗂️", label: "Projets" },
-                  { id: "portfolio", icon: "📁", label: "Portfolio" },
                   { id: "veille", icon: "📰", label: "Actualités" },
                 ].map(item => (
                   <button key={item.id} onClick={() => { setView(item.id); setMobileDrawerOpen(false); if (item.id === "projects") setProjectSubView("hub"); }} style={{
@@ -5595,15 +6180,15 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>MAÎTRISE GLOBALE</span>
                     <span style={{ fontSize: 16, fontWeight: 900, color: theme.highlight }}>
-                      {(expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0)}%
+                      {expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%
                     </span>
                   </div>
                   <div style={{ height: 6, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.1)", borderRadius: 3 }}>
-                    <div style={{ height: "100%", width: `${(expressions.length > 0 ? Math.round((expressions.filter(e => e.level >= 7).length / expressions.length) * 100) : 0)}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 3 }} />
+                    <div style={{ height: "100%", width: `${expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%`, background: "linear-gradient(90deg,#7B93FF,#4D6BFE)", borderRadius: 3 }} />
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
-                    <span>{expressions.filter(e => e.level >= 7).length} maîtrisées</span>
-                    <span>{expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length} en retard</span>
+                    <span>{masteredCount} maîtrisées</span>
+                    <span>{todayReviews.length} en retard</span>
                   </div>
                 </div>
               )}
@@ -5643,7 +6228,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               const dueModules = categories
                 .map(c => ({
                   name: c.name,
-                  count: expressions.filter(e => e.category === c.name && isDue(e.nextReview, today()) && (e.level || 0) < 7).length
+                  count: expressions.filter(e => e.category === c.name && isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length
                 }))
                 .filter(c => c.count > 0);
 
@@ -5700,21 +6285,23 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   {/* Ligne supérieure : salutation + forme */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 10, position: "relative", zIndex: 1, marginBottom: 12 }}>
                     <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: 2, marginBottom: 4 }}>
-                        {hour >= 5 && hour < 12 ? "🌅 Matin" : hour < 18 ? "☀️ Après-midi" : "🌙 Soirée"}
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.45)", textTransform: "uppercase", letterSpacing: 3, marginBottom: 6 }}>
+                        {hour >= 5 && hour < 12 ? "Matin" : hour < 18 ? "Après-midi" : "Soirée"} · {new Date().toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}
                       </div>
-                      <h1 className="dash-hero-title" style={{ margin: 0, fontSize: "clamp(16px, 3vw, 22px)", fontWeight: 900, color: "white", letterSpacing: "-0.5px", lineHeight: 1.15 }}>
-                        {greeting},
-                        <span style={{ background: "linear-gradient(90deg, #7B93FF, #A5B4FC)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>El Hadji Malick</span>
+                      <h1 className="dash-hero-title" style={{ margin: 0, fontSize: "clamp(20px, 3.2vw, 28px)", fontWeight: 800, color: "white", letterSpacing: "-0.6px", lineHeight: 1.1 }}>
+                        {greeting},{" "}
+                        <span style={{ fontWeight: 900, background: "linear-gradient(90deg,#FFFFFF,#C7D2FE)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>El Hadji Malick</span>
                       </h1>
                       {(() => {
                         const archetype = getArchetype(powerLevel);
                         return (
-                          <div style={{ marginTop: 6, display: 'inline-flex', alignItems: 'center', gap: 6, background: 'rgba(255,255,255,0.1)', padding: '4px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)' }}>
-                            <span style={{ fontSize: 14 }}>{archetype.icon}</span>
-                            <span style={{ color: 'white', fontWeight: 700, fontSize: 11 }}>{archetype.title} (Niv. {archetype.level})</span>
-                            <div style={{ width: 1, height: 12, background: "rgba(255,255,255,0.3)", marginLeft: 2, marginRight: 2 }} />
-                            <span style={{ color: '#FCD34D', fontWeight: 800, fontSize: 11 }}>🏆 {unlockedBadges.length} Badges</span>
+                          <div style={{ marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 10, background: 'rgba(255,255,255,0.06)', padding: '6px 12px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.14)', backdropFilter: 'blur(8px)' }}>
+                            <span style={{ fontSize: 13, opacity: 0.9 }}>{archetype.icon}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.92)', fontWeight: 700, fontSize: 11, letterSpacing: 0.3 }}>Niv. {archetype.level}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>·</span>
+                            <span style={{ color: 'rgba(255,255,255,0.85)', fontWeight: 600, fontSize: 11 }}>{archetype.title}</span>
+                            <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: 10 }}>·</span>
+                            <span style={{ color: '#FCD34D', fontWeight: 700, fontSize: 11 }}>{unlockedBadges.length} badges</span>
                           </div>
                         );
                       })()}
@@ -5800,6 +6387,114 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     </div>
                   </div>
                 </HoloCard>
+
+                {/* ══ ALERTES ROUTINE ══════════════════════════════════════════════════ */}
+                {(() => {
+                  let checked = {};
+                  try {
+                    const raw = localStorage.getItem("memomaitre_daily_routine_v2");
+                    if (raw) {
+                      const s = JSON.parse(raw);
+                      const t = new Date().toISOString().slice(0, 10);
+                      if (s?.date === t) checked = s.checked || {};
+                    }
+                  } catch {}
+                  const currentPeriod = hour >= 5 && hour < 12
+                    ? "matin"
+                    : hour >= 12 && hour < 14
+                      ? "midi"
+                      : hour >= 14 && hour < 18
+                        ? "midi"
+                        : hour >= 18 && hour < 21
+                          ? "soir"
+                          : hour >= 21 && hour < 23
+                            ? "nuit_debut"
+                            : "nuit";
+                  const periodMeta = {
+                    matin: { label: "Ce matin", color: "#F59E0B" },
+                    midi: { label: "Pauses de la journée", color: "#4D6BFE" },
+                    soir: { label: "Ce soir — 18h · Anglais", color: "#7C3AED" },
+                    nuit_debut: { label: "Après les cours", color: "#0891B2" },
+                    nuit: { label: "Avant de dormir", color: "#6D28D9" },
+                  }[currentPeriod];
+                  const routineSteps = [
+                    { id: "matin_stats", period: "matin", icon: "📊", label: "Stats du jour", duration: 2 },
+                    { id: "matin_revision", period: "matin", icon: "🧠", label: "Révision FSRS", duration: 20 },
+                    { id: "matin_actu", period: "matin", icon: "📰", label: "Actualités Tech", duration: 10 },
+                    { id: "pause_revision", period: "midi", icon: "⚡", label: "Révision en pause", duration: 10 },
+                    { id: "soir_video_en", period: "soir", icon: "🎬", label: "Vidéo Anglais", duration: 10 },
+                    { id: "soir_ajout_expressions", period: "soir", icon: "✍️", label: "Ajouter expressions", duration: 5 },
+                    { id: "soir_ecrit", period: "soir", icon: "📝", label: "Écriture EN", duration: 5 },
+                    { id: "soir_dictee", period: "soir", icon: "🎧", label: "Dictée EN", duration: 5 },
+                    { id: "soir_parler", period: "soir", icon: "🗣️", label: "Parler EN", duration: 5 },
+                    { id: "soir_revision_nouvelles", period: "soir", icon: "🔄", label: "Fiches fraîches", duration: 10 },
+                    { id: "apres_fiches_cours", period: "nuit_debut", icon: "📚", label: "Fiches des cours du jour", duration: 20 },
+                    { id: "apres_revision_cours", period: "nuit_debut", icon: "🎯", label: "Révision fiches cours", duration: 15 },
+                    { id: "nuit_review_finale", period: "nuit", icon: "🌙", label: "Review finale", duration: 20 },
+                    { id: "nuit_expressions_soir", period: "nuit", icon: "💡", label: "Expressions de la nuit", duration: 5 },
+                  ];
+                  const pending = routineSteps.filter(s => s.period === currentPeriod && !checked[s.id]);
+                  const overdue = routineSteps.filter(s => {
+                    const order = ["matin", "midi", "soir", "nuit_debut", "nuit"];
+                    return order.indexOf(s.period) < order.indexOf(currentPeriod) && !checked[s.id];
+                  });
+                  if (pending.length === 0 && overdue.length === 0) return null;
+                  return (
+                    <div style={{
+                      background: theme.cardBg,
+                      border: `1px solid ${theme.border}`,
+                      borderLeft: `3px solid ${periodMeta.color}`,
+                      borderRadius: 16,
+                      padding: "14px 18px",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: periodMeta.color, boxShadow: `0 0 8px ${periodMeta.color}` }} />
+                          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, textTransform: "uppercase", color: theme.textMuted }}>Alertes routine</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: periodMeta.color }}>· {periodMeta.label}</span>
+                        </div>
+                        <button onClick={() => setView("routine")} style={{ background: "none", border: `1px solid ${theme.border}`, color: theme.text, fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>
+                          Ouvrir la routine →
+                        </button>
+                      </div>
+                      {pending.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: overdue.length > 0 ? 10 : 0 }}>
+                          {pending.map(s => (
+                            <div key={s.id} style={{
+                              display: "inline-flex", alignItems: "center", gap: 6,
+                              padding: "6px 10px", borderRadius: 10,
+                              background: theme.inputBg,
+                              border: `1px solid ${theme.border}`,
+                              fontSize: 12, fontWeight: 600, color: theme.text,
+                            }}>
+                              <span>{s.icon}</span>
+                              <span>{s.label}</span>
+                              <span style={{ fontSize: 10, color: theme.textMuted, fontWeight: 500 }}>· {s.duration}min</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {overdue.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#EF4444", textTransform: "uppercase", letterSpacing: 1 }}>⚠ En retard :</span>
+                          {overdue.slice(0, 6).map(s => (
+                            <span key={s.id} style={{
+                              padding: "3px 8px", borderRadius: 8,
+                              background: "rgba(239,68,68,0.08)",
+                              border: "1px solid rgba(239,68,68,0.3)",
+                              fontSize: 11, fontWeight: 600, color: "#EF4444",
+                            }}>
+                              {s.icon} {s.label}
+                            </span>
+                          ))}
+                          {overdue.length > 6 && (
+                            <span style={{ fontSize: 11, color: theme.textMuted }}>+{overdue.length - 6} autres</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ══ GOD UPGRADES — Heatmap + Resume + Smart Reco ════════════════ */}
                 <YearHeatmap
@@ -5945,135 +6640,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       </div>
                     </HoloCard>
 
-                    {/* ══ GRILLE SECONDAIRE ═══════════════════════════════════════════ */}
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(280px,100%),1fr))", gap: 16 }}>
-
-                      {/* 1. Plan du jour IA - Timeline Interactive */}
-                      <HoloCard className="dash-widget-card" theme={theme} glowColor="#4D6BFE" style={{ background: theme.cardBg, borderRadius: 24, padding: "24px", border: `1px solid ${theme.border}`, display: "flex", flexDirection: "column" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ padding: "8px", background: isDarkMode ? "rgba(77,107,254,0.15)" : "#EEF2FF", borderRadius: 12, color: "#4D6BFE" }}>
-                              <span style={{ fontSize: 20 }}>⏱️</span>
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 900, color: theme.text, fontSize: 16 }}>Plan d'Attaque</div>
-                              <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>Généré par l'IA</div>
-                            </div>
-                          </div>
-                          <button onClick={loadDailyPlan} className="hov" style={{ background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.highlight, cursor: "pointer", fontSize: 12, padding: "6px 12px", borderRadius: 10, fontWeight: 700 }} title="Régénérer">↻ Sync</button>
-                        </div>
-                        {dashDailyPlanLoading
-                          ? <div style={{ color: theme.textMuted, fontSize: 13, textAlign: "center", padding: "20px 0", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                            <div style={{ animation: "pulse 1.5s infinite", fontSize: 32, marginBottom: 12 }}>🧠</div>
-                            Analyse de ta charge cognitive...
-                          </div>
-                          : dashDailyPlan.length === 0
-                            ? <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
-                              <button onClick={loadDailyPlan} className="btn-glow" style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #4D6BFE, #1E3A8A)", border: "none", borderRadius: 16, color: "white", fontWeight: 800, cursor: "pointer", fontSize: 14, boxShadow: "0 8px 20px rgba(77,107,254,0.3)" }}>
-                                ✨ Générer mon plan optimal
-                              </button>
-                            </div>
-                            : <div style={{ display: "flex", flexDirection: "column", gap: 16, position: "relative", marginTop: 8 }}>
-                              <div style={{ position: "absolute", left: 21, top: 10, bottom: 10, width: 2, background: theme.border, borderRadius: 2 }} />
-                              {dashDailyPlan.map((slot, i) => {
-                                const currentHourNum = new Date().getHours();
-                                const slotHourMatch = slot.time.match(/(\d+)/);
-                                const slotHour = slotHourMatch ? parseInt(slotHourMatch[1], 10) : -1;
-                                const isPast = slotHour !== -1 && currentHourNum > slotHour;
-                                const isCurrent = slotHour !== -1 && currentHourNum === slotHour;
-
-                                return (
-                                  <div key={i} style={{ display: "flex", gap: 14, alignItems: "center", position: "relative", zIndex: 1, opacity: isPast ? 0.6 : 1 }}>
-                                    <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 900, color: isCurrent ? theme.highlight : theme.textMuted, fontSize: 11, width: 40, textAlign: "right" }}>{slot.time}</div>
-                                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: isCurrent ? theme.highlight : theme.cardBg, border: `2px solid ${isCurrent ? theme.highlight : theme.border}`, boxShadow: isCurrent ? `0 0 12px ${theme.highlight}` : "none", zIndex: 2, marginLeft: -1 }} />
-                                    <div style={{ flex: 1, background: isCurrent ? (isDarkMode ? "rgba(77,107,254,0.15)" : "#EEF2FF") : theme.inputBg, borderRadius: 12, padding: "12px 14px", border: `1px solid ${isCurrent ? "#4D6BFE50" : theme.border}` }}>
-                                      <span style={{ color: isCurrent ? theme.highlight : theme.text, fontSize: 13, fontWeight: isCurrent ? 700 : 500, lineHeight: 1.4 }}>{slot.activity}</span>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                        }
-                      </HoloCard>
-
-                      {/* 2. Objectifs de la semaine - Quêtes RPG */}
-                      <HoloCard className="dash-widget-card" theme={theme} glowColor="#10B981" style={{ background: theme.cardBg, borderRadius: 24, padding: "24px", border: `1px solid ${theme.border}`, display: "flex", flexDirection: "column" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-                          <div style={{ padding: "8px", background: isDarkMode ? "rgba(16,185,129,0.15)" : "#F0FDF4", borderRadius: 12, color: "#10B981" }}>
-                            <span style={{ fontSize: 20 }}>📜</span>
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 900, color: theme.text, fontSize: 16 }}>Quêtes de la Semaine</div>
-                            <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>Objectifs à accomplir</div>
-                          </div>
-                        </div>
-
-                        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16, flex: 1, overflowY: "auto" }}>
-                          {dashWeeklyGoals.length === 0
-                            ? <div style={{ color: theme.textMuted, fontSize: 13, fontStyle: "italic", textAlign: "center", padding: "20px 0" }}>Aucune quête en cours. Ajoutes-en une !</div>
-                            : dashWeeklyGoals.map((goal, i) => (
-                              <div key={i} className="hov" style={{ display: "flex", alignItems: "center", gap: 12, background: theme.inputBg, borderRadius: 14, padding: "12px 16px", border: `1px solid ${theme.border}`, transition: "all 0.2s" }}>
-                                <button onClick={() => removeWeeklyGoal(i)} style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${theme.border}`, background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, padding: 0 }} title="Accomplir (Supprimer)">
-                                  <span style={{ opacity: 0, transition: "opacity 0.2s", color: "#10B981", fontWeight: 900, fontSize: 14 }} onMouseEnter={e => e.currentTarget.style.opacity = 1} onMouseLeave={e => e.currentTarget.style.opacity = 0}>✓</span>
-                                </button>
-                                <span style={{ color: theme.text, fontSize: 13, flex: 1, lineHeight: 1.4, fontWeight: 600 }}>{goal}</span>
-                              </div>
-                            ))
-                          }
-                        </div>
-
-                        <div style={{ display: "flex", gap: 8, background: theme.inputBg, padding: 6, borderRadius: 16, border: `1px solid ${theme.border}` }}>
-                          <input
-                            value={dashWeeklyGoalsInput}
-                            onChange={e => setDashWeeklyGoalsInput(e.target.value)}
-                            onKeyDown={e => e.key === "Enter" && addWeeklyGoal()}
-                            placeholder="Nouvelle quête..."
-                            style={{ flex: 1, padding: "8px 12px", background: "transparent", border: "none", color: theme.text, fontSize: 13, outline: "none" }}
-                          />
-                          <button onClick={addWeeklyGoal} disabled={!dashWeeklyGoalsInput.trim()} style={{ padding: "8px 16px", background: dashWeeklyGoalsInput.trim() ? "#10B981" : theme.border, color: "white", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 14, cursor: dashWeeklyGoalsInput.trim() ? "pointer" : "default", transition: "background 0.3s" }}>+</button>
-                        </div>
-                      </HoloCard>
-
-                      {/* 3. Rétro semaine - Rapport IA */}
-                      <HoloCard className="dash-widget-card" theme={theme} glowColor="#4D6BFE" style={{ background: theme.cardBg, borderRadius: 24, padding: "24px", border: `1px solid ${theme.border}`, display: "flex", flexDirection: "column" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <div style={{ padding: "8px", background: isDarkMode ? "rgba(77, 107, 254,0.15)" : "#F5F3FF", borderRadius: 12, color: "#4D6BFE" }}>
-                              <span style={{ fontSize: 20 }}>📡</span>
-                            </div>
-                            <div>
-                              <div style={{ fontWeight: 900, color: theme.text, fontSize: 16 }}>Rapport IA</div>
-                              <div style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>Synthèse de la semaine</div>
-                            </div>
-                          </div>
-                          <button onClick={loadWeeklyRetro} className="hov" style={{ background: theme.inputBg, border: `1px solid ${theme.border}`, color: "#4D6BFE", cursor: "pointer", fontSize: 12, padding: "6px 12px", borderRadius: 10, fontWeight: 700 }} title="Actualiser">↻ Sync</button>
-                        </div>
-
-                        {dashWeeklyRetroLoading
-                          ? <div style={{ color: theme.textMuted, fontSize: 13, textAlign: "center", padding: "20px 0", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                            <div style={{ animation: "spin 2s linear infinite", fontSize: 32, marginBottom: 12, display: "inline-block" }}>⚙️</div>
-                            Compilation des données...
-                          </div>
-                          : dashWeeklyRetro
-                            ? <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-                              <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 16 }}>
-                                <div style={{ fontSize: 42, fontWeight: 900, color: "#4D6BFE", letterSpacing: "-2px", lineHeight: 1 }}>{dashWeeklyRetro.totalReviews}</div>
-                                <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 800, textTransform: "uppercase", letterSpacing: 1 }}>révisions</div>
-                              </div>
-                              <div style={{ flex: 1, padding: "16px", background: isDarkMode ? "rgba(77, 107, 254,0.08)" : "#F5F3FF", borderRadius: 16, border: `1px solid ${isDarkMode ? "rgba(77, 107, 254,0.2)" : "#EDE9FE"}` }}>
-                                <div style={{ fontSize: 10, fontWeight: 900, color: "#4D6BFE", marginBottom: 8, letterSpacing: 1 }}>DEBRIEFING</div>
-                                <p style={{ color: theme.text, fontSize: 14, margin: 0, lineHeight: 1.6, fontWeight: 500 }}>{dashWeeklyRetro.summary}</p>
-                              </div>
-                            </div>
-                            : <div style={{ flex: 1, display: "flex", alignItems: "center" }}>
-                              <button onClick={loadWeeklyRetro} className="btn-glow" style={{ width: "100%", padding: "16px", background: "linear-gradient(135deg, #4D6BFE, #4C1D95)", border: "none", borderRadius: 16, color: "white", fontWeight: 800, cursor: "pointer", fontSize: 14, boxShadow: "0 8px 20px rgba(77, 107, 254,0.3)" }}>
-                                📡 Analyser ma semaine
-                              </button>
-                            </div>
-                        }
-                      </HoloCard>
-                    </div>
-
                     {/* ══ FICHES URGENTES ═════════════════════════════════════════════ */}
                     {dashUrgentCards.length > 0 && (
                       <HoloCard className="dash-widget-card" urgent={true} glowColor="#EF4444" style={{ borderRadius: 20, padding: "22px 24px", background: isDarkMode ? "rgba(239,68,68,0.07)" : "#FEF2F2", border: `1px solid ${isDarkMode ? "rgba(239,68,68,0.2)" : "#FCA5A5"}` }}>
@@ -6082,9 +6648,14 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             <span style={{ fontSize: 16 }}>⚠️</span>
                             <span style={{ fontWeight: 800, color: isDarkMode ? "#F87171" : "#DC2626", fontSize: 14 }}>Risque d'oubli — {dashUrgentCards.length} fiches</span>
                           </div>
-                          <button onClick={() => startReview(null, "standard", dashUrgentCards)} style={{ padding: "8px 18px", background: "#EF4444", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
-                            🚀 Réviser
-                          </button>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={startWeakSpotsSession} title="Compose une session ciblée sur tes fiches les plus difficiles + celles dues + consolidation, mélangées intelligemment" style={{ padding: "8px 14px", background: "linear-gradient(135deg, #7C3AED, #4338CA)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                              🎯 Points faibles
+                            </button>
+                            <button onClick={() => startReview(null, "standard", dashUrgentCards)} style={{ padding: "8px 18px", background: "#EF4444", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                              🚀 Réviser
+                            </button>
+                          </div>
                         </div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                           {dashUrgentCards.map(card => (
@@ -6117,6 +6688,55 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               </div>
             );
           })()}
+          {/* VUE ÉTUDE LIBRE — apprendre les fiches en pause sans notation */}
+          {view === "study" && (
+            studyQueue.length === 0 ? (
+              <div style={{ textAlign: "center", color: theme.textMuted, padding: 40 }}>
+                <p style={{ fontSize: 20 }}>⏳</p>
+                <p>Chargement des fiches...</p>
+              </div>
+            ) : (() => {
+              const card = studyQueue[studyIndex];
+              const isLearned = studyLearnedIds.includes(card.id);
+              return (
+                <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", maxWidth: 720, margin: "0 auto" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                    <button onClick={() => setView("categories")} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>← Quitter</button>
+                    <div style={{ fontWeight: 800, color: theme.text, fontSize: 14 }}>📖 Étude libre — {studyModule}</div>
+                    <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{studyIndex + 1}</span> / {studyQueue.length}</div>
+                  </div>
+                  <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, marginBottom: 24, overflow: "hidden" }}>
+                    <div style={{ height: "100%", background: "linear-gradient(90deg, #8B5CF6, #A78BFA)", borderRadius: 4, transition: "width 0.4s ease", width: `${((studyIndex + 1) / studyQueue.length) * 100}%` }} />
+                  </div>
+                  <p style={{ textAlign: "center", color: theme.textMuted, fontSize: 12, marginBottom: 16 }}>
+                    Pas de notation ici — lis, relis, et clique « J'ai appris » quand c'est acquis pour l'envoyer en révision.
+                  </p>
+                  <div style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 22, padding: 32, boxShadow: "0 8px 24px rgba(139,92,246,0.08)" }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#8B5CF6", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Recto</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: theme.text, marginBottom: 20 }}>{card.front}</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#4D6BFE", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>Verso</div>
+                    <div style={{ fontSize: 17, color: theme.text, marginBottom: card.example ? 16 : 0 }}>{card.back}</div>
+                    {card.example && (
+                      <div style={{ fontSize: 13, color: theme.textMuted, fontStyle: "italic", background: theme.inputBg, padding: 12, borderRadius: 10 }}>💬 {card.example}</div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginTop: 20, alignItems: "center", justifyContent: "space-between" }}>
+                    <button onClick={studyGoPrev} disabled={studyIndex === 0} className="hov" style={{ padding: "10px 18px", background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: studyIndex === 0 ? theme.textMuted : theme.text, fontWeight: 700, cursor: studyIndex === 0 ? "default" : "pointer", opacity: studyIndex === 0 ? 0.5 : 1 }}>← Précédent</button>
+                    <button
+                      onClick={() => markStudyCardLearned(card.id)}
+                      disabled={isLearned}
+                      className="hov btn-glow"
+                      style={{ padding: "12px 24px", background: isLearned ? "#10B98155" : "linear-gradient(135deg, #10B981, #059669)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: isLearned ? "default" : "pointer", fontSize: 14 }}
+                    >{isLearned ? "✅ Déjà envoyée en révision" : "✅ J'ai appris → en révision"}</button>
+                    <button onClick={studyGoNext} className="hov" style={{ padding: "10px 18px", background: "none", border: `1px solid ${theme.border}`, borderRadius: 12, color: theme.text, fontWeight: 700, cursor: "pointer" }}>{studyIndex === studyQueue.length - 1 ? "Terminer →" : "Suivant →"}</button>
+                  </div>
+                  <div style={{ textAlign: "center", marginTop: 12, fontSize: 12, color: theme.textMuted }}>
+                    {studyLearnedIds.length} / {studyQueue.length} envoyée(s) en révision durant cette session
+                  </div>
+                </div>
+              );
+            })()
+          )}
           {/* VUE RÉVISION */}
           {view === "review" && (showSessionSummary ? (
             <div style={{ animation: "fadeUp 0.4s ease", background: theme.cardBg, borderRadius: 26, padding: 32, maxWidth: 700, margin: "0 auto", textAlign: "center", border: `1px solid ${theme.border}` }}>
@@ -6167,6 +6787,20 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           setEditReturnTo({ view: "review", cardId: currentCard.id });
                           startEdit(currentCard);
                         }} className="hov" title="Modifier cette fiche puis revenir à la révision" style={{ background: "#EEF2FF", color: "#4D6BFE", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: "1px solid #4D6BFE30", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>✏️ Modifier</button>
+                        {(() => {
+                          const _leech = analyzeLeech(currentCard);
+                          if (!_leech.isLeech) return null;
+                          return (
+                            <button
+                              onClick={() => handleRescueLeech(currentCard)}
+                              disabled={leechRescueLoading}
+                              className="hov btn-glow"
+                              title={`Cette fiche a échoué ${_leech.totalLapses}× — l'IA va la reformuler pour la rendre mémorisable`}
+                              style={{ background: "linear-gradient(135deg, #F59E0B, #DC2626)", color: "white", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, border: "none", cursor: leechRescueLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, boxShadow: "0 4px 12px rgba(245,158,11,0.35)" }}>
+                              {leechRescueLoading ? "⏳" : "🩹"} Sauver
+                            </button>
+                          );
+                        })()}
                         <button onClick={() => {
                           deleteExp(currentCard.id);
                           const newQueue = reviewQueue.filter(c => c.id !== currentCard.id);
@@ -6181,6 +6815,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             setShowSessionSummary(true);
                           }
                         }} className="hov" title="Supprimer cette fiche définitivement" style={{ background: "#FEF2F2", color: "#EF4444", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: "1px solid #EF444430", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>🗑️ Supprimer</button>
+                        {currentCard.paused && (
+                          <button onClick={() => unpauseCard(currentCard.id)} className="hov" title="Cette fiche est en pause — si tu l'as apprise, ajoute-la à la révision normale" style={{ background: "#F5F3FF", color: "#8B5CF6", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: "1px solid #8B5CF630", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>🔓 Ajouter à la révision</button>
+                        )}
                       </div>
                       <span style={{ background: tag.color + "22", color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
                     </div>
@@ -6314,7 +6951,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                 <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
                               </div>
                             )}
-                            {currentCard.example && (
+                            {currentCard.example && currentCard.type !== "audio" && !/exemples?/i.test(currentCard.back || "") && (
                               <div style={{ background: theme.inputBg, padding: "16px 20px", borderRadius: 16, marginTop: 24, fontSize: 15, color: theme.textMuted, fontStyle: "italic", borderLeft: `4px solid ${theme.highlight}`, position: "relative" }}>
                                 <div style={{ position: "absolute", top: -10, left: 16, background: theme.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme.highlight, letterSpacing: 1 }}>EXEMPLE</div>
                                 <div style={{ marginTop: 8 }}>
@@ -7151,6 +7788,21 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
           {view === "list" && (
             <div style={{ animation: "fadeUp 0.4s ease", background: listXRayMode ? "#020617" : "transparent", padding: listXRayMode ? "20px" : 0, borderRadius: listXRayMode ? 32 : 0, transition: "all 0.5s" }}>
+              {/* Bandeau : mode "Choisir" — navigation dans la vue fiche pour sélectionner des fiches en pause à ajouter à la révision */}
+              {pauseManagerModule && (
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10,
+                  background: "#8B5CF622", border: "1px solid #8B5CF655", borderRadius: 14, padding: "12px 16px", marginBottom: 16
+                }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#8B5CF6" }}>
+                    🔓 Choisis les fiches de « {pauseManagerModule} » à ajouter à la révision, puis valide en bas.
+                  </span>
+                  <button
+                    onClick={() => { setPauseManagerModule(null); setPauseManagerSelected(new Set()); setSelectionMode(false); setSelectedCards([]); setFilterLevel("Tous"); }}
+                    style={{ padding: "6px 12px", fontSize: 12, background: "none", border: "1px solid #8B5CF655", borderRadius: 8, color: "#8B5CF6", fontWeight: 700, cursor: "pointer" }}
+                  >Terminer</button>
+                </div>
+              )}
               {/* HEADER */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12, marginBottom: 20 }} className="dash-header">
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -7166,6 +7818,65 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <div style={{ fontSize: 20, fontWeight: 900, color: "#4D6BFE" }}>{masteredCount}</div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted }}>Maîtrisées</div>
                   </div>
+                  {/* ☑️ Basculer le mode Sélection — coche les fiches pour agir en masse (optimiser, fusionner, supprimer...) */}
+                  <button
+                    onClick={() => {
+                      setSelectionMode(p => {
+                        const next = !p;
+                        if (!next) setSelectedCards([]);
+                        return next;
+                      });
+                    }}
+                    title={selectionMode ? "Quitter le mode sélection" : "Sélectionner plusieurs fiches pour agir en masse"}
+                    className="hov"
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 14,
+                      border: `1px solid ${selectionMode ? theme.highlight : theme.border}`,
+                      background: selectionMode ? theme.highlight + "22" : theme.cardBg,
+                      color: selectionMode ? theme.highlight : theme.textMuted,
+                      fontWeight: 800,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    {selectionMode ? `☑️ ${selectedCards.length} sélectionnée(s)` : "☐ Sélection"}
+                  </button>
+                  {selectionMode && (
+                    <button
+                      onClick={() => setSelectedCards(prev => prev.length === filteredExps.length ? [] : filteredExps.map(e => e.id))}
+                      className="hov"
+                      style={{ padding: "10px 16px", borderRadius: 14, border: `1px solid ${theme.border}`, background: theme.cardBg, color: theme.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                    >
+                      {selectedCards.length === filteredExps.length ? "Aucune" : "Tout sélectionner"}
+                    </button>
+                  )}
+                  {/* ✨ Optimiser TOUTES les fiches du module courant (viser 100% rétention FSRS) */}
+                  <button
+                    onClick={handleOptimizeAllInModule}
+                    disabled={optimizeAllLoading || filterCat === "Toutes" || filteredExps.length === 0}
+                    title={filterCat === "Toutes" ? "Sélectionne d'abord un module précis" : `Optimiser toutes les fiches de "${filterCat}" pour viser 100% de rétention`}
+                    className="hov btn-glow"
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: 14,
+                      border: "none",
+                      background: (optimizeAllLoading || filterCat === "Toutes" || filteredExps.length === 0)
+                        ? "linear-gradient(135deg, #94a3b8, #64748b)"
+                        : "linear-gradient(135deg, #4D6BFE, #3451D1)",
+                      color: "white",
+                      fontWeight: 900,
+                      fontSize: 12,
+                      cursor: (optimizeAllLoading || filterCat === "Toutes" || filteredExps.length === 0) ? "not-allowed" : "pointer",
+                      display: "flex", alignItems: "center", gap: 8,
+                      boxShadow: "0 8px 20px rgba(77,107,254,0.35)"
+                    }}
+                  >
+                    {optimizeAllLoading
+                      ? `⏳ ${optimizeAllProgress.done}/${optimizeAllProgress.total}`
+                      : `✨ Optimiser le module`}
+                  </button>
                 </div>
               </div>
 
@@ -7178,28 +7889,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 boxShadow: "0 12px 40px rgba(77,107,254,0.1)", position: "sticky", top: 80, zIndex: 40,
                 transition: "all 0.4s ease"
               }}>
-                {/* Vue par défaut et boutons de basculement */}
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1 }}>
-                  {[
-                    { mode: "grid", icon: "▦", label: "Grille" },
-                    { mode: "graph", icon: "🔮", label: "Graphe" },
-                    { mode: "clusters", icon: "🧬", label: "Clusters" },
-                    { mode: "timeline", icon: "📅", label: "Timeline" }
-                  ].map(m => (
-                    <button key={m.mode} onClick={() => {
-                      if (m.mode === "graph") generateCardsGraph();
-                      else if (m.mode === "clusters") generateClusters();
-                      else if (m.mode === "timeline") generateTimeline();
-                      else setCardsViewMode(m.mode);
-                    }} className="hov"
-                      style={{
-                        padding: "8px 14px", borderRadius: 12, border: `1px solid ${cardsViewMode === m.mode ? theme.highlight : theme.border}`,
-                        background: cardsViewMode === m.mode ? theme.highlight + "18" : "transparent",
-                        color: cardsViewMode === m.mode ? theme.highlight : theme.textMuted,
-                        fontWeight: 700, fontSize: 12, cursor: "pointer"
-                      }}>{m.icon} {m.label}</button>
-                  ))}
-                </div>
                 {/* Toggle mobile — affiche / cache toute la zone "Actions rapides" */}
                 <button
                   type="button"
@@ -7221,53 +7910,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 {/* Actions rapides */}
                 <div className="fiches-actions-cluster" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
 
-                  {/* ── GOD HAND SELECTOR (Curseurs magiques) ── */}
-                  <div style={{ position: "relative", display: "flex", gap: 4, background: isDarkMode ? "rgba(0,0,0,0.3)" : "rgba(77,107,254,0.05)", borderRadius: 16, padding: 4, border: `1px solid ${theme.border}`, boxShadow: "inset 0 2px 4px rgba(77,107,254,0.1)" }}>
-                    {/* Sliding background */}
-                    <div style={{
-                      position: "absolute",
-                      top: 4, bottom: 4,
-                      left: 4 + ["contextual", "kebab", "swipe", "accordion"].indexOf(cardsActionMode) * (36 + 4),
-                      width: 36,
-                      background: "linear-gradient(135deg, #4D6BFE, #3451D1)",
-                      borderRadius: 12,
-                      transition: "left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)",
-                      boxShadow: "0 4px 12px rgba(77,107,254,0.4)",
-                      zIndex: 0
-                    }} />
-                    {[
-                      { mode: "contextual", icon: "⚡", title: "Magic Wand (Actions rapides)" },
-                      { mode: "kebab", icon: "⋮", title: "Deep Dive (Focus Menu)" },
-                      { mode: "swipe", icon: "↔", title: "Tinder (Swipe Pile)" },
-                      { mode: "accordion", icon: "=", title: "Zen (Liste compacte)" },
-                    ].map(m => (
-                      <button key={m.mode} onClick={() => { setCardsActionMode(m.mode); setCardKebabOpen(null); setCardAccordionOpen(null); }} title={m.title}
-                        style={{ position: "relative", zIndex: 1, width: 36, height: 36, borderRadius: 12, border: "none", cursor: "pointer", fontSize: 18, fontWeight: 800, background: "transparent", color: cardsActionMode === m.mode ? "white" : theme.textMuted, transition: "color 0.3s ease", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        {m.icon}
-                      </button>
-                    ))}
-                  </div>
 
-                  {/* 🏷️ Tags */}
-                  <button
-                    onMouseEnter={() => setListHoveredBtn("tags")} onMouseLeave={() => setListHoveredBtn(null)}
-                    onClick={() => { setListTagsDrawerOpen(!listTagsDrawerOpen); if (!listTagsDrawerOpen && Object.keys(cardsTags).length === 0) generateSemanticTags(); }}
-                    style={{ display: "flex", alignItems: "center", gap: listHoveredBtn === "tags" ? 6 : 0, padding: "8px 12px", borderRadius: 12, background: (listTagsDrawerOpen || listSelectedTag) ? theme.highlight : "transparent", border: `1px solid ${(listTagsDrawerOpen || listSelectedTag) ? theme.highlight : theme.border}`, color: (listTagsDrawerOpen || listSelectedTag) ? "white" : theme.textMuted, fontWeight: 600, fontSize: 13, cursor: "pointer", transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)", overflow: "hidden", whiteSpace: "nowrap" }}>
-                    <span style={{ fontSize: 16 }}>🏷️</span><span style={{ maxWidth: listHoveredBtn === "tags" || listSelectedTag ? 60 : 0, opacity: listHoveredBtn === "tags" || listSelectedTag ? 1 : 0, transition: "all 0.3s ease" }}>Tags</span>
-                  </button>
 
-                  {/* 🕐 Récentes (Slider de Niveau) */}
-                  <div
-                    onMouseEnter={() => setListHoveredBtn("level")} onMouseLeave={() => setListHoveredBtn(null)}
-                    style={{ display: "flex", alignItems: "center", gap: listHoveredBtn === "level" ? 6 : 0, padding: "0 12px", borderRadius: 12, background: listSortLevel !== null ? theme.highlight + "20" : "transparent", border: `1px solid ${listSortLevel !== null ? theme.highlight : theme.border}`, height: 38, transition: "all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)", overflow: "hidden", whiteSpace: "nowrap" }}
-                    title="Glisser pour trier par niveau. Double-cliquer pour réinitialiser."
-                    onDoubleClick={() => setListSortLevel(null)}
-                  >
-                    <span style={{ fontSize: 16, cursor: "pointer" }}>{listSortLevel !== null ? `N${listSortLevel}` : "📊"}</span>
-                    <div style={{ maxWidth: listHoveredBtn === "level" || listSortLevel !== null ? 100 : 0, opacity: listHoveredBtn === "level" || listSortLevel !== null ? 1 : 0, transition: "all 0.3s ease", display: "flex", alignItems: "center" }}>
-                      <input type="range" min="0" max="7" value={listSortLevel !== null ? listSortLevel : 7} onChange={e => setListSortLevel(+e.target.value)} style={{ width: 60, accentColor: theme.highlight, cursor: "ew-resize" }} />
-                    </div>
-                  </div>
 
                   {/* ── SÉLECTEUR DE TRI ── */}
                   <select value={cardsSort} onChange={e => setCardsSort(e.target.value)}
@@ -7481,7 +8125,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                         </div>
                         <div style={{ fontWeight: 800, marginBottom: 12, color: theme.text, fontSize: 14 }}>Filtrer par niveau</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => (
+                          {["Tous", "Nouvelles", "En retard", "Maîtrisées", "En pause"].map((l) => (
                             <button key={l} onClick={() => startTransition(() => setFilterLevel(l))} style={{ padding: "8px 14px", borderRadius: 100, fontSize: 12, fontWeight: 700, cursor: "pointer", background: filterLevel === l ? theme.highlight : theme.inputBg, color: filterLevel === l ? "white" : theme.text, border: `1px solid ${filterLevel === l ? theme.highlight : theme.border}`, whiteSpace: "nowrap" }}>{l}</button>
                           ))}
                         </div>
@@ -7500,7 +8144,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       </div>
                       <div style={{ fontWeight: 800, marginBottom: 12, color: theme.text, fontSize: 16 }}>Filtrer par niveau</div>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-                        {["Tous", "Nouvelles", "En retard", "Maîtrisées"].map((l) => (
+                        {["Tous", "Nouvelles", "En retard", "Maîtrisées", "En pause"].map((l) => (
                           <button key={l} onClick={() => startTransition(() => setFilterLevel(l))} style={{ padding: "10px 16px", borderRadius: 100, fontSize: 13, fontWeight: 700, cursor: "pointer", background: filterLevel === l ? theme.highlight : theme.inputBg, color: filterLevel === l ? "white" : theme.text, border: `1px solid ${filterLevel === l ? theme.highlight : theme.border}` }}>{l}</button>
                         ))}
                       </div>
@@ -7671,7 +8315,21 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               {/* VUE GRILLE (défaut) */}
               {cardsViewMode === "grid" && (
                 <>
+                  {/* Barre de restructuration Rétro-Ingénierie (mode sélection) */}
+                  {selectionMode && (
+                    <BulkRestructureBar
+                      selectedCards={expressions.filter(e => selectedCards.includes(e.id))}
+                      allCards={filteredExps}
+                      setSelectedCardIds={setSelectedCards}
+                      setExpressions={setExpressions}
+                      callClaude={callClaude}
+                      showToast={showToast}
+                      theme={theme}
+                      isDarkMode={isDarkMode}
+                    />
+                  )}
                   {filteredExps.length === 0 ? (
+
                     <div style={{ background: theme.cardBg, border: `2px dashed ${theme.border}`, borderRadius: 32, padding: "80px 20px", textAlign: "center" }}>
                       <div style={{ fontSize: 64, marginBottom: 16 }}>📭</div>
                       <h3 style={{ color: theme.text, fontSize: 20, fontWeight: 800 }}>Aucune fiche trouvée</h3>
@@ -7765,21 +8423,45 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             transition: "all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)"
                           }}
                         >
+                          {selectionMode && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedCards(prev => prev.includes(exp.id) ? prev.filter(id => id !== exp.id) : [...prev, exp.id]);
+                              }}
+                              title={isSelected ? "Désélectionner" : "Sélectionner"}
+                              style={{
+                                position: "absolute", top: 14, left: 14, zIndex: 30,
+                                width: 24, height: 24, borderRadius: 8,
+                                border: `2px solid ${isSelected ? theme.highlight : theme.border}`,
+                                background: isSelected ? theme.highlight : (isDarkMode ? "rgba(0,0,0,0.4)" : "rgba(255,255,255,0.8)"),
+                                color: "white", fontSize: 13, fontWeight: 900,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                cursor: "pointer", boxShadow: isSelected ? `0 0 0 4px ${theme.highlight}30` : "none",
+                                transition: "all 0.15s ease"
+                              }}
+                            >
+                              {isSelected ? "✓" : ""}
+                            </button>
+                          )}
                           <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                            <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor }}>{exp.category}</span>
+                            <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: catColor + "22", color: catColor, marginLeft: selectionMode ? 30 : 0, transition: "margin 0.15s ease" }}>{exp.category}</span>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ background: tag.color + "22", color: tag.color, padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>{tag.icon} {tag.label}</span>
                               <span style={{ width: 8, height: 8, borderRadius: "50%", background: lvlColor }} /><span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'" }}>N{lvl}</span>
                             </div>
                           </div>
                           <div style={{ padding: "0 24px", flex: 1, cursor: "pointer" }} onClick={(e) => {
-                            if (isAccordionMode && !isAccordionOpen) {
+                            if (selectionMode) {
+                              e.stopPropagation();
+                              setSelectedCards(prev => prev.includes(exp.id) ? prev.filter(id => id !== exp.id) : [...prev, exp.id]);
+                            } else if (isAccordionMode && !isAccordionOpen) {
                               setCardAccordionOpen(exp.id);
                             } else if (e.shiftKey || selectedCards.length > 0) {
                               e.stopPropagation();
                               setSelectedCards(prev => prev.includes(exp.id) ? prev.filter(id => id !== exp.id) : [...prev, exp.id]);
                             }
-                          }} title={selectedCards.length > 0 ? "Sélectionner / Désélectionner" : "Maj+Clic pour sélectionner"}>
+                          }} title={selectionMode ? "Cliquer pour sélectionner / désélectionner" : (selectedCards.length > 0 ? "Sélectionner / Désélectionner" : "Maj+Clic pour sélectionner")}>
                             <div style={{ fontSize: 20, fontWeight: 800, color: theme.highlight, marginBottom: (isAccordionMode && !isAccordionOpen) ? 0 : 12, lineHeight: 1.3 }}>{exp.front}</div>
                             {(!isAccordionMode || isAccordionOpen) && (
                               <>
@@ -7791,7 +8473,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                     <GodTierContent text={exp.back} theme={theme} isDarkMode={isDarkMode} />
                                   )}
                                 </div>
-                                {exp.example && (
+                                {exp.example && !/exemples?/i.test(exp.back || "") && (
                                   <div style={{ background: theme.inputBg, padding: "12px", borderRadius: 12, fontSize: 13, color: theme.textMuted, fontStyle: "italic", borderLeft: "3px solid #4D6BFE", marginBottom: 16 }}>
                                     <span style={{ color: "#4D6BFE", fontSize: 10 }}>// exemple</span><br />
                                     <div style={{ marginTop: 8 }}>
@@ -7824,7 +8506,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                 </span>
                                 {/* Primaires : label visible */}
                                 <button onClick={() => startEdit(exp)} className="hov" style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.cardBg, color: theme.textMuted, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✏️ Éditer</button>
-                                <button onClick={() => { startEdit(exp); setAiPrompt(exp.front); }} className="hov" style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 8, border: `1px solid ${theme.border}`, background: theme.cardBg, color: "#7B93FF", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>✨ IA</button>
+                                <button onClick={() => handleOptimizeOneCard(exp)} className="hov btn-glow" style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 10px", borderRadius: 8, border: "none", background: "linear-gradient(135deg, #4D6BFE, #3451D1)", color: "white", fontSize: 12, fontWeight: 800, cursor: "pointer", boxShadow: "0 4px 12px rgba(77,107,254,0.35)" }} title="Optimiser cette fiche (viser 100% rétention FSRS)">✨ Optimiser</button>
                                 {/* Danger */}
                                 <button onClick={() => deleteExp(exp.id)} className="hov" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${theme.border}`, background: "#FEF2F2", color: "#EF4444", fontSize: 13, cursor: "pointer" }} title="Supprimer">🗑️</button>
                                 {/* Secondaires dans kebab */}
@@ -7832,18 +8514,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                   <button onClick={() => setCardKebabOpen(isKebabOpen ? null : exp.id)} className="hov" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${theme.border}`, background: isKebabOpen ? theme.highlight : theme.cardBg, color: isKebabOpen ? "white" : theme.textMuted, fontSize: 16, cursor: "pointer", fontWeight: 900 }} title="Plus d'actions">•••</button>
                                   {isKebabOpen && (
                                     <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: isDarkMode ? "#0D1535" : "#FFFFFF", border: `1px solid ${theme.border}`, borderRadius: 14, padding: 6, zIndex: 50, minWidth: 190, boxShadow: "0 8px 32px rgba(77,107,254,0.1)" }}>
-                                      <div style={{ fontSize: 10, fontWeight: 800, color: theme.textMuted, padding: "4px 10px 2px", letterSpacing: 1 }}>ACTIONS IA</div>
+                                      <div style={{ fontSize: 10, fontWeight: 800, color: theme.textMuted, padding: "4px 10px 2px", letterSpacing: 1 }}>ACTIONS</div>
                                       {[
-                                        { icon: "⚗️", label: "Générer variantes", fn: () => generateVariants(exp) },
                                         { icon: "🔊", label: "Écouter", fn: () => addToPlaylist(exp) },
-                                      ].map(a => (
-                                        <button key={a.label} onClick={() => { a.fn(); setCardKebabOpen(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", background: "none", border: "none", borderRadius: 8, color: theme.text, fontSize: 13, cursor: "pointer", textAlign: "left" }} onMouseEnter={e => e.currentTarget.style.background = theme.inputBg} onMouseLeave={e => e.currentTarget.style.background = "none"}>{a.icon} {a.label}</button>
-                                      ))}
-                                      <div style={{ height: 1, background: theme.border, margin: "4px 0" }} />
-                                      <div style={{ fontSize: 10, fontWeight: 800, color: theme.textMuted, padding: "4px 10px 2px", letterSpacing: 1 }}>GESTION</div>
-                                      {[
-                                        { icon: isFortress ? "🛡️" : "🔓", label: isFortress ? "Protégée" : "Protéger", fn: () => toggleFortress(exp.id) },
-                                        { icon: "⚔️", label: "Lancer un Duel", fn: () => startDuel(exp) },
                                       ].map(a => (
                                         <button key={a.label} onClick={() => { a.fn(); setCardKebabOpen(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 10px", background: "none", border: "none", borderRadius: 8, color: theme.text, fontSize: 13, cursor: "pointer", textAlign: "left" }} onMouseEnter={e => e.currentTarget.style.background = theme.inputBg} onMouseLeave={e => e.currentTarget.style.background = "none"}>{a.icon} {a.label}</button>
                                       ))}
@@ -7864,17 +8537,14 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                   {isKebabOpen && (
                                     <div style={{ position: "absolute", bottom: "calc(100% + 6px)", right: 0, background: isDarkMode ? "#0D1535" : "#FFFFFF", border: `1px solid ${theme.border}`, borderRadius: 16, padding: 6, zIndex: 50, minWidth: 200, boxShadow: "0 8px 40px rgba(77,107,254,0.2)" }}>
                                       {[
-                                        { icon: "✨", label: "Améliorer avec l'IA", fn: () => { startEdit(exp); setAiPrompt(exp.front); }, color: "#7B93FF" },
-                                        { icon: "⚗️", label: "Générer variantes", fn: () => generateVariants(exp), color: "#4D6BFE" },
-                                        { icon: "⚔️", label: "Lancer un Duel", fn: () => startDuel(exp), color: "#4D6BFE" },
+                                        { icon: "✨", label: "Optimiser la fiche", fn: () => handleOptimizeOneCard(exp), color: "#4D6BFE" },
                                       ].map(a => (
-                                        <button key={a.label} onClick={() => { a.fn(); setCardKebabOpen(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", background: "none", border: "none", borderRadius: 10, color: a.color || theme.text, fontSize: 13, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = theme.inputBg} onMouseLeave={e => e.currentTarget.style.background = "none"}><span style={{ fontSize: 15 }}>{a.icon}</span> {a.label}</button>
+                                        <button key={a.label} onClick={() => { a.fn(); setCardKebabOpen(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", background: "none", border: "none", borderRadius: 10, color: a.color || theme.text, fontSize: 13, cursor: "pointer", fontWeight: 800 }} onMouseEnter={e => e.currentTarget.style.background = theme.inputBg} onMouseLeave={e => e.currentTarget.style.background = "none"}><span style={{ fontSize: 15 }}>{a.icon}</span> {a.label}</button>
                                       ))}
                                       <div style={{ height: 1, background: theme.border, margin: "4px 0" }} />
                                       {[
                                         { icon: "✏️", label: "Éditer", fn: () => startEdit(exp), color: theme.text },
                                         { icon: "🔊", label: "Écouter", fn: () => addToPlaylist(exp), color: theme.text },
-                                        { icon: isFortress ? "🛡️" : "🔓", label: isFortress ? "Protégée" : "Protéger", fn: () => toggleFortress(exp.id), color: theme.text },
                                       ].map(a => (
                                         <button key={a.label} onClick={() => { a.fn(); setCardKebabOpen(null); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", background: "none", border: "none", borderRadius: 10, color: a.color, fontSize: 13, cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.background = theme.inputBg} onMouseLeave={e => e.currentTarget.style.background = "none"}><span style={{ fontSize: 15 }}>{a.icon}</span> {a.label}</button>
                                       ))}
@@ -7927,6 +8597,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                 {/* Contenu glissant */}
                                 <div style={{ padding: "10px 16px", background: theme.inputBg, display: "flex", alignItems: "center", gap: 8, transform: `translateX(${swipeDx}px)`, transition: swipeDx === 0 ? "transform 0.3s ease" : "none", position: "relative" }}>
                                   <span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, fontFamily: "'JetBrains Mono'", flex: 1 }}>{lvl >= 7 ? "✅ Maîtrisée" : `📅 ${formatDate(exp.nextReview)}`}</span>
+                                  <button onClick={() => handleOptimizeOneCard(exp)} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "linear-gradient(135deg, #4D6BFE, #3451D1)", color: "white", fontSize: 11, fontWeight: 800, cursor: "pointer", boxShadow: "0 3px 10px rgba(77,107,254,0.3)" }}>✨ Optimiser</button>
                                   <button onClick={() => startEdit(exp)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.cardBg, color: theme.textMuted, fontSize: 11, cursor: "pointer" }}>✏️ Éditer</button>
                                   <button onClick={() => { setCmdPaletteCard(exp); setCmdPaletteOpen(true); setCmdPaletteQuery(""); }} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${theme.border}`, background: theme.cardBg, color: theme.textMuted, fontSize: 11, cursor: "pointer" }}>⌘ Plus</button>
                                   <span style={{ fontSize: 10, color: theme.textMuted, opacity: 0.6 }}>← glisser →</span>
@@ -7944,16 +8615,13 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                 <div style={{ padding: "12px 16px 14px", background: theme.inputBg, borderTop: `1px solid ${theme.border}`, animation: "fadeUp 0.18s ease" }}>
                                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
                                     {[
+                                      { icon: "✨", label: "Optimiser", fn: () => handleOptimizeOneCard(exp), primary: true },
                                       { icon: "✏️", label: "Éditer", fn: () => startEdit(exp) },
-                                      { icon: "✨", label: "IA", fn: () => { startEdit(exp); setAiPrompt(exp.front); } },
                                       { icon: "🔊", label: "Son", fn: () => addToPlaylist(exp) },
-                                      { icon: "⚔️", label: "Duel", fn: () => startDuel(exp) },
-                                      { icon: "⚗️", label: "Variantes", fn: () => generateVariants(exp) },
-                                      { icon: isFortress ? "🛡️" : "🔓", label: isFortress ? "Protégée" : "Protéger", fn: () => toggleFortress(exp.id) },
                                       { icon: "⌘", label: "Palette", fn: () => { setCmdPaletteCard(exp); setCmdPaletteOpen(true); setCmdPaletteQuery(""); } },
                                       { icon: "🗑️", label: "Suppr.", fn: () => deleteExp(exp.id), danger: true },
                                     ].map(a => (
-                                      <button key={a.label} onClick={a.fn} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px", borderRadius: 8, border: `1px solid ${a.danger ? "#FECACA" : theme.border}`, background: a.danger ? "#FEF2F2" : theme.cardBg, color: a.danger ? "#EF4444" : theme.textMuted, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+                                      <button key={a.label} onClick={a.fn} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, padding: "8px 4px", borderRadius: 8, border: a.primary ? "none" : `1px solid ${a.danger ? "#FECACA" : theme.border}`, background: a.primary ? "linear-gradient(135deg, #4D6BFE, #3451D1)" : (a.danger ? "#FEF2F2" : theme.cardBg), color: a.primary ? "white" : (a.danger ? "#EF4444" : theme.textMuted), cursor: "pointer", fontSize: 11, fontWeight: a.primary ? 800 : 600, boxShadow: a.primary ? "0 4px 12px rgba(77,107,254,0.35)" : "none" }}>
                                         <span style={{ fontSize: 17 }}>{a.icon}</span>{a.label}
                                       </button>
                                     ))}
@@ -8157,7 +8825,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                                   )}
                                 </>
                               )}
-                              {expandedCard.example && (
+                              {expandedCard.example && !/exemples?/i.test(expandedCard.back || "") && (
                                 <div style={{ marginTop: 16, padding: "12px 16px", background: theme.cardBg, borderRadius: 12, fontSize: 14, color: theme.textMuted, fontStyle: "italic", borderLeft: `3px solid ${catColor}` }}>
                                   <GodTierContent text={expandedCard.example} theme={theme} isDarkMode={isDarkMode} />
                                 </div>
@@ -8226,6 +8894,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           <span style={{ fontSize: 11, color: theme.highlight, fontWeight: 700 }}>{selectedCards.length} sél.</span>
                         </div>
                       </div>
+                      {pauseManagerModule && (
+                        <button onClick={() => releaseSelectedPaused(new Set(selectedCards))} className="hov" style={{ background: "transparent", border: "none", color: "#10B981", cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 16 }}>🔓</span> <span className="hide-mobile">Ajouter à la révision</span>
+                        </button>
+                      )}
                       <button onClick={godHandGenerateStory} className="hov" style={{ background: "transparent", border: "none", color: theme.text, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <span style={{ fontSize: 16 }}>🧬</span> <span className="hide-mobile">Histoire</span>
                       </button>
@@ -8235,10 +8908,16 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       <button onClick={godHandMerge} className="hov" style={{ background: "transparent", border: "none", color: theme.text, cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <span style={{ fontSize: 16 }}>🔀</span> <span className="hide-mobile">Fusionner</span>
                       </button>
+                      <button onClick={handleOptimizeSelected} disabled={optimizeAllLoading} className="hov" style={{ background: "transparent", border: "none", color: "#4D6BFE", cursor: optimizeAllLoading ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, opacity: optimizeAllLoading ? 0.5 : 1 }} title="Optimiser les fiches sélectionnées (viser 100% rétention FSRS)">
+                        <span style={{ fontSize: 16 }}>✨</span> <span className="hide-mobile">{optimizeAllLoading ? `${optimizeAllProgress.done}/${optimizeAllProgress.total}` : "Optimiser"}</span>
+                      </button>
+                      <button onClick={handleRestructureSelectedRetroEngineering} disabled={optimizeAllLoading} className="hov" style={{ background: "transparent", border: "none", color: "#10B981", cursor: optimizeAllLoading ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6, opacity: optimizeAllLoading ? 0.5 : 1 }} title="Restructurer les fiches au format Rétro-Ingénierie Sémantique">
+                        <span style={{ fontSize: 16 }}>⚡</span> <span className="hide-mobile">Restructurer Rétro-Ingénierie</span>
+                      </button>
                       <button onClick={godHandDelete} className="hov" style={{ background: "transparent", border: "none", color: "#EF4444", cursor: "pointer", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
                         <span style={{ fontSize: 16 }}>🗑️</span> <span className="hide-mobile">Incinérer</span>
                       </button>
-                      <button onClick={() => setSelectedCards([])} style={{ background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, cursor: "pointer", marginLeft: 8 }}>✕</button>
+                      <button onClick={() => { setSelectedCards([]); setSelectionMode(false); if (pauseManagerModule) { setPauseManagerModule(null); setPauseManagerSelected(new Set()); setFilterLevel("Tous"); } }} style={{ background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", color: theme.textMuted, cursor: "pointer", marginLeft: 8 }}>✕</button>
                     </div>
                   )}
                 </>
@@ -8557,7 +9236,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "badges" && (() => {
             // ── Données de progression pour les barres ──
             const mastered = expressions.filter(e => e.level >= 7).length;
-            const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+            const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
             // ── Système de rareté ──
             const RARITY = {
@@ -9245,65 +9924,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-            VUE PORTFOLIO ASTRAL
-        ══════════════════════════════════════════════════════════════════ */}
-          {view === "portfolio" && (
-            <div style={{ animation: "fadeUp 0.6s cubic-bezier(0.16, 1, 0.3, 1)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 32, flexWrap: "wrap", gap: 12 }}>
-                <div>
-                  <h1 style={{ fontSize: 32, fontWeight: 900, background: "linear-gradient(135deg, #4D6BFE, #7B93FF)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: 0, letterSpacing: "-1px" }}>📈 Tableau de Bord & Acquis</h1>
-                  <p style={{ color: theme.textMuted, marginTop: 6, fontSize: 15 }}>La vue globale de votre progression et de vos accomplissements.</p>
-                </div>
-              </div>
-              
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20, marginBottom: 32 }}>
-                {/* Cartes de statistiques globales */}
-                <HoloCard theme={theme} glowColor="#10B981" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>📚</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>{expressions.length}</div>
-                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Fiches totales générées</div>
-                </HoloCard>
-                
-                <HoloCard theme={theme} glowColor="#4D6BFE" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>🎓</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>
-                    {expressions.filter(e => e.level >= 3).length}
-                  </div>
-                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Fiches maîtrisées (Niveau 3+)</div>
-                </HoloCard>
-
-                <HoloCard theme={theme} glowColor="#F59E0B" style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `1px solid ${theme.border}` }}>
-                  <div style={{ fontSize: 32, marginBottom: 12 }}>📦</div>
-                  <div style={{ fontSize: 28, fontWeight: 900, color: theme.text }}>
-                    {new Set(expressions.map(e => e.category)).size}
-                  </div>
-                  <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 700 }}>Modules actifs</div>
-                </HoloCard>
-              </div>
-
-              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 28, border: `1px solid ${theme.border}` }}>
-                <h2 style={{ fontSize: 20, fontWeight: 900, color: theme.text, marginTop: 0, marginBottom: 20 }}>Top Modules (Progression)</h2>
-                {Array.from(new Set(expressions.map(e => e.category))).slice(0, 5).map(cat => {
-                  const catExps = expressions.filter(e => e.category === cat);
-                  const mastered = catExps.filter(e => e.level >= 3).length;
-                  const pct = catExps.length ? Math.round((mastered / catExps.length) * 100) : 0;
-                  return (
-                    <div key={cat} style={{ marginBottom: 16 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 800, marginBottom: 6 }}>
-                        <span style={{ color: theme.text }}>{cat || "Sans catégorie"}</span>
-                        <span style={{ color: theme.highlight }}>{pct}%</span>
-                      </div>
-                      <div style={{ width: "100%", height: 8, background: theme.inputBg, borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ width: `${pct}%`, height: "100%", background: "linear-gradient(90deg, #4D6BFE, #7B93FF)", borderRadius: 4 }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ══════════════════════════════════════════════════════════════════
             VUE CATEGORIES
         ══════════════════════════════════════════════════════════════════ */}
           {view === "categories" && (
@@ -9313,16 +9933,22 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, marginBottom: 8 }}>◉ Gestion des Modules</h1>
                   <p style={{ color: theme.textMuted }}>Statistiques avancées, prérequis, planification et coaching par module.</p>
                 </div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
-                  <button onClick={() => setCatsViewMode("cards")} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode === "cards" ? theme.highlight : theme.cardBg, color: catsViewMode === "cards" ? "white" : theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>📇 Cartes</button>
-                  <button onClick={() => { setCatsViewMode("table"); computeCatsStats(); }} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode === "table" ? theme.highlight : theme.cardBg, color: catsViewMode === "table" ? "white" : theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>📊 Tableau</button>
-                  <button onClick={generateTimeline} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode === "timeline" ? theme.highlight : theme.cardBg, color: catsViewMode === "timeline" ? "white" : theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>📅 Timeline</button>
-                  <button onClick={detectPrerequisites} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: theme.cardBg, color: theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>🔗 Prérequis</button>
-                  <button onClick={() => setCatsViewMode("prep")} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: catsViewMode === "prep" ? theme.highlight : theme.cardBg, color: catsViewMode === "prep" ? "white" : theme.textMuted, border: `1px solid ${theme.border}`, fontWeight: 600, fontSize: 13 }}>🎯 Prep-Mode</button>
-                  <button onClick={() => { computeCatsStats(); checkModuleAlerts(); generateModuleReport(); }} className="hov" style={{ padding: "8px 14px", borderRadius: 10, background: "#4D6BFE", color: "white", border: "none", fontWeight: 700, fontSize: 13 }}>
-                    🧠 Analyse IA
-                  </button>
-                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }} />
+              </div>
+
+              {/* Dosage automatique des fiches en pause */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, background: "#8B5CF612", border: "1px solid #8B5CF640", borderRadius: 14, padding: "12px 16px", marginBottom: 20 }}>
+                <span style={{ fontSize: 13, color: theme.text }}>
+                  🔁 <strong>Dosage quotidien :</strong> chaque jour, les fiches en pause les plus anciennes sont libérées automatiquement pour ne pas s'accumuler.
+                </span>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.textMuted, fontWeight: 700 }}>
+                  Fiches/jour :
+                  <input
+                    type="number" min={0} max={200} value={pauseDripQuota}
+                    onChange={(e) => setPauseDripQuota(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    style={{ width: 60, padding: "6px 8px", background: theme.inputBg, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 12 }}
+                  />
+                </label>
               </div>
 
               {/* Alertes globales */}
@@ -9391,8 +10017,10 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   }).map(cat => {
                     const isFav = catsFavorites.includes(cat.name);
                     const catExps = expressions.filter(e => e.category === cat.name);
-                    const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7).length;
+                    const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
                     const mastered = catExps.filter(e => e.level >= 7).length;
+                    const pausedCount = catExps.filter(e => e.paused).length;
+                    const newUnpausedCount = catExps.filter(e => !e.paused && (e.level || 0) === 0).length;
                     // Progression = moyenne d'avancement de chaque fiche (niveau/7), pas seulement les fiches 100% maîtrisées
                     const pct = catExps.length ? Math.round((catExps.reduce((s, e) => s + Math.min(7, e.level || 0), 0) / (catExps.length * 7)) * 100) : 0;
                     const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
@@ -9421,16 +10049,44 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           </div>
                           <span style={{ fontSize: 13, fontWeight: 800, color: catColor, minWidth: 40 }}>{pct}%</span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: theme.textMuted }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme.textMuted, flexWrap: "wrap", gap: 4 }}>
                           <span>{catExps.length} fiches</span>
                           <span>{mastered} maîtrisées</span>
                           <span style={{ color: dueCount > 0 ? "#EF4444" : theme.textMuted }}>{dueCount} en retard</span>
+                          {pausedCount > 0 && <span style={{ color: "#F59E0B" }}>⏸ {pausedCount} en pause</span>}
                         </div>
-                        <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          <button onClick={() => { startReview(cat.name); }} className="hov" style={{ padding: "6px 14px", background: "#4D6BFE", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>Réviser</button>
-                          <button onClick={() => { setFilterCat(cat.name); setView("list"); }} className="hov" style={{ padding: "6px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 8, fontWeight: 700 }}>📁 Voir les fiches</button>
-                          <button onClick={() => { startReview(cat.name, "exam"); }} className="hov" style={{ padding: "6px 14px", background: "#F59E0B", color: "white", border: "none", borderRadius: 8, fontWeight: 700 }}>🎯 Réviser pour examen</button>
-                          <button onClick={() => analyzeLearningCurve(cat.name)} className="hov" style={{ padding: "6px 14px", background: theme.inputBg, border: `1px solid ${theme.border}`, color: theme.text, borderRadius: 8, fontWeight: 700 }}>📈 Courbe</button>
+                        <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                          <button onClick={() => { startReview(cat.name, "exam"); }} className="hov" title="Réviser pour examen (toutes les fiches du module)" style={{ padding: "3px 8px", fontSize: 11, background: "#4D6BFE", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>🎯 Réviser</button>
+                          {pausedCount === 0 ? (
+                            <button
+                              onClick={() => pauseNewCards(cat.name)}
+                              disabled={newUnpausedCount === 0}
+                              className="hov"
+                              title="Met en pause les fiches pas encore apprises (level 0) pour ne pas les voir en retard"
+                              style={{ padding: "3px 8px", fontSize: 11, background: newUnpausedCount === 0 ? theme.inputBg : "#F59E0B", color: newUnpausedCount === 0 ? theme.textMuted : "white", border: "none", borderRadius: 6, fontWeight: 600, cursor: newUnpausedCount === 0 ? "default" : "pointer" }}
+                            >⏸ Pause nouvelles</button>
+                          ) : (
+                            <>
+                              <button onClick={() => reviewPausedCards(cat.name)} className="hov" title="Étudier (sans notation) les fiches en pause, puis les envoyer en révision une fois apprises" style={{ padding: "3px 8px", fontSize: 11, background: "#8B5CF6", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>📖 Apprendre en pause ({pausedCount})</button>
+                              <button onClick={() => releaseAllPaused(cat.name)} className="hov" style={{ padding: "3px 8px", fontSize: 11, background: "#10B981", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>🔓 Libérer ({pausedCount})</button>
+                              <button
+                                onClick={() => {
+                                  setPauseManagerModule(cat.name);
+                                  setPauseManagerSelected(new Set());
+                                  setFilterCat(cat.name);
+                                  setFilterLevel("En pause");
+                                  setSearchQuery("");
+                                  setSelectionMode(true);
+                                  setSelectedCards([]);
+                                  setView("list");
+                                }}
+                                className="hov"
+                                title="Parcourir les fiches en pause et choisir celles à ajouter à la révision"
+                                style={{ padding: "3px 8px", fontSize: 11, background: "none", color: theme.textMuted, border: `1px solid ${theme.border}`, borderRadius: 6, fontWeight: 600 }}
+                              >Choisir...</button>
+                            </>
+                          )}
+                          <button onClick={() => { if (window.confirm(`Supprimer toutes les fiches de "${cat.name}" ? Cette action est irréversible.`)) { setExpressions(prev => prev.filter(e => e.category !== cat.name)); showToast(`Toutes les fiches de "${cat.name}" supprimées.`); } }} className="hov" title="Supprimer toutes les fiches de ce module" style={{ padding: "3px 8px", fontSize: 11, background: "none", color: "#EF4444", border: `1px solid #EF444455`, borderRadius: 6, fontWeight: 600 }}>🗑️ Supprimer tout</button>
                         </div>
                         <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme.textMuted }}>
                           <span>🗓️ Date d'examen :</span>
@@ -9628,11 +10284,37 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             <span style={{ fontSize: 12 }}>🧠</span> LLM: Groq (Llama-3.3)
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 12 }}>⏱️</span> Session: {Math.floor(appSessionTime / 60)}m {appSessionTime % 60}s
+            <span style={{ fontSize: 12 }}>⏱️</span> Session: {Math.floor(appSessionTime / 60)}m
           </span>
         </div>
         <div style={{ display: "flex", gap: 16, alignItems: "center", height: "100%" }}>
           <span style={{ opacity: 0.6 }}>MémoMaître God Mode • {expressions.length} fiches</span>
+          <button
+            className="hov"
+            title="Forcer la synchronisation : aligne cet appareil sur le serveur (supprime les fiches fantômes)"
+            onClick={async () => {
+              showToast("Réparation de la synchro en cours…", "info");
+              const res = await repairSyncNow();
+              if (res?.ok) {
+                showToast(`Synchro OK — ${res.local} fiche(s)${res.remote != null ? ` (serveur : ${res.remote})` : ""}`, "success");
+              } else {
+                showToast("Réparation impossible : " + (res?.reason || "erreur inconnue"), "error");
+              }
+            }}
+            style={{
+              background: "none",
+              border: `1px solid ${isDarkMode ? "#30363D" : "var(--mm-border)"}`,
+              borderRadius: 6,
+              padding: "2px 8px",
+              fontSize: 11,
+              fontWeight: 700,
+              color: "inherit",
+              opacity: 0.75,
+              cursor: "pointer",
+            }}
+          >
+            🩺 Réparer la synchro
+          </button>
           <div style={{ width: 1, height: 12, background: isDarkMode ? "#30363D" : "var(--mm-border)" }} />
           <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
 

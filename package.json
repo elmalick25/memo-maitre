@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test src/tests/*.test.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -47,7 +48,8 @@
     "react-player": "^3.4.0",
     "react-syntax-highlighter": "^16.1.1",
     "react-virtuoso": "^4.18.7",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@babel/plugin-proposal-decorators": "^8.0.2",

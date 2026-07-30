@@ -3,35 +3,30 @@ import { Briefcase, Settings, MapPin, DollarSign, Code, Search, CheckCircle, Che
 
 export default function PhantomRecruiter({
   callClaude,
-  theme,
   isDarkMode,
   onBack
 }) {
-  const [config, setConfig] = useState(null);
-  const [isConfiguring, setIsConfiguring] = useState(false);
+  const [config, setConfig] = useState(() => {
+    const saved = localStorage.getItem('astrale_phantom_config');
+    return saved ? JSON.parse(saved) : null;
+  });
   
-  const [form, setForm] = useState({
-    title: "",
-    salary: "",
-    location: "Remote",
-    stack: "React, Node.js"
+  const [form, setForm] = useState(() => {
+    const saved = localStorage.getItem('astrale_phantom_config');
+    return saved ? JSON.parse(saved) : {
+      title: "",
+      salary: "",
+      location: "Remote",
+      stack: "React, Node.js"
+    };
   });
 
+  const [isConfiguring, setIsConfiguring] = useState(() => !localStorage.getItem('astrale_phantom_config'));
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState("");
   const [offers, setOffers] = useState([]);
   const [expandedOffer, setExpandedOffer] = useState(null);
-
-  useEffect(() => {
-    const savedConfig = localStorage.getItem('astrale_phantom_config');
-    if (savedConfig) {
-      const parsed = JSON.parse(savedConfig);
-      setConfig(parsed);
-      setForm(parsed);
-    } else {
-      setIsConfiguring(true);
-    }
-  }, []);
+  const [copied, setCopied] = useState(false);
 
   const saveConfig = () => {
     localStorage.setItem('astrale_phantom_config', JSON.stringify(form));
@@ -44,6 +39,7 @@ export default function PhantomRecruiter({
     setLoading(true);
     setLoadingStep("1/3 Scan du marché de l'emploi en temps réel...");
     
+    const currentDate = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
     const prompt = `Tu es un chasseur de têtes IA (Recruteur Fantôme) d'élite.
 Mon profil cible :
 - Poste recherché : ${config.title}
@@ -52,7 +48,7 @@ Mon profil cible :
 - Prétentions salariales : ${config.salary}
 
 Ta mission :
-1. UTILISE IMPÉRATIVEMENT LA RECHERCHE WEB (Google Search) pour trouver 3 VRAIES offres d'emploi RÉCENTES (mai 2026) qui correspondent à ces critères exacts.
+1. UTILISE IMPÉRATIVEMENT LA RECHERCHE WEB (Google Search) pour trouver 3 VRAIES offres d'emploi RÉCENTES (${currentDate}) qui correspondent à ces critères exacts.
 IL EST STRICTEMENT INTERDIT D'INVENTER DES OFFRES OU DES ENTREPRISES.
 2. Pour chaque offre RÉELLE, génère un dossier de candidature contenant :
    - Une lettre de motivation percutante (pas de blabla classique, directe et orientée résultats).
@@ -103,6 +99,8 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
 
   const handleCopy = (text) => {
     navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   if (isConfiguring) {
@@ -218,8 +216,8 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
                       <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                           <h4 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#3B82F6', textTransform: 'uppercase', letterSpacing: 1 }}>📝 Lettre de Motivation</h4>
-                          <button onClick={() => handleCopy(offer.cover_letter)} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700 }}>
-                            <Copy size={14} /> Copier
+                          <button onClick={() => handleCopy(offer.cover_letter)} style={{ background: 'none', border: 'none', color: copied ? '#10B981' : '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, transition: 'color 0.2s' }}>
+                            {copied ? <CheckCircle size={14} /> : <Copy size={14} />} {copied ? "Copié !" : "Copier"}
                           </button>
                         </div>
                         <div style={{ background: isDarkMode ? 'rgba(77,107,254,0.2)' : 'var(--mm-bg-elev)', padding: 20, borderRadius: 16, fontSize: 14, lineHeight: 1.7, color: isDarkMode ? 'var(--mm-border-strong)' : 'var(--mm-fg)', whiteSpace: 'pre-wrap', border: isDarkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(77,107,254,0.05)' }}>

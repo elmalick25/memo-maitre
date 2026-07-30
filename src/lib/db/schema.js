@@ -1,11 +1,15 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb'
 
 export const mySchema = appSchema({
-  version: 2,
+  version: 4,
   tables: [
     tableSchema({
       name: 'expressions',
       columns: [
+        // FIX (bug de persistance) : "paused" n'était jamais sauvegardé nulle part
+        // (ni base locale, ni Firebase) → une fiche mise en pause redevenait active
+        // au premier reload ou à la première sync avec un autre appareil.
+        { name: 'paused', type: 'boolean', isOptional: true },
         { name: 'front', type: 'string' },
         { name: 'back', type: 'string' },
         { name: 'example', type: 'string', isOptional: true },
@@ -13,6 +17,7 @@ export const mySchema = appSchema({
         { name: 'type', type: 'string', isOptional: true },
         { name: 'image_url', type: 'string', isOptional: true },
         { name: 'audio_url', type: 'string', isOptional: true },
+        { name: 'audio_id', type: 'string', isOptional: true },
         { name: 'layers', type: 'string', isOptional: true }, // JSON array
         { name: 'level', type: 'number', isOptional: true },
         { name: 'next_review', type: 'string', isOptional: true },

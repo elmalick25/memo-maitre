@@ -5,6 +5,7 @@ import './styles/design-system.css'
 import './styles/responsive.css'
 import './styles/mobile-ux-fix.css'
 import './styles/mobile-redesign.css'
+import './styles/practice-tabs.css'
 import App from './App.jsx'
 
 // 🛡️ Hardening v2 — bootstrap des modules transverses
@@ -55,8 +56,8 @@ if (typeof window !== "undefined" && window.visualViewport) {
       window.dispatchEvent(new CustomEvent("astral-keyboard", { detail: { open } }))
     }
   }
-  window.visualViewport.addEventListener("resize", sync)
-  window.visualViewport.addEventListener("scroll", sync)
+  window.visualViewport.addEventListener("resize", sync, { passive: true })
+  window.visualViewport.addEventListener("scroll", sync, { passive: true })
 }
 
 import { registerSW } from 'virtual:pwa-register'

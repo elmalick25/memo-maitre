@@ -18,5 +18,30 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      // v2 → v3 : ajout de "paused" (fiches mises en pause) — colonne manquante,
+      // migration additive uniquement, aucune donnée existante n'est touchée.
+      toVersion: 3,
+      steps: [
+        addColumns({
+          table: 'expressions',
+          columns: [
+            { name: 'paused', type: 'boolean', isOptional: true },
+          ],
+        }),
+      ],
+    },
+    {
+      // v3 → v4 : ajout de "audio_id" manquant dans le schéma
+      toVersion: 4,
+      steps: [
+        addColumns({
+          table: 'expressions',
+          columns: [
+            { name: 'audio_id', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 })

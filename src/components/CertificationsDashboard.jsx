@@ -690,6 +690,13 @@ Renvoie UNIQUEMENT un JSON: { "certs": [ {
 
   useEffect(() => { loadCerts(false); }, [loadCerts]);
 
+  // 🔧 Réinitialise la pagination quand l'utilisateur change de filtre / recherche /
+  // onglet — sinon "Afficher plus" reste bloqué sur un ancien état et peut masquer
+  // des résultats fraîchement chargés.
+  useEffect(() => {
+    setVisibleCertsCount(15);
+  }, [priorityFilter, query, liveQuery, tab, certs.length, liveResults.length]);
+
   const toggleDone = (name) => {
     setCompleted(prev => {
       const next = prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name];
@@ -826,87 +833,6 @@ Analyse l'adéquation ATS. Renvoie UNIQUEMENT JSON:
                 <span>Résultats web pour <b>"{liveQuery}"</b> {liveLoading ? '(recherche…)' : `· ${liveResults.length} certifs trouvées`}</span>
               </div>
             )}
-
-            {/* ── "J'ai vu une certif" : identification depuis indice flou ── */}
-            <div className="cd-hint-panel">
-              <div className="cd-hint-head">
-                <Sparkles size={16} />
-                <div>
-                  <div className="cd-hint-title">J'ai vu une certif, dis-m'en plus</div>
-                  <div className="cd-hint-sub">Colle un lien (TikTok, LinkedIn, YouTube…), un nom approximatif ou une description — l'IA identifie la certif officielle.</div>
-                </div>
-              </div>
-              <div className="cd-hint-row">
-                <input
-                  className="cd-input"
-                  value={hintInput}
-                  onChange={e => setHintInput(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') identifyFromHint(); }}
-                  placeholder='ex: "certif Google IA vue sur TikTok" ou un lien…'
-                />
-                <button
-                  className="cd-cta"
-                  onClick={identifyFromHint}
-                  disabled={hintLoading || hintInput.trim().length < 3}
-                >
-                  {hintLoading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-                  Identifier
-                </button>
-              </div>
-              {hintError && <div className="cd-error" style={{ marginTop: 12 }}><Zap size={14} /> {hintError}</div>}
-              {hintCert && (
-                <div style={{ marginTop: 14 }}>
-                  <CertCard
-                    cert={hintCert}
-                    onToggleDone={toggleDone}
-                    done={completed.includes(hintCert.name)}
-                    onPrepare={onPrepareCertif}
-                  />
-                  {Array.isArray(hintCert.alternatives) && hintCert.alternatives.length > 0 && (
-                    <div className="cd-hint-alts">
-                      Autres pistes : {hintCert.alternatives.join(' · ')}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* ── Veille active : tendances de la semaine ── */}
-            <div className="cd-trending">
-              <div className="cd-trending-head">
-                <div>
-                  <div className="cd-trending-title">🔥 Tendances de la semaine</div>
-                  <div className="cd-trending-sub">Certifs qui buzzent en ce moment (TikTok, LinkedIn, Reddit, annonces officielles).</div>
-                </div>
-                <button onClick={() => loadTrending(true)} disabled={trendingLoading} className="cd-refresh-btn cd-refresh-btn-small">
-                  {trendingLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                  Regénérer
-                </button>
-              </div>
-              {trendingError && <div className="cd-error" style={{ marginTop: 8 }}><Zap size={14} /> {trendingError}</div>}
-              {trendingLoading && !trending.length && (
-                <div className="cd-loading" style={{ padding: '24px 0' }}>
-                  <Loader2 className="animate-spin" size={28} />
-                  <p>Scan des sources en cours…</p>
-                </div>
-              )}
-              {trending.length > 0 && (
-                <div className="cd-trending-strip">
-                  {trending.map((t, i) => (
-                    <div key={(t.name || '') + i} className="cd-trending-card">
-                      <div className="cd-trending-cat">{t.category || 'Général'}</div>
-                      <div className="cd-trending-name">{t.name}</div>
-                      <div className="cd-trending-provider">{t.provider}</div>
-                      <div className="cd-trending-reason">⚡ {t.trendReason || t.why}</div>
-                      <div className="cd-trending-foot">
-                        <span className={`cd-pill ${t.free ? 'is-free' : ''}`}>{t.free ? 'Gratuit' : (t.cost || 'Payant')}</span>
-                        {t.url && <a href={t.url} target="_blank" rel="noreferrer" className="cd-trending-link">Voir →</a>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {(loading || liveLoading) && (
               <div className="cd-loading">

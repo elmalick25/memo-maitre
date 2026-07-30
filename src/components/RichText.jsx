@@ -19,6 +19,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import AudioPlayButton from "./AudioPlayButton";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Langages reconnus
@@ -201,9 +202,9 @@ function preprocessContent(content) {
   // Listes "• texte" → "- texte"
   text = text.replace(/^[•·]\s+/gm, "- ");
 
-  // Sauts de ligne avant les titres emoji
-  const SECTION_EMOJI = /^([\u{1F300}-\u{1FFFF}✅🚫💬🎬🔄⚙️💡💻⚠️📌🔑⚡🌟❗❓✨🗣📋🧭🔁])\s+([A-ZÀÂÆÇÉÈÊËÎÏÔŒÙÛÜŸ][^:\n]*:?)/gmu;
-  text = text.replace(SECTION_EMOJI, (_, emoji, title) => `\n**${emoji} ${title}**`);
+  // Normalisation des sections Rétro-Ingénierie (⚙️ 1., 🔍 2., ⚠️ 3., 💻 4.) en H3 Markdown
+  const SECTION_HEADER = /^(?:###\s*|\*\*)?([\u{1F300}-\u{1FFFF}⚙️🔍⚠️💻💡📌🔑⚡🗣]\s*\d?\s*\.?\s*[^:\n]+)(?:\*\*)?$/gmu;
+  text = text.replace(SECTION_HEADER, "\n### $1\n");
 
   return text;
 }
@@ -290,20 +291,23 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                         {langLabel}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={async () => { try { await navigator.clipboard.writeText(codeString); } catch { /* noop */ } }}
-                      style={{
-                        background: isDarkMode ? "rgba(123,147,255,0.12)" : "rgba(77,107,254,0.10)",
-                        border: `1px solid ${isDarkMode ? "rgba(123,147,255,0.25)" : "rgba(77,107,254,0.25)"}`,
-                        color: isDarkMode ? "#B9C8FF" : "#4D6BFE",
-                        fontSize: 10, fontWeight: 700, padding: "3px 9px",
-                        borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
-                      }}
-                      title="Copier le code"
-                    >
-                      ⧉ Copier
-                    </button>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <AudioPlayButton text={codeString} size="sm" isDarkMode={isDarkMode} />
+                      <button
+                        type="button"
+                        onClick={async () => { try { await navigator.clipboard.writeText(codeString); } catch { /* noop */ } }}
+                        style={{
+                          background: isDarkMode ? "rgba(123,147,255,0.12)" : "rgba(77,107,254,0.10)",
+                          border: `1px solid ${isDarkMode ? "rgba(123,147,255,0.25)" : "rgba(77,107,254,0.25)"}`,
+                          color: isDarkMode ? "#B9C8FF" : "#4D6BFE",
+                          fontSize: 10, fontWeight: 700, padding: "3px 9px",
+                          borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+                        }}
+                        title="Copier le code"
+                      >
+                        ⧉ Copier
+                      </button>
+                    </div>
                   </div>
                   <SyntaxHighlighter
                     className="code-scroll-wrapper"
@@ -336,22 +340,103 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
               );
             }
 
-            // Inline code
+          // Inline code avec bouton d'écoute audio TTS automatique pour chaque phrase exemple en anglais
+            const rawInlineText = Array.isArray(children) ? children.join("") : String(children || "");
+            const cleanText = rawInlineText.replace(/`+/g, "").trim();
+            const isEnglishPhrase = cleanText.length >= 3 && /[a-zA-Z]/.test(cleanText);
+
             return (
-              <code
-                style={{
-                  background: isDarkMode ? "rgba(77,107,254,0.14)" : "rgba(77,107,254,0.08)",
-                  color: isDarkMode ? "#7B93FF" : "#4D6BFE",
-                  padding: "2px 6px",
-                  borderRadius: 5,
-                  fontFamily: "'JetBrains Mono','Fira Code',monospace",
-                  fontSize: "0.88em",
-                  fontWeight: 600,
-                }}
-                {...props}
-              >
-                {children}
-              </code>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "middle" }}>
+                <code
+                  style={{
+                    background: isDarkMode ? "rgba(77,107,254,0.16)" : "rgba(77,107,254,0.08)",
+                    color: isDarkMode ? "#99ABFF" : "#3B52D4",
+                    padding: "2px 7px",
+                    borderRadius: 6,
+                    fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                    fontSize: "0.88em",
+                    fontWeight: 600,
+                    border: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(77,107,254,0.18)"}`,
+                  }}
+                  {...props}
+                >
+                  {children}
+                </code>
+                {isEnglishPhrase && (
+                  <AudioPlayButton text={cleanText} size="sm" showLabel={false} isDarkMode={isDarkMode} />
+                )}
+              </span>
+            );
+          },
+
+          h1({ children }) {
+            const headingText = String(children || "");
+            return (
+              <h1 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.35em", fontWeight: 800, margin: "14px 0 8px 0", color: isDarkMode ? "#99ABFF" : "#3B52D4" }}>
+                <span>{children}</span>
+                <AudioPlayButton text={headingText} size="md" isDarkMode={isDarkMode} />
+              </h1>
+            );
+          },
+          h2({ children }) {
+            const headingText = String(children || "");
+            return (
+              <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.15em", fontWeight: 800, margin: "12px 0 6px 0", color: isDarkMode ? "#B9C8FF" : "#4D6BFE" }}>
+                <span>{children}</span>
+                <AudioPlayButton text={headingText} size="sm" isDarkMode={isDarkMode} />
+              </h2>
+            );
+          },
+          h3({ children }) {
+            const str = Array.isArray(children) ? children.join("") : String(children || "");
+            let themeStyle = {
+              bg: isDarkMode ? "rgba(77,107,254,0.12)" : "rgba(77,107,254,0.07)",
+              border: isDarkMode ? "rgba(77,107,254,0.3)" : "rgba(77,107,254,0.2)",
+              color: isDarkMode ? "#99ABFF" : "#3B52D4",
+            };
+            if (str.includes("⚙️") || /décomposition/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.08)",
+                border: isDarkMode ? "rgba(99,102,241,0.35)" : "rgba(99,102,241,0.25)",
+                color: isDarkMode ? "#C7D2FE" : "#4338CA",
+              };
+            } else if (str.includes("🔍") || /comparatif/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(14,165,233,0.14)" : "rgba(14,165,233,0.08)",
+                border: isDarkMode ? "rgba(14,165,233,0.35)" : "rgba(14,165,233,0.25)",
+                color: isDarkMode ? "#BAE6FD" : "#0369A1",
+              };
+            } else if (str.includes("⚠️") || /anti-pattern/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(245,158,11,0.14)" : "rgba(245,158,11,0.08)",
+                border: isDarkMode ? "rgba(245,158,11,0.35)" : "rgba(245,158,11,0.25)",
+                color: isDarkMode ? "#FDE68A" : "#B45309",
+              };
+            } else if (str.includes("💻") || /exemples/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(16,185,129,0.14)" : "rgba(16,185,129,0.08)",
+                border: isDarkMode ? "rgba(16,185,129,0.35)" : "rgba(16,185,129,0.25)",
+                color: isDarkMode ? "#A7F3D0" : "#047857",
+              };
+            }
+
+            return (
+              <div style={{
+                background: themeStyle.bg,
+                border: `1px solid ${themeStyle.border}`,
+                borderRadius: 10,
+                padding: "8px 14px",
+                margin: "18px 0 10px 0",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontSize: "0.98em",
+                fontWeight: 800,
+                color: themeStyle.color,
+                boxShadow: isDarkMode ? "0 2px 8px rgba(0,0,0,0.15)" : "0 2px 8px rgba(15,23,42,0.03)",
+              }}>
+                <span>{children}</span>
+              </div>
             );
           },
 
@@ -359,16 +444,16 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           strong({ children }) {
             return (
               <strong style={{
-                display: "block", marginTop: 10, marginBottom: 4,
-                fontSize: 13, fontWeight: 800,
-                color: isDarkMode ? "#7B93FF" : "#4D6BFE",
-                letterSpacing: "0.02em",
+                display: "inline",
+                fontWeight: 700,
+                color: isDarkMode ? "#93A8FF" : "#3B52D4",
+                letterSpacing: "0.01em",
               }}>{children}</strong>
             );
           },
-          ul({ children }) { return <ul style={{ margin: "6px 0", paddingLeft: 20, lineHeight: 1.65 }}>{children}</ul>; },
-          ol({ children }) { return <ol style={{ margin: "6px 0", paddingLeft: 20, lineHeight: 1.65 }}>{children}</ol>; },
-          li({ children }) { return <li style={{ marginBottom: 3 }}>{children}</li>; },
+          ul({ children }) { return <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.65 }}>{children}</ul>; },
+          ol({ children }) { return <ol style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.65 }}>{children}</ol>; },
+          li({ children }) { return <li style={{ marginBottom: 6, lineHeight: 1.65 }}>{children}</li>; },
 
           // ── VRAIS tableaux ───────────────────────────────────────────
           table({ children }) {

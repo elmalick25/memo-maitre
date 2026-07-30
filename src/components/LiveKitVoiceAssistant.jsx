@@ -1,32 +1,56 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
+  StartAudio,
   useVoiceAssistant,
   useTranscriptions,
-  StartAudio,
-  useAudioPlayback,
+  useRoomContext,
+  useLocalParticipant,
 } from '@livekit/components-react';
+import { RoomEvent, MediaDeviceFailure, Track, LocalAudioTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { SignJWT } from 'jose';
-import { armIosAudio } from '../lib/iosVoiceHardening';
+import { armIosAudio, whenMicPermissionReady, forcePlayAndRecordSession, consumePrewarmedMicStream } from '../lib/iosVoiceHardening';
 
-const LIVEKIT_AGENT_NAME = "assistant-53a";
+const LIVEKIT_AGENT_NAME = import.meta.env.VITE_LIVEKIT_AGENT_NAME || "assistant-53a";
 
-export default function LiveKitVoiceAssistant({ onClose, onTranscriptionsUpdate, onStateChange, systemPrompt, studentName }) {
+export default function LiveKitVoiceAssistant({ onClose, onTranscriptionsUpdate, onStateChange, systemPrompt, studentName, isDarkMode }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState(null);
+  const [micReady, setMicReady] = useState(false);
+  // 🎤 FIX iPhone Chrome (raccourci) : le hack "armIosAudio" seul ne suffit
+  // pas de façon fiable sur tous les moteurs mobiles pour le micro. Le SON
+  // est géré par le composant officiel <StartAudio> plus bas (testé/maintenu
+  // par LiveKit lui-même — plus fiable qu'un code fait main). Il ne reste
+  // que le MICRO à surveiller nous-mêmes : LiveKit n'a pas d'équivalent
+  // "bouton officiel" pour ça, donc on garde un filet de sécurité custom,
+  // basé sur leurs évènements officiels (RoomEvent.MediaDevicesError).
+  const [micBlocked, setMicBlocked] = useState(false);
+  const [micErrorReason, setMicErrorReason] = useState("");
 
-  // 🔑 MOBILE FIX #1 — Appel synchrone à armIosAudio() au montage du composant.
-  // Ce composant est monté depuis un onClick utilisateur, donc on est encore dans
-  // la même chaîne d'événements gestuels. C'est le moment idéal pour déverrouiller
-  // l'AudioContext iOS/Android avant que les flux WebRTC n'arrivent.
+
+  // 🔑 MOBILE FIX — armIosAudio() a normalement déjà été appelé DANS le
+  // user-gesture qui monte ce composant (onStart / AgentVoiceBar). Ici on
+  // le rappelle pour couvrir les cas où le composant serait monté sans
+  // geste préalable (StrictMode, re-mount…). Puis on attend explicitement
+  // la permission micro avant d'ouvrir la connexion LiveKit : sans ça,
+  // sur iPhone Chrome / raccourci écran d'accueil, LiveKit appelle
+  // getUserMedia hors-geste et échoue silencieusement.
   useEffect(() => {
-    try { armIosAudio(); } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    try { armIosAudio(); } catch (_e) { /* ignore */ }
+    let cancelled = false;
+    whenMicPermissionReady()
+      .then(() => { if (!cancelled) setMicReady(true); })
+      .catch(() => { if (!cancelled) setMicReady(true); });
+    // Fallback timeout : si le prewarm n'a jamais été appelé (desktop, etc.)
+    // on ouvre quand même la connexion après 300ms.
+    const t = setTimeout(() => { if (!cancelled) setMicReady(true); }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
   }, []);
 
   useEffect(() => {
+    let active = true;
     const fetchToken = async () => {
       try {
         const apiKey = import.meta.env.VITE_LIVEKIT_API_KEY;
@@ -37,16 +61,14 @@ export default function LiveKitVoiceAssistant({ onClose, onTranscriptionsUpdate,
         }
 
         const roomName = `nova-${Math.random().toString(36).slice(2, 10)}`;
-        // Use the real student name in the participant identity if available
         const participantName = studentName
           ? studentName.toLowerCase().replace(/\s+/g, "-") + `-${Math.floor(Math.random() * 10000)}`
           : `user-${Math.floor(Math.random() * 100000)}`;
 
-        // Build the base prompt - always start with the user's provided prompt
         const basePrompt = systemPrompt ||
           `You are NOVA — a GOD-TIER Astral English Coach. Your vibe: warm, magnetic, endlessly encouraging. You treat every student like your closest friend having a breakthrough moment.
 
-CORRECTION STYLE: If the student makes a grammar mistake, gently note the fix in parentheses at the end of your reply. One correction max per reply.
+CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly — no parentheses, no brackets, no "small correction:", nothing that interrupts the conversation. If the student makes a mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply, then keep the conversation flowing exactly as if nothing happened. The mistake will be turned into a flashcard automatically behind the scenes.
 
 CRITICAL RULES:
 - Replies 1–3 sentences MAX.
@@ -55,12 +77,16 @@ CRITICAL RULES:
 - NEVER give lists or bullet points.
 - Speak like a real human coach.`;
 
-        // Inject the student name into the prompt
         const finalPrompt = studentName
           ? `${basePrompt}\n\nIMPORTANT: The student's name is "${studentName}". Use their name naturally in the conversation (especially at the start and occasionally during the session to make it personal). Never forget their name.`
           : basePrompt;
 
         const secret = new TextEncoder().encode(apiSecret);
+        const metadataString = JSON.stringify({
+          instructions: finalPrompt,
+          studentName: studentName || null,
+        });
+
         const jwt = await new SignJWT({
           video: {
             roomJoin: true,
@@ -69,14 +95,12 @@ CRITICAL RULES:
             canSubscribe: true,
             canPublishData: true,
           },
+          metadata: metadataString,
           roomConfig: {
             agents: [
               {
                 agent_name: LIVEKIT_AGENT_NAME,
-                metadata: JSON.stringify({
-                  instructions: finalPrompt,
-                  studentName: studentName || null,
-                }),
+                metadata: metadataString,
               },
             ],
           },
@@ -88,16 +112,22 @@ CRITICAL RULES:
           .setExpirationTime('2h')
           .sign(secret);
 
-        setToken(jwt);
+        if (active) {
+          setToken(jwt);
+        }
       } catch (err) {
-        console.error("Error fetching LiveKit token:", err);
-        setError(err.message);
+        if (active) {
+          console.error("Error fetching LiveKit token:", err);
+          setError(err.message);
+        }
       }
     };
     fetchToken();
+    return () => {
+      active = false;
+    };
   }, [systemPrompt, studentName]);
 
-  // Erreur : on informe le parent ou on ferme direct
   useEffect(() => {
     if (error && onClose) {
       alert("Erreur de connexion LiveKit: " + error);
@@ -109,109 +139,326 @@ CRITICAL RULES:
     return null;
   }
 
+  // ℹ️ SON : on utilise <StartAudio>, le composant OFFICIEL LiveKit — il ne
+  // s'affiche QUE si le navigateur bloque la lecture, et se cache tout seul
+  // dès que ça marche. C'est exactement leur solution pour ce problème,
+  // testée sur tous les navigateurs (iOS Safari ET Chrome inclus) — plus
+  // fiable que n'importe quel hack maison. On le sort du conteneur caché
+  // (position:fixed + pointerEvents:"auto") pour qu'il soit réellement
+  // tapable, sinon il resterait piégé derrière pointerEvents:"none".
+  //
+  // MICRO : on n'utilise PLUS le prop `audio={true}` de <LiveKitRoom>, qui
+  // active le micro de façon implicite/asynchrone et peut échouer en silence
+  // (course avec la connexion WebRTC, perte de l'activation utilisateur sur
+  // Safari/Firefox après plusieurs sauts async). À la place, `audio={false}`
+  // et LiveKitMicWatchdog appelle lui-même `setMicrophoneEnabled(true)` dès
+  // la connexion, avec plusieurs tentatives automatiques (retries) avant de
+  // proposer le bouton manuel — la permission a déjà été acquise dans le
+  // geste initial (armIosAudio), donc ces tentatives n'ont pas besoin d'un
+  // nouveau geste utilisateur pour réussir.
   return (
-    <>
-      {/* 🔊 MOBILE FIX #2 — LiveKitRoom visible hors-flux pour que StartAudio
-          puisse afficher son bouton de déblocage audio si nécessaire.
-          On le garde dans un div invisible mais PAS display:none (display:none
-          empêcherait StartAudio de rendre son bouton visible). */}
-      <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999, pointerEvents: "none" }}>
-        <LiveKitRoom
-          serverUrl={import.meta.env.VITE_LIVEKIT_URL}
-          token={token}
-          connect={true}
-          audio={true}
-          video={false}
-          onDisconnected={onClose}
-          style={{ display: "contents" }}
-        >
-          {/* RoomAudioRenderer lit et joue l'audio de l'agent */}
-          <RoomAudioRenderer volume={1.0} />
-
-          {/* 🔊 MOBILE FIX #2 — StartAudio : LiveKit affiche automatiquement
-              un bouton "Activer l'audio" UNIQUEMENT si le navigateur bloque
-              la lecture. Sur iOS/Android sans geste, c'est essentiel. */}
-          <StartAudio label="🔊 Activer l'audio du coach" />
-
-          {/* 🔊 MOBILE FIX #3 — Bannière visible si l'audio est encore bloqué
-              après le montage (filet de sécurité). */}
-          <AudioUnblockBanner />
-
-          <LiveKitStateSync
-            onTranscriptionsUpdate={onTranscriptionsUpdate}
-            onStateChange={onStateChange}
+    <div style={{ position: "fixed", width: 0, height: 0, overflow: "hidden", pointerEvents: "none" }}>
+      <LiveKitRoom
+        serverUrl={import.meta.env.VITE_LIVEKIT_URL}
+        token={token}
+        connect={micReady}
+        audio={false}
+        video={false}
+        onDisconnected={onClose}
+        style={{ display: "contents" }}
+      >
+        <RoomAudioRenderer volume={1.0} />
+        <LiveKitStateSync
+          onTranscriptionsUpdate={onTranscriptionsUpdate}
+          onStateChange={onStateChange}
+        />
+        <LiveKitMicWatchdog
+          onMicBlockedChange={setMicBlocked}
+          onMicErrorReason={setMicErrorReason}
+        />
+        <StartAudio
+          label="🔊 Appuie ici pour activer le son de NOVA"
+          style={startAudioStyle}
+        />
+        {micBlocked && (
+          <LiveKitMicBanner
+            reason={micErrorReason}
+            isDarkMode={isDarkMode}
+            onRetry={() => {
+              setMicBlocked(false);
+            }}
           />
-        </LiveKitRoom>
-      </div>
-    </>
+        )}
+      </LiveKitRoom>
+    </div>
   );
 }
 
-// ── Bannière de déblocage audio ───────────────────────────────────────────────
-// Utilise useAudioPlayback() (hook LiveKit) pour détecter si le navigateur
-// bloque encore la sortie audio. Si oui, affiche un bouton flottant très visible.
-function AudioUnblockBanner() {
-  const { canPlayAudio, startAudio } = useAudioPlayback();
+const startAudioStyle = {
+  position: "fixed",
+  left: "50%",
+  bottom: "max(24px, env(safe-area-inset-bottom))",
+  transform: "translateX(-50%)",
+  zIndex: 9999,
+  pointerEvents: "auto",
+  border: "none",
+  borderRadius: 12,
+  padding: "12px 16px",
+  fontSize: 14,
+  fontWeight: 700,
+  cursor: "pointer",
+  background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
+  color: "white",
+  fontFamily: "system-ui, sans-serif",
+  boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+};
 
-  if (canPlayAudio) return null;
+// ── LiveKitMicRefresh ────────────────────────────────────────────────────
+// SUPPRIMÉ intentionnellement. L'ancien cycle off→on 600ms après connexion
+// cassait l'abonnement du track côté agent (l'agent gardait le SID de
+// l'ancien track unpublié → plus aucun audio ne lui parvenait) sur
+// Chrome/Android/desktop, et créait aussi une course avec le prewarm iOS.
+// La nouvelle stratégie : on publie DIRECTEMENT le MediaStreamTrack déjà
+// obtenu dans le user-gesture (voir LiveKitMicWatchdog + consumePrewarmedMicStream)
+// — plus besoin de re-cycler quoi que ce soit.
+
+
+
+// ── LiveKitMicWatchdog ───────────────────────────────────────────────────
+// 1) Surveille les erreurs OFFICIELLES LiveKit (RoomEvent.MediaDevicesError +
+//    MediaDeviceFailure.getFailure()) : permission refusée, device absent,
+//    device pris par une autre appli. Ces cas-là, on ne peut rien retenter
+//    automatiquement — il faut l'utilisateur (bannière).
+// 2) NOUVEAU — active le micro NOUS-MÊMES dès la connexion, avec plusieurs
+//    tentatives automatiques (au lieu de compter sur le prop implicite
+//    `audio={true}` de <LiveKitRoom>, source du bug "le micro ne s'est pas
+//    activé automatiquement"). La permission ayant déjà été acquise dans le
+//    geste utilisateur initial (armIosAudio → getUserMedia), ces tentatives
+//    n'ont pas besoin d'un nouveau geste pour réussir : la plupart des échecs
+//    silencieux se résolvent dès le 2e ou 3e essai, sans jamais déranger
+//    l'utilisateur. La bannière manuelle ne s'affiche qu'en tout dernier
+//    recours, si les 4 tentatives échouent.
+function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
+  const room = useRoomContext();
+  const { isMicrophoneEnabled, localParticipant } = useLocalParticipant();
+
+  useEffect(() => {
+    if (!room) return;
+    const onMediaError = (error) => {
+      const failure = MediaDeviceFailure.getFailure(error);
+      const reason =
+        failure === MediaDeviceFailure.PermissionDenied
+          ? "Le micro a été refusé. Autorise-le dans les réglages de Chrome (ou du site) puis réessaie."
+          : failure === MediaDeviceFailure.NotFound
+            ? "Aucun micro détecté sur cet appareil."
+            : failure === MediaDeviceFailure.DeviceInUse
+              ? "Le micro est utilisé par une autre application."
+              : "Le micro n'a pas pu démarrer.";
+      onMicErrorReason(reason);
+      onMicBlockedChange(true);
+    };
+    room.on(RoomEvent.MediaDevicesError, onMediaError);
+    return () => room.off(RoomEvent.MediaDevicesError, onMediaError);
+  }, [room, onMicBlockedChange, onMicErrorReason]);
+
+  // Activation explicite + retries automatiques dès que la room est connectée.
+  useEffect(() => {
+    if (!room || !localParticipant) return;
+    let cancelled = false;
+
+    // Délais CUMULÉS entre tentatives (ms) — laisse le temps à WebRTC de
+    // se stabiliser sans pour autant faire attendre l'utilisateur longtemps :
+    // essai immédiat, puis +500ms, +1200ms, +2200ms (≈ 4 tentatives en 2.2s).
+    const CUMULATIVE_DELAYS_MS = [0, 500, 1200, 2200];
+
+    const ensureMicOn = async () => {
+      // 🎤 CHEMIN PRINCIPAL — on publie DIRECTEMENT le MediaStreamTrack
+      // pré-obtenu dans le user-gesture (armIosAudio). Zéro nouvelle
+      // getUserMedia → zéro course, zéro track "vivant mais silencieux".
+      // C'est le fix qui règle le cas "je parle mais ça passe pas".
+      const prewarmed = consumePrewarmedMicStream();
+      if (prewarmed) {
+        try {
+          const mst = prewarmed.getAudioTracks()[0];
+          if (mst && mst.readyState === "live") {
+            // ⚠️ userProvidedTrack: TRUE — crucial. Sinon LiveKit s'approprie
+            // le MediaStreamTrack et peut le restart/re-getUserMedia en interne,
+            // ce qui casse la piste sur iOS Chrome (raccourci) et perturbe la
+            // négociation WebRTC → même l'audio ENTRANT de l'agent devient muet.
+            const localTrack = new LocalAudioTrack(mst, undefined, true);
+            await localParticipant.publishTrack(localTrack, {
+              source: Track.Source.Microphone,
+            });
+            forcePlayAndRecordSession();
+            onMicBlockedChange(false);
+            return;
+          }
+        } catch (e) {
+          console.warn("[LiveKitMicWatchdog] publishTrack (prewarm) échoué, fallback setMicrophoneEnabled :", e?.message);
+          try { prewarmed.getTracks().forEach((t) => t.stop()); } catch (_e) { /* ignore */ }
+        }
+      }
+
+      // FALLBACK — pas de stream pré-obtenu (desktop sans user-gesture qui
+      // aurait pré-armé, ou prewarm refusé). On garde la stratégie de
+      // retries via setMicrophoneEnabled, comme avant.
+      for (let i = 0; i < CUMULATIVE_DELAYS_MS.length; i++) {
+        if (cancelled) return;
+        if (i > 0) {
+          await new Promise((r) => setTimeout(r, CUMULATIVE_DELAYS_MS[i] - CUMULATIVE_DELAYS_MS[i - 1]));
+        }
+        if (cancelled) return;
+        if (localParticipant.isMicrophoneEnabled) {
+          forcePlayAndRecordSession();
+          onMicBlockedChange(false);
+          return;
+        }
+        try {
+          await localParticipant.setMicrophoneEnabled(true);
+        } catch (e) {
+          console.warn(`[LiveKitMicWatchdog] setMicrophoneEnabled tentative ${i + 1} échouée :`, e?.message);
+        }
+        if (!cancelled && localParticipant.isMicrophoneEnabled) {
+          // 🔊 Re-forcer la catégorie "play-and-record" PILE au moment où le
+          // micro devient réellement actif : c'est ce moment précis (pas le
+          // clic initial) qui a le plus de chances de faire "tenir" la bonne
+          // catégorie de session audio côté OS sur iOS.
+          forcePlayAndRecordSession();
+          onMicBlockedChange(false);
+          return;
+        }
+      }
+      // 4 tentatives automatiques épuisées : seulement là, on sollicite l'utilisateur.
+      if (!cancelled && !localParticipant.isMicrophoneEnabled) {
+        onMicErrorReason("Le micro n'a pas pu s'activer automatiquement (plusieurs tentatives ont échoué).");
+        onMicBlockedChange(true);
+      }
+    };
+
+    const onConnected = () => { ensureMicOn(); };
+    room.on(RoomEvent.Connected, onConnected);
+    if (room.state === "connected") onConnected();
+
+    return () => {
+      cancelled = true;
+      room.off(RoomEvent.Connected, onConnected);
+    };
+  }, [room, localParticipant, onMicBlockedChange, onMicErrorReason]);
+
+  // Dès que le micro redevient actif, on efface l'alerte.
+  useEffect(() => {
+    if (isMicrophoneEnabled) onMicBlockedChange(false);
+  }, [isMicrophoneEnabled, onMicBlockedChange]);
+
+  return null;
+}
+
+// ── republishMicWithFreshStream ─────────────────────────────────────────
+// Stratégie robuste anti "micro actif mais silencieux" :
+//  1) Unpublish + stop du track courant (device stale).
+//  2) Fresh getUserMedia (nouveau handle OS → nouveau routage device).
+//  3) Publish via new LocalAudioTrack(..., userProvidedTrack:true) — LiveKit
+//     ne touche pas au cycle de vie du track, pas de restart interne, pas
+//     de course avec WebRTC.
+// Utilisé à la fois par l'auto-récupération (silence détecté) et le bouton
+// manuel "Réessayer".
+async function republishMicWithFreshStream(room) {
+  const lp = room?.localParticipant;
+  if (!lp) return false;
+  try {
+    // 1) Retirer proprement l'ancienne piste micro.
+    const oldPub = lp.getTrackPublication?.(Track.Source.Microphone);
+    if (oldPub?.track) {
+      try { await lp.unpublishTrack(oldPub.track, true /* stopOnUnpublish */); } catch (_e) { /* ignore */ }
+    }
+    // 2) Nouveau getUserMedia — fenêtre courte pour ne pas bloquer indéfiniment.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+    const mst = stream.getAudioTracks()[0];
+    if (!mst || mst.readyState !== "live") {
+      try { stream.getTracks().forEach((t) => t.stop()); } catch (_e) { /* ignore */ }
+      return false;
+    }
+    // 3) Publier avec userProvidedTrack: true — LiveKit ne restart pas la piste.
+    const localTrack = new LocalAudioTrack(mst, undefined, true);
+    await lp.publishTrack(localTrack, { source: Track.Source.Microphone });
+    forcePlayAndRecordSession();
+    return true;
+  } catch (e) {
+    console.warn("[republishMicWithFreshStream] failed:", e?.message);
+    return false;
+  }
+}
+
+
+// ── LiveKitMicBanner ────────────────────────────────────────────────────
+// Bannière visible ET cliquable pour réessayer le micro. Le retry utilise
+// le même chemin robuste que l'auto-récupération (fresh gUM + publishTrack
+// avec userProvidedTrack:true), garanti hors du geste utilisateur mais
+// suffisant car la permission a été acquise plus tôt.
+function LiveKitMicBanner({ reason, isDarkMode, onRetry }) {
+  const room = useRoomContext();
+
+  const handleRetry = useCallback(async () => {
+    armIosAudio();
+    try {
+      await republishMicWithFreshStream(room);
+      forcePlayAndRecordSession();
+    } catch (e) {
+      console.warn("[LiveKit] retry micro failed:", e);
+    } finally {
+      onRetry?.();
+    }
+  }, [room, onRetry]);
 
   return (
     <div
       style={{
         position: "fixed",
-        top: "50%",
         left: "50%",
-        transform: "translate(-50%, -50%)",
-        zIndex: 999999,
-        background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
-        color: "white",
-        borderRadius: 20,
-        padding: "20px 32px",
+        bottom: "max(76px, calc(env(safe-area-inset-bottom) + 52px))",
+        transform: "translateX(-50%)",
+        zIndex: 9999,
+        pointerEvents: "auto",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        gap: 12,
-        boxShadow: "0 20px 60px rgba(99,102,241,0.5)",
-        pointerEvents: "all",
+        gap: 6,
+        padding: 12,
+        borderRadius: 16,
+        maxWidth: "min(340px, 90vw)",
+        background: isDarkMode ? "#1F2937" : "#111827",
+        color: "white",
+        boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+        fontFamily: "system-ui, sans-serif",
         textAlign: "center",
-        maxWidth: "80vw",
       }}
     >
-      <div style={{ fontSize: 36 }}>🔊</div>
-      <div style={{ fontWeight: 700, fontSize: 16 }}>
-        L'audio du coach est bloqué
-      </div>
-      <div style={{ fontSize: 13, opacity: 0.85 }}>
-        Tapez ici pour activer le son
-      </div>
-      <button
-        onClick={() => {
-          armIosAudio();
-          startAudio();
-        }}
-        style={{
-          marginTop: 4,
-          padding: "12px 28px",
-          borderRadius: 50,
-          border: "none",
-          background: "white",
-          color: "#6366F1",
-          fontWeight: 800,
-          fontSize: 15,
-          cursor: "pointer",
-          boxShadow: "0 4px 20px rgba(0,0,0,0.15)",
-        }}
-      >
-        Activer l'audio
+      {reason && <span style={{ fontSize: 12, opacity: 0.85 }}>{reason}</span>}
+      <button type="button" onClick={handleRetry} style={unlockButtonStyle}>
+        🎤 Appuie ici pour réactiver le micro
       </button>
     </div>
   );
 }
 
+const unlockButtonStyle = {
+  border: "none",
+  borderRadius: 12,
+  padding: "12px 16px",
+  fontSize: 14,
+  fontWeight: 700,
+  cursor: "pointer",
+  background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
+  color: "white",
+};
+
 // ── Sync état LiveKit → parent ────────────────────────────────────────────────
-// Produit un tableau unifié { role, text, isFinal, id, identity } combinant :
-//   • agentTranscriptions (TranscriptionSegment[]) de useVoiceAssistant — flag `final` fiable
-//   • transcriptions utilisateur (TextStreamData[]) de useTranscriptions — via participantInfo
 function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
   const { state, audioTrack, agentTranscriptions } = useVoiceAssistant();
   const userTranscriptions = useTranscriptions();
@@ -223,7 +470,6 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
   useEffect(() => {
     if (!onTranscriptionsUpdate) return;
 
-    // Segments agent → format unifié
     const agentSegs = (agentTranscriptions || []).map(seg => ({
       id: seg.id || ("agent-seg-" + seg.firstReceivedTime),
       role: "agent",
@@ -233,8 +479,6 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
       ts: seg.firstReceivedTime || 0,
     }));
 
-    // Segments utilisateur → format unifié
-    // useTranscriptions() ne retourne que les streams complétés (donc isFinal=true)
     const userSegs = (userTranscriptions || [])
       .filter(m => m.participantInfo?.identity !== LIVEKIT_AGENT_NAME)
       .map(m => ({
@@ -246,7 +490,6 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
         ts: m.streamInfo?.timestamp || 0,
       }));
 
-    // Fusion triée par timestamp (agent + user)
     const combined = [...agentSegs, ...userSegs].sort((a, b) => a.ts - b.ts);
     onTranscriptionsUpdate(combined);
   }, [agentTranscriptions, userTranscriptions, onTranscriptionsUpdate]);

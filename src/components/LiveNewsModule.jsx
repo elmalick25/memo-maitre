@@ -17,7 +17,23 @@ const RSS_FEEDS = [
   { name: "Libération",  url: "https://www.liberation.fr/arc/outboundfeeds/rss-all/?outputType=xml", color: "#DC2626", emoji: "📣" },
 ];
 
-export default function LiveNewsModule({ callClaude, theme, isDarkMode }) {
+const DEFAULT_THEME = {
+  primary: "#4d6bfe",
+  text: "#0f172a",
+  textMuted: "#64748b",
+  border: "var(--mm-border, rgba(15,23,42,0.12))",
+  cardBg: "#ffffff",
+  bgElev: "#F8FAFC",
+};
+
+export default function LiveNewsModule({ callClaude, theme: themeProp, isDarkMode }) {
+  // 🛡️ Guard : si le parent n'injecte pas de thème, on évite le crash silencieux
+  // sur theme.primary / theme.text etc. + on force les bonnes couleurs en dark mode.
+  const theme = {
+    ...DEFAULT_THEME,
+    ...(isDarkMode ? { text: "#f8fafc", textMuted: "#94a3b8", cardBg: "#0f172a" } : null),
+    ...(themeProp || {}),
+  };
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,8 +83,13 @@ export default function LiveNewsModule({ callClaude, theme, isDarkMode }) {
             title: item.querySelector("title")?.textContent || "Sans titre",
             link: item.querySelector("link")?.textContent || "",
             description: item.querySelector("description")?.textContent || "",
-            // Récupère content:encoded si présent (RSS riche) — donne déjà du texte exploitable
-            contentEncoded: item.getElementsByTagName("content:encoded")[0]?.textContent || "",
+            // Récupère content:encoded si présent (RSS riche) — donne déjà du texte exploitable.
+            // 🔧 On tente le nom qualifié (parseur XML) puis le namespace en fallback,
+            // certains flux (Le Figaro, Libération) plaçant le contenu sans préfixe direct.
+            contentEncoded:
+              item.getElementsByTagName("content:encoded")[0]?.textContent ||
+              item.getElementsByTagNameNS("http://purl.org/rss/1.0/modules/content/", "encoded")[0]?.textContent ||
+              "",
             pubDate: new Date(item.querySelector("pubDate")?.textContent || Date.now()),
             source: feed.name,
             color: feed.color,
@@ -181,6 +202,7 @@ ${textToAnalyze}
     setAnalysisData(null);
     setArticleContent("");
     setAnalysisLoading(true);
+    setError(null); // 🔧 nettoie une éventuelle erreur globale d'un chargement précédent
     window.speechSynthesis?.cancel();
     setIsReadingAloud(false);
 

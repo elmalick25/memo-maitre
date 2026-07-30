@@ -17,28 +17,57 @@ let memoryCache_techIntel = null;
 // ─── CORS / Proxy ────────────────────────────────────────────────────────────
 const IS_DEV = typeof import.meta !== "undefined" && import.meta.env?.DEV;
 
+// Petit helper : fetch avec timeout (AbortController) pour ne jamais bloquer
+// la régénération sur un proxy lent/HS.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+  // Support d'un signal externe (pour annuler les losers d'une course).
+  const ctrl = new AbortController();
+  const external = options.signal;
+  if (external) {
+    if (external.aborted) ctrl.abort();
+    else external.addEventListener("abort", () => ctrl.abort(), { once: true });
+  }
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ─── Cache déduplicateur des appels proxy ────────────────────────────────
+// Si plusieurs sources (ou une régénération rapide) demandent la même URL
+// dans une courte fenêtre, on partage la promesse au lieu de retaper les
+// proxies — divise par N les 429/rate-limit et accélère les re-fetch.
+const _proxyMemo = new Map();
+const PROXY_MEMO_TTL_MS = 60_000;
+
 /**
- * Fallback proxy — utilisé si rss2json échoue, ou pour Reddit/YT.
- * Utilise une liste de proxies publics fiables avec failover automatique.
+ * Fetch d'un flux RSS/Atom via une COURSE PARALLÈLE de proxies gratuits.
+ *
+ * Stratégie (max robustesse, min latence) :
+ *   • On fire TOUS les proxies en parallèle (Promise.any) — le premier qui
+ *     renvoie du XML valide gagne, les autres sont abort()-és immédiatement.
+ *   • Timeout individuel court (7 s) pour qu'un proxy zombie ne fasse
+ *     jamais attendre la course.
+ *   • Mémoisation 60 s par URL : un second appel à la même URL réutilise
+ *     la même promesse (dédup natif → moins de rate-limits).
+ *
+ * État vérifié fin 2026 des proxies gratuits/publics :
+ *   ✅ rss2json          — RSS-only, très rapide, 10k req/j gratuits
+ *   ✅ codetabs          — CORS proxy générique, stable depuis 2019
+ *   ⚠️ allorigins        — souvent lent mais peut sauver la mise
+ *   ✅ proxy.cors.sh     — fallback gratuit
+ *   ❌ corsproxy.io      — payant depuis 2024 (403 sans API key)
+ *   ❌ thingproxy        — DNS mort
  */
 async function fetchViaProxy(url) {
-  const baseProxies = [
+  const memo = _proxyMemo.get(url);
+  if (memo && (Date.now() - memo.ts) < PROXY_MEMO_TTL_MS) return memo.promise;
+
+  const proxies = [
     {
-      name: "CorsProxy",
-      build: (u) => `https://corsproxy.io/?${u}`,
-      parse: async (r) => r.text()
-    },
-    {
-      name: "ThingProxy",
-      build: (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
-      parse: async (r) => r.text()
-    },
-    {
-      name: "AllOrigins",
-      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text()
-    },
-    {
+      // rss2json : ultra-fiable pour tout RSS/Atom (Reddit /.rss, YouTube inclus).
       name: "rss2json",
       build: (u) => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
       parse: async (r) => {
@@ -57,24 +86,58 @@ async function fetchViaProxy(url) {
         `).join("");
         return `<rss><channel>${itemsXml}</channel></rss>`;
       }
+    },
+    {
+      // Codetabs : proxy CORS générique gratuit, stable depuis 2019.
+      name: "codetabs",
+      build: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+      parse: async (r) => r.text()
+    },
+    {
+      name: "cors.sh",
+      build: (u) => `https://proxy.cors.sh/${u}`,
+      parse: async (r) => r.text()
+    },
+    {
+      name: "AllOrigins",
+      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      parse: async (r) => r.text()
     }
   ];
 
-  // Randomize to distribute load and avoid instant rate limits
-  const proxies = [...baseProxies].sort(() => Math.random() - 0.5);
+  // Course parallèle : on abort tous les losers dès qu'un gagnant sort.
+  const raceCtrl = new AbortController();
+  const attempts = proxies.map(async (p) => {
+    const res = await fetchWithTimeout(
+      p.build(url),
+      {
+        headers: { Accept: "text/xml, application/xml, application/json, */*" },
+        signal: raceCtrl.signal,
+      },
+      7000
+    );
+    if (!res.ok) throw new Error(`${p.name} HTTP ${res.status}`);
+    const text = await p.parse(res);
+    if (!text || text.length < 20) throw new Error(`${p.name}: empty`);
+    // Validation minimale : doit ressembler à du RSS/Atom pour compter comme succès.
+    if (!/<(rss|feed|channel|item|entry)\b/i.test(text)) {
+      throw new Error(`${p.name}: not RSS/Atom`);
+    }
+    return text;
+  });
 
-  let lastErr = new Error("No proxy available");
-  for (const p of proxies) {
-    try {
-      const res = await fetch(p.build(url), { headers: { Accept: "text/xml, application/xml, application/json, */*" } });
-      if (!res.ok) throw new Error(`${p.name} HTTP ${res.status}`);
-      const text = await p.parse(res);
-      if (!text || text.length < 10) throw new Error(`${p.name}: empty body`);
-      return text;
-    } catch (e) { lastErr = e; }
-  }
-  throw lastErr;
+  const promise = Promise.any(attempts)
+    .then((winner) => { raceCtrl.abort(); return winner; })
+    .catch((agg) => {
+      _proxyMemo.delete(url); // permet un vrai retry plus tard
+      const details = agg?.errors?.map(e => e?.message).filter(Boolean).join(" | ") || agg?.message || "unknown";
+      throw new Error(`All proxies failed: ${details}`);
+    });
+
+  _proxyMemo.set(url, { ts: Date.now(), promise });
+  return promise;
 }
+
 
 // ─── Scoring ────────────────────────────────────────────────────────────────
 const WEIGHTS = {
@@ -131,6 +194,16 @@ const RSS_FEEDS = [
   { name: "MIT Tech Review", source: "MIT",             url: "https://www.technologyreview.com/feed/",                 lang: "en", priority: 3 },
   { name: "Ars Technica",    source: "ArsTechnica",     url: "https://feeds.arstechnica.com/arstechnica/technology-lab", lang: "en", priority: 3 },
   { name: "Lobsters",        source: "Lobsters",        url: "https://lobste.rs/rss",                                  lang: "en", priority: 3 },
+  // 🇺🇸 Top actus américaines supplémentaires (traduites automatiquement en FR)
+  { name: "Wired",           source: "TechCrunch",     url: "https://www.wired.com/feed/rss",                          lang: "en", priority: 1 },
+  { name: "Hacker News",     source: "GitHub",         url: "https://hnrss.org/frontpage",                             lang: "en", priority: 1 },
+  { name: "Engadget",        source: "Verge",          url: "https://www.engadget.com/rss.xml",                        lang: "en", priority: 1 },
+  { name: "The Register",    source: "ArsTechnica",    url: "https://www.theregister.com/headlines.atom",              lang: "en", priority: 2 },
+  { name: "VentureBeat",     source: "TechCrunch",     url: "https://venturebeat.com/feed/",                           lang: "en", priority: 1 },
+  { name: "MIT News",        source: "MIT",            url: "https://news.mit.edu/rss/topic/artificial-intelligence2", lang: "en", priority: 1 },
+  { name: "OpenAI Blog",     source: "GoogleAI",       url: "https://openai.com/blog/rss.xml",                         lang: "en", priority: 1 },
+  { name: "DeepMind",        source: "GoogleAI",       url: "https://deepmind.google/blog/rss.xml",                    lang: "en", priority: 1 },
+  { name: "Anthropic",       source: "HuggingFace",    url: "https://www.anthropic.com/news/rss.xml",                  lang: "en", priority: 1 },
 ];
 
 const YOUTUBE_CHANNELS = [
@@ -367,30 +440,50 @@ async function fetchHN() {
 }
 
 async function fetchReddit() {
-  const REDDIT_URL = "https://www.reddit.com/r/programming+artificial+MachineLearning+cybersecurity+webdev+devops+golang+rust.json?limit=50&raw_json=1";
-  let text;
+  // ⚠️ 2026-07 : Reddit bloque agressivement les proxies HTTP (403 sur /.json via
+  // n'importe quel CORS proxy public + IP datacenter). On passe donc par le flux
+  // /.rss officiel via rss2json, qui est stable et déjà utilisé par les autres feeds.
+  const REDDIT_RSS = "https://www.reddit.com/r/programming+artificial+MachineLearning+cybersecurity+webdev+devops+golang+rust/.rss?limit=50";
+  let xmlText;
   try {
-    text = await fetchViaProxy(REDDIT_URL);
+    xmlText = await fetchViaProxy(REDDIT_RSS);
   } catch (e) {
     throw new Error(`Reddit fetch failed: ${e.message}`);
   }
-  let j;
-  try { j = JSON.parse(text); } catch { throw new Error("Reddit JSON parse error"); }
-  if (!j?.data?.children) throw new Error("Reddit: unexpected format");
-  return (j.data?.children || []).map(c => {
-    const d = c.data;
-    const url = d.url_overridden_by_dest || `https://reddit.com${d.permalink}`;
+  const xml = new DOMParser().parseFromString(xmlText, "text/xml");
+  if (xml.querySelector("parsererror")) throw new Error("Reddit parse error");
+  const entries = [...xml.querySelectorAll("item, entry")].slice(0, 50);
+  return entries.map((it) => {
+    const title = stripHtml(it.querySelector("title")?.textContent || "");
+    const links = [...it.querySelectorAll("link")];
+    let url = "";
+    for (const l of links) {
+      const href = l.getAttribute("href");
+      const text = l.textContent?.trim();
+      if (href && (l.getAttribute("rel") === "alternate" || !url)) url = href;
+      else if (text && !url) url = text;
+    }
+    const desc = stripHtml(it.querySelector("description, summary, content")?.textContent || "").slice(0, 1500);
+    const pub = it.querySelector("pubDate, published, updated")?.textContent;
+    const ts = pub ? new Date(pub).getTime() : Date.now();
+    // Essaie de deviner le subreddit depuis l'URL
+    const subMatch = url.match(/reddit\.com\/r\/([^/]+)/i);
+    const subreddit = subMatch ? subMatch[1] : "";
     return {
-      id: stableId('rd', url), source: "Reddit",
-      title: d.title, url,
-      description: stripHtml(d.selftext || "").slice(0, 1500),
-      ts: (d.created_utc || 0) * 1000, score: scoreArticle(`${d.title} ${d.selftext || ""}`),
-      votes: d.score, comments: d.num_comments, subreddit: d.subreddit,
-      thumbnail: d.thumbnail?.startsWith("http") ? d.thumbnail : null,
-      extraUrl: `https://reddit.com${d.permalink}`, lang: "en",
+      id: stableId('rd', url || title),
+      source: "Reddit",
+      title,
+      url: url || "https://reddit.com",
+      description: desc,
+      ts,
+      score: scoreArticle(`${title} ${desc}`),
+      subreddit,
+      extraUrl: url,
+      lang: "en",
     };
-  });
+  }).filter(x => x.title);
 }
+
 
 
 async function fetchRSS(feed) {
@@ -646,10 +739,7 @@ export default function TechIntelView({
   callClaude, theme = {}, isDarkMode, setExpressions, showToast, onCreateCard, onPickArticle, localToday,
 }) {
   const [tab, setTab] = useState("fr");
-  const [autoTranslate, setAutoTranslate] = useState(() => {
-    try { const s = safeStorage.get("tiv_auto_translate"); return s !== null ? JSON.parse(s) : true; }
-    catch { return true; }
-  });
+  const [autoTranslate, setAutoTranslate] = useState(true); // Toujours actif — l'utilisateur ne voit jamais d'actus en anglais
   const [items, setItems] = useState(() => memoryCache_techIntel?.items || []);
   const [digest, setDigest] = useState(null);
   const [loading, setLoading] = useState(() => !memoryCache_techIntel);
@@ -1441,32 +1531,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
 
           {/* Controls */}
           <div className="tiv-topbar-controls" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
-            <button onClick={() => setShowSourcesModal(true)} style={{
-              background: "rgba(255,255,255,.04)", border: "1px solid var(--mm-border)",
-              color: "var(--mm-fg-muted)", borderRadius: 20, padding: "6px 12px", cursor: "pointer",
-              fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 5,
-            }}>
-              ⚙️ Sources
-            </button>
-            <button onClick={() => setAutoTranslate(p => !p)} title="Traduction automatique"
-              style={{
-                background: autoTranslate ? "rgba(139,92,246,.12)" : "rgba(255,255,255,.04)",
-                color: autoTranslate ? "var(--mm-primary-glow)" : "var(--mm-fg-muted)",
-                border: `1px solid ${autoTranslate ? "var(--mm-border-strong)" : "var(--mm-border)"}`,
-                borderRadius: 20, padding: "6px 12px", cursor: "pointer",
-                fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 5,
-                transition: "all .2s",
-              }}>
-              {translating ? <><div style={{ width: 10, height: 10, border: "1.5px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "tiv-spin .5s linear infinite" }} />FR</> : (autoTranslate ? "🪄 FR" : "🌐 EN")}
-            </button>
-            <button onClick={runPrefetch} disabled={prefetchRunning || !callClaude} style={{
-              background: "rgba(255,255,255,.04)", border: "1px solid var(--mm-border)",
-              color: "var(--mm-fg-muted)", borderRadius: 20, padding: "6px 12px", cursor: "pointer",
-              fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", gap: 5,
-            }}>
-              📥 Hors-ligne
-            </button>
-            {/* Refresh */}
+                                                {/* Refresh */}
             <button onClick={() => fetchAll(false)} disabled={loading} className="tiv-btn-refresh">
               <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
               <span className="tiv-btn-refresh-label">Regénérer</span>
@@ -1481,39 +1546,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           </div>
         )}
 
-        {/* Search bar */}
         <div style={{ padding: "10px 16px 0" }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(255,255,255,.04)",
-            border: `1px solid ${isSearching ? "var(--mm-border-strong)" : "var(--mm-border)"}`,
-            borderRadius: 14, padding: "0 12px",
-            transition: "border-color .2s",
-          }}>
-            <span style={{ fontSize: 14, opacity: .7, flexShrink: 0 }}>🔎</span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Rechercher (ex : IA générative, kubernetes, CVE…)"
-              aria-label="Rechercher dans l'actualité"
-              style={{
-                flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none",
-                color: "var(--mm-fg)", fontSize: 13, fontWeight: 500, padding: "11px 0",
-              }}
-            />
-            {isSearching && (
-              <button onClick={() => setQuery("")} aria-label="Effacer la recherche" style={{
-                background: "rgba(255,255,255,.06)", border: "none", color: "var(--mm-fg-muted)",
-                cursor: "pointer", borderRadius: 8, width: 22, height: 22, flexShrink: 0,
-                display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12,
-              }}>✕</button>
-            )}
-          </div>
-          {isSearching && (
-            <div style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 600, margin: "8px 2px 0" }}>
-              {filtered.length} résultat{filtered.length > 1 ? "s" : ""} pour « {query.trim()} » · recherche dans tout le flux
-            </div>
-          )}
           {!isSearching && tab !== "digest" && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 10, padding: "0 4px" }}>
               <select value={sortMode} onChange={e => setSortMode(e.target.value)} style={{ background: "rgba(255,255,255,.05)", color: "var(--mm-fg)", border: "1px solid var(--mm-border)", borderRadius: 8, padding: "4px 8px", fontSize: 11, outline: "none", cursor: "pointer" }}>

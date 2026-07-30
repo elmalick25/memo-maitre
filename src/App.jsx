@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useState, useRef } from 'react'
 import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
 import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
-import { syncWithFirebase } from './lib/db/sync'
+import { syncWithFirebase, listenToSyncSignal } from './lib/db/sync'
 import { auth, provider, setFbUser } from './lib/firebase'
 import {
   signInWithPopup,
@@ -91,9 +91,11 @@ function App() {
         setLoginError(e?.message || 'Erreur de connexion après redirection')
       })
 
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    let unsubscribeRealtime = null;
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (cancelled) return
-
+      setAuthChecking(true)
+      
       // Utilisateur connecté mais NON autorisé (ni propriétaire, ni bêta-testeur) → refus.
       if (user && !isAuthorizedUser(user)) {
         try { await auth.signOut() } catch { }
@@ -104,11 +106,10 @@ function App() {
       }
 
       // Pas d'utilisateur authentifié → on DOIT afficher l'écran de connexion.
-      // (Sinon la sync Firestore échoue silencieusement faute de token d'auth
-      // et l'utilisateur voit "0 fiche" sur mobile, alors qu'il en a 174 sur PC.)
       if (!user) {
         setAccessDenied(true)
         setAuthChecking(false)
+        if (unsubscribeRealtime) unsubscribeRealtime();
         return
       }
 
@@ -116,6 +117,12 @@ function App() {
       setFbUser(user.uid)
       setAccessDenied(false)
       setAuthChecking(false)
+
+      if (unsubscribeRealtime) unsubscribeRealtime();
+      unsubscribeRealtime = listenToSyncSignal(user.uid, () => {
+        console.info("[sync] Remote change detected, triggering real-time sync!");
+        forceSync('realtime');
+      });
 
       if (!initStarted.current) {
         initStarted.current = true
@@ -133,18 +140,40 @@ function App() {
         try { await migrateFromLocalStorage() } catch (e) { console.warn('Migration KO:', e) }
         // Récupération one-shot des révisions SM-2 orphelines (ancien onglet SRS)
         try { await migrateOrphanSRSData() } catch (e) { console.warn('Migration SRS→FSRS KO:', e) }
-        try { await syncWithFirebase() } catch (e) { console.warn('Sync init KO:', e) }
         if (cancelled) return
+        // ⚡ Démarrage instantané : on affiche l'app tout de suite avec les données locales.
+        // La sync Firestore (potentiellement lente : ~1 min sur mobile) tourne en arrière-plan
+        // et un événement `cards_synced` rafraîchira l'UI dès que de nouvelles fiches arrivent.
         setDbReady(true)
+        setTimeout(() => {
+          // `true` = réconciliation complète autoritaire au démarrage : c'est ce
+          // qui aligne un appareil resté en retard (fiches fantômes) sur le serveur.
+          syncWithFirebase(true).catch((e) => console.warn('Sync init KO:', e))
+        }, 0)
       }
     })
 
-    const SYNC_PERIOD_MS = 60 * 1000
+    // ── Anti-quota Firestore ─────────────────────────────────────────────
+    // On coalesce tous les déclencheurs de sync (focus, visibility, pageshow,
+    // online, sync_signal, interval, storage-update) derrière un throttle
+    // partagé. Avant : chaque événement lançait une sync complète →
+    // amplification massive de lectures Firestore → quota dépassé.
+    const SYNC_PERIOD_MS = 5 * 60 * 1000 // interval de fond : 5 min
+    const MIN_SYNC_GAP_MS = 5 * 1000     // au moins 5 s entre deux syncs (restaure le temps réel)
+    let lastSyncAt = 0
+    let pendingTimer = null
     const forceSync = (reason) => {
       if (navigator.onLine === false || !initStarted.current) return
-      syncWithFirebase()
-        .then((changed) => console.info(`[sync] ${reason}${changed ? ' — fiches mises à jour' : ''}`))
-        .catch((e) => console.warn('Sync KO:', e))
+      const now = Date.now()
+      const wait = Math.max(0, MIN_SYNC_GAP_MS - (now - lastSyncAt))
+      if (pendingTimer) return // déjà planifiée
+      pendingTimer = setTimeout(() => {
+        pendingTimer = null
+        lastSyncAt = Date.now()
+        syncWithFirebase()
+          .then((changed) => console.info(`[sync] ${reason}${changed ? ' — fiches mises à jour' : ''}`))
+          .catch((e) => console.warn('Sync KO:', e))
+      }, wait)
     }
 
     const handleSync = () => forceSync('storage-update')
@@ -154,24 +183,25 @@ function App() {
     const onVis = () => { if (document.visibilityState === 'visible') forceSync('visible') }
     const onFocus = () => forceSync('focus')
     const onPageShow = () => forceSync('pageshow')
-    const onPageHide = () => forceSync('pagehide')
+    // NB : on retire volontairement le sync sur `pagehide` — il doublait chaque
+    //      cycle focus/blur et n'apportait aucune donnée fraîche.
 
     window.addEventListener('online', doSync)
     window.addEventListener('focus', onFocus)
     window.addEventListener('pageshow', onPageShow)
-    window.addEventListener('pagehide', onPageHide)
     document.addEventListener('visibilitychange', onVis)
 
     const interval = setInterval(doSync, SYNC_PERIOD_MS)
 
     return () => {
       cancelled = true
-      unsubscribe()
+      unsubAuth()
+      if (unsubscribeRealtime) unsubscribeRealtime();
+      if (pendingTimer) clearTimeout(pendingTimer)
       window.removeEventListener('firebase_sync_updated', handleSync)
       window.removeEventListener('online', doSync)
       window.removeEventListener('focus', onFocus)
       window.removeEventListener('pageshow', onPageShow)
-      window.removeEventListener('pagehide', onPageHide)
       document.removeEventListener('visibilitychange', onVis)
       clearInterval(interval)
     }

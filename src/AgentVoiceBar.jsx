@@ -10,9 +10,6 @@
 //                         <LiveKitVoiceAssistant /> qui gère TOUTE la session
 //                         LiveKit (JWT + dispatch de l'agent "assistant-53a").
 //   - agent.stop()      → passe isConnected à false → l'overlay se démonte.
-//
-// L'implémentation ElevenLabs originale est archivée dans
-// AgentVoiceBar.elevenlabs.bak.jsx.
 // ============================================================================
 
 

@@ -90,3 +90,18 @@ export function isOverdue(nextReview, currentDate = today()) {
   return rev < cur;
 }
 
+/**
+ * Retourne le nombre de jours de différence entre deux dates (date1 - date2).
+ * Formats de dates supportés: "YYYY-MM-DD", Date ou timestamps.
+ */
+export function diffDays(date1, date2) {
+  const parseDate = (dStr) => {
+    if (typeof dStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dStr)) {
+      const [y, m, day] = dStr.split('-');
+      return new Date(y, m - 1, day).getTime();
+    }
+    return new Date(dStr).getTime();
+  };
+  return Math.round((parseDate(date1) - parseDate(date2)) / (1000 * 3600 * 24));
+}
+
