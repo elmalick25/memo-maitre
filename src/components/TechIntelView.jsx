@@ -1481,11 +1481,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         
         ::-webkit-scrollbar{width:0}
         @media(max-width:480px){
-          .tiv-hero-title{font-size:17px!important}
+          .tiv-hero-title{font-size:16px!important}
           .tiv-modal-inner{max-height:92vh!important;border-radius:20px 20px 0 0!important}
-          .tiv-btn-refresh{padding:7px 10px}
-          .tiv-btn-refresh-label{display:none}
-          .tiv-topbar-controls{width:100%;justify-content:flex-end;margin-top:4px}
         }
       `}</style>
 
@@ -1493,42 +1490,42 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       <div style={{
         background: isDarkMode 
           ? "linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,27,75,0.7))" 
-          : "linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.9))",
+          : "linear-gradient(135deg, rgba(255,255,255,0.95), rgba(241,245,249,0.95))",
         border: "1px solid var(--mm-border-strong, rgba(139,92,246,0.25))",
         borderRadius: 24,
         padding: "16px 20px",
         marginBottom: 16,
-        boxShadow: "0 12px 32px rgba(0,0,0,0.12)",
+        boxShadow: "0 12px 32px rgba(0,0,0,0.08)",
         backdropFilter: "blur(16px)",
         WebkitBackdropFilter: "blur(16px)",
       }}>
         {/* Top Header Row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
           {/* Logo & Title */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 200 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
             <div style={{
-              width: 42, height: 42, borderRadius: 14, flexShrink: 0,
+              width: 40, height: 40, borderRadius: 13, flexShrink: 0,
               background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 20, boxShadow: "0 6px 18px rgba(139,92,246,0.35)",
+              fontSize: 19, boxShadow: "0 6px 16px rgba(139,92,246,0.35)",
             }}>📡</div>
-            <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <h1 style={{ margin: 0, fontWeight: 900, fontSize: 18, color: "var(--mm-fg)", letterSpacing: "-0.4px", fontFamily: "var(--mm-font-display)", lineHeight: 1.2 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <h1 style={{ margin: 0, fontWeight: 900, fontSize: 17, color: "var(--mm-fg)", letterSpacing: "-0.4px", fontFamily: "var(--mm-font-display)", lineHeight: 1.2 }}>
                   Veille Tech
                 </h1>
                 {isLive && (
                   <span style={{
                     background: "#ef4444", color: "#fff", fontSize: 9, fontWeight: 900,
                     padding: "2px 7px", borderRadius: 10, letterSpacing: 0.8,
-                    animation: "tiv-pulse 2s infinite", display: "flex", alignItems: "center", gap: 4, flexShrink: 0
+                    animation: "tiv-pulse 2s infinite", display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0
                   }}>
                     <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#fff" }} />
                     LIVE
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 500, marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 500, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {loading ? "Chargement du flux tech…" : lastRefresh ? `${frCount} articles FR · Mis à jour ${timeAgo(lastRefresh, now)}` : "Actualités tech"}
                 {prefetchProgress && <span style={{ marginLeft: 6, color: "#a78bfa" }}>· 📥 Hors-ligne {prefetchProgress.done}/{prefetchProgress.total}</span>}
               </div>
@@ -1536,11 +1533,11 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           </div>
 
           {/* Refresh Action */}
-          <button onClick={() => fetchAll(false)} disabled={loading} className="tiv-btn-refresh" style={{
+          <button onClick={() => fetchAll(false)} disabled={loading} style={{
             background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
-            color: "#fff", border: "none", borderRadius: 14, padding: "8px 16px",
+            color: "#fff", border: "none", borderRadius: 14, padding: "8px 14px",
             fontSize: 12, fontWeight: 700, cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 6,
+            display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
             boxShadow: "0 4px 14px rgba(139,92,246,0.35)", transition: "all 0.2s"
           }}>
             <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
@@ -1555,57 +1552,75 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           </div>
         )}
 
-        {/* Scrollable Categories Bar */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, overflowX: "auto",
-          paddingBottom: 6, scrollbarWidth: "none", msOverflowStyle: "none",
-          WebkitOverflowScrolling: "touch", marginBottom: 10
-        }}>
-          {TABS.map(t => {
-            const isActive = tab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                style={{
-                  background: isActive 
-                    ? "linear-gradient(135deg,#8b5cf6,#6366f1)" 
-                    : isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
-                  color: isActive ? "#ffffff" : "var(--mm-fg-muted)",
-                  border: isActive ? "none" : "1px solid var(--mm-border, rgba(139,92,246,0.15))",
-                  borderRadius: 14, padding: "7px 14px",
-                  fontSize: 12, fontWeight: isActive ? 800 : 600,
-                  whiteSpace: "nowrap", cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  boxShadow: isActive ? "0 4px 14px rgba(139,92,246,0.35)" : "none",
-                  transition: "all 0.2s ease", flexShrink: 0
-                }}
-              >
-                <span>{t.label}</span>
-                {t.id === "fr" && frCount > 0 && (
-                  <span style={{
-                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
-                    color: isActive ? "#fff" : "#f87171",
-                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
-                  }}>{frCount > 99 ? "99+" : frCount}</span>
-                )}
-                {t.id === "top" && freshCount > 0 && (
-                  <span style={{
-                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
-                    color: isActive ? "#fff" : "#f87171",
-                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
-                  }}>{freshCount}</span>
-                )}
-                {t.id === "saved" && savedCount > 0 && (
-                  <span style={{
-                    background: isActive ? "rgba(255,255,255,0.25)" : "rgba(239,68,68,0.15)",
-                    color: isActive ? "#fff" : "#f87171",
-                    fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 8,
-                  }}>{savedCount}</span>
-                )}
-              </button>
-            );
-          })}
+        {/* Category Selector Dropdown ("Contenu caché par filtre") */}
+        <div style={{ position: "relative", marginBottom: 10 }}>
+          <button 
+            onClick={() => setIsTabsOpen(!isTabsOpen)} 
+            style={{
+              display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center",
+              padding: "10px 16px", borderRadius: 16,
+              background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
+              color: "#ffffff", border: "none",
+              boxShadow: "0 4px 16px rgba(139,92,246,0.35)",
+              fontWeight: 800, fontSize: 13, cursor: "pointer",
+              transition: "all 0.2s cubic-bezier(.16,1,.3,1)"
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{TABS.find(t => t.id === tab)?.label || "Catégories"}</span>
+              {tab === "fr" && frCount > 0 && (
+                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
+                  {frCount > 99 ? "99+" : frCount}
+                </span>
+              )}
+              {tab === "top" && freshCount > 0 && (
+                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
+                  {freshCount}
+                </span>
+              )}
+              {tab === "saved" && savedCount > 0 && (
+                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
+                  {savedCount}
+                </span>
+              )}
+            </div>
+            <span style={{ transform: isTabsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", fontSize: 11 }}>▼</span>
+          </button>
+
+          {/* Expanded Category Dropdown Menu */}
+          {isTabsOpen && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50,
+              background: isDarkMode ? "#0f1123" : "#ffffff", border: "1px solid var(--mm-border-strong, rgba(139,92,246,0.4))",
+              borderRadius: 18, padding: 8, boxShadow: "0 12px 36px rgba(0,0,0,0.25)",
+              display: "flex", flexDirection: "column", gap: 4,
+              maxHeight: "320px", overflowY: "auto",
+              animation: "tiv-fade .2s cubic-bezier(.16,1,.3,1)"
+            }}>
+              {TABS.map(t => {
+                const isActive = tab === t.id;
+                return (
+                  <button 
+                    key={t.id} 
+                    onClick={() => { setTab(t.id); setIsTabsOpen(false); }} 
+                    style={{
+                      background: isActive ? "rgba(139,92,246,0.18)" : "transparent",
+                      color: isActive ? "var(--mm-fg, #8b5cf6)" : "var(--mm-fg-muted)",
+                      border: "none", borderRadius: 12, padding: "10px 14px",
+                      textAlign: "left", fontSize: 13, fontWeight: isActive ? 800 : 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      transition: "all .15s"
+                    }}
+                  >
+                    <span>{t.label}</span>
+                    {t.id === "fr" && frCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{frCount > 99 ? "99+" : frCount}</span>}
+                    {t.id === "top" && freshCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{freshCount}</span>}
+                    {t.id === "saved" && savedCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{savedCount}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Sort & Time Filters */}
