@@ -227,12 +227,22 @@ export function ResumeCarousel({ items = [], theme }) {
  * ════════════════════════════════════════════════════════════════════════════
  * Suggère le mode de session selon l'heure et le streak.
  */
-export function getSmartSessionRecommendation({ dueCount = 0, streak = 0, hour = new Date().getHours() }) {
-  if (dueCount === 0) return { mode: "explore", icon: "🔭", label: "Explore le Lab", reason: "Aucune fiche due aujourd'hui — parfait pour analyser un nouveau document." };
-  if (hour >= 5 && hour < 11) return { mode: "wakeup", icon: "🌅", label: "Réveil express", reason: `${Math.min(5, dueCount)} fiches faciles pour démarrer en douceur.` };
-  if (hour >= 11 && hour < 18) return { mode: "express", icon: "⚡", label: "Review express", reason: `${dueCount} fiches en ${Math.ceil(dueCount * 0.5)} min.` };
-  if (hour >= 18 && hour < 22) return { mode: "deep", icon: "🌙", label: "Consolidation", reason: "Soirée idéale pour les fiches difficiles." };
-  return { mode: "light", icon: "🛏️", label: "Touche finale", reason: "Une mini-session avant de dormir consolide la mémoire." };
+// ── CHANTIER 13 — cadrage POSITIF (opportunité, jamais culpabilisation) ────
+// `promotableCount` = cartes qui gagneraient un intervalle long si elles sont
+// révisées maintenant (calculé par lib/smartTiming.countPromotable).
+// `bestHour` = créneau historiquement le plus productif de l'utilisateur.
+export function getSmartSessionRecommendation({ dueCount = 0, streak = 0, hour = new Date().getHours(), promotableCount = 0, bestHour = null }) {
+  const gain = promotableCount > 0
+    ? `${promotableCount} carte${promotableCount > 1 ? "s" : ""} peu${promotableCount > 1 ? "vent" : "t"} passer en intervalle long maintenant.`
+    : null;
+  const inSweetSpot = bestHour != null && Math.abs(hour - bestHour) <= 1;
+
+  if (dueCount === 0) return { mode: "explore", icon: "🔭", label: "Explore le Lab", reason: "Rien de dû : ta mémoire travaille toute seule — moment idéal pour créer." };
+  if (inSweetSpot) return { mode: "express", icon: "🎯", label: "Ton créneau", reason: gain || `C'est l'heure où tu es le plus efficace : ${dueCount} cartes prêtes.` };
+  if (hour >= 5 && hour < 11) return { mode: "wakeup", icon: "🌅", label: "Réveil express", reason: gain || `${Math.min(5, dueCount)} cartes faciles pour lancer la journée.` };
+  if (hour >= 11 && hour < 18) return { mode: "express", icon: "⚡", label: "Review express", reason: gain || `${dueCount} cartes ancrées en ${Math.ceil(dueCount * 0.5)} min.` };
+  if (hour >= 18 && hour < 22) return { mode: "deep", icon: "🌙", label: "Consolidation", reason: gain || "Les fiches difficiles se fixent particulièrement bien le soir." };
+  return { mode: "light", icon: "🛏️", label: "Touche finale", reason: gain || "Une mini-session avant de dormir consolide la mémoire." };
 }
 
 /* ════════════════════════════════════════════════════════════════════════════

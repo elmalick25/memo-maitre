@@ -8,7 +8,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthReady } from "./lib/firebase";
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
-import { ensureMasteryStage, recordProductiveUse } from "./lib/masteryStages";
+import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
 import { isCardActive, isCardMastered, countMasteredCards } from "./lib/cardStatus";
 import {
   pickProductionInvite,
@@ -28,7 +28,7 @@ import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } fro
 import { fsrs, fsrsR, fsrsFromProduction } from "./lib/fsrs";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
 import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeDailySession, getDailySessionTarget, pickLeeches, nextLapseCount } from "./lib/memoryLab";
-import { isNewCard, splitNewAndReview, selectNewCardsForToday, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
+import { isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, selectNewCardsForToday, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
 import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
 import { getAudioObjectUrl } from "./lib/audioStore";
 import useAudioFeedback from "./hooks/useAudioFeedback";
@@ -50,7 +50,20 @@ import { YearHeatmap, ResumeCarousel, getSmartSessionRecommendation, CommandPale
 import GodTierContent from "./components/GodTierContent";
 import GodTierStats from "./components/GodTierStats";
 // ── Helpers & composants extraits (refactor — ex-MemoMaster.jsx) ───────────
-import { BADGES, getArchetype } from "./constants/gamification";
+import { BADGES, getArchetype, RETIRED_BADGE_IDS } from "./constants/gamification";
+// ── Refonte gamification (chantiers 1, 2, 5, 7) ───────────────────────────
+import useXPLedger from "./hooks/useXPLedger";
+import BadgesView from "./components/BadgesView";
+import { advanceStreak, canRepairStreak, repairStreak, repairTimeLeft } from "./lib/streakGuard";
+import { bonusFreezeTokens, bonusNewCardQuota, streakIcon as unlockedStreakIcon, holoIntensity } from "./lib/unlocks";
+// ── CHANTIERS 8-13 : couche « TikTok » (récompenses variables, quêtes,
+// feedback micro, hook de fin de session, timing intelligent) ──────────────
+import useDailyQuests from "./hooks/useDailyQuests";
+import ComboBar from "./components/ComboBar";
+import RewardChest from "./components/RewardChest";
+import DailyQuestBar from "./components/DailyQuestBar";
+import SessionEndHook from "./components/SessionEndHook";
+import { countPromotable, bestStudyHour } from "./lib/smartTiming";
 
 import { sanitizeInput, safeParseJSON } from "./lib/textUtils";
 import { safeHTML } from "./lib/htmlSanitizer";
@@ -64,6 +77,20 @@ import MobileSpeedDial from "./components/MobileSpeedDial";
 import MobileAddSheet from "./components/MobileAddSheet";
 import MobileHomeV2 from "./components/MobileHomeV2";
 import DailyRoutineTracker from "./components/DailyRoutineTracker";
+import RoutineAlertCard from "./components/RoutineAlertCard";
+import useDailyRoutine from "./hooks/useDailyRoutine";
+import usePerfTier, { PERF_LITE_CSS } from "./lib/perfTier";
+import { haptic } from "./lib/haptics";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHANTIER 23 — UN SEUL seuil mobile pour toute l'application.
+// Avant : `innerWidth < 768` en JS, `matchMedia("(max-width: 768px)")` pour le
+// home et `@media (max-width: 767px)` en CSS → trois vérités différentes, et
+// une bande fixe (« barre noire ») qui réapparaissait au scroll dans l'écart.
+// MOBILE_MQ est maintenant la source unique, alignée sur les media queries.
+// ═══════════════════════════════════════════════════════════════════════════
+export const MOBILE_BREAKPOINT = 768;
+export const MOBILE_MQ = `(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`;
 const TechIntelView = lazy(() => import("./components/TechIntelView"));
 
 const CATEGORIES_DEFAULT = [
@@ -374,7 +401,79 @@ export default function MemoMaster() {
 
   const [oneHanded, setOneHanded] = useState(false);
 
-  const [powerLevel, setPowerLevel] = useState(0);
+  // ── CHANTIER 1 : l'XP n'est plus dérivée, elle est accumulée et persistée.
+  // `toastRef` permet au ledger d'émettre des toasts alors que `showToast`
+  // est défini plus bas dans le composant.
+  const toastRef = useRef(null);
+  const emitToast = useCallback((msg, type) => { toastRef.current?.(msg, type); }, []);
+  const {
+    xpState,
+    xpLoaded,
+    totalXP: powerLevel,
+    archetype: xpArchetype,
+    combo: reviewCombo,
+    sessionBestCombo,
+    bestCombo: bestComboEver,
+    todayMultiplier,
+    lastChest,
+    clearChest,
+    grantChest,
+    awardReview,
+    awardSource,
+    awardBonusXP,
+    resetCombo,
+    migrateOnce,
+  } = useXPLedger(storage, emitToast);
+
+  // ── CHANTIER 9 : quêtes quotidiennes & hebdo ──────────────────────────────
+  const { questState, questSummary: questBoard, trackQuest } = useDailyQuests(storage, {
+    showToast: emitToast,
+    onReward: ({ type, xp }) => {
+      const src = type === "weekly" ? "QUEST_WEEKLY" : type === "combo" ? "QUEST_COMBO" : "QUEST_DAILY";
+      awardBonusXP(xp, src, null);
+      haptic("quest"); // CHANTIER 17 — quête bouclée : pulse court et net
+    },
+  });
+  // ── CHANTIERS 24-28 : la routine quotidienne, état partagé mobile/desktop ──
+  // Une seule instance ici : la vue Routine ET l'alerte d'accueil (mobile comme
+  // desktop) consomment le même objet, donc ne peuvent pas diverger.
+  const routine = useDailyRoutine({
+    awardSource: (src, opts) => awardSource(src, opts),
+    awardBonusXP,
+    grantChest,
+    showToast: emitToast,
+  });
+
+  // ── CHANTIER 21 : budget de performance par palier d'appareil ──
+  // Sur un Android d'entrée de gamme, backdrop-filter + conic-gradient animé
+  // sont les effets les plus coûteux du CSS. En mode « lite » on garde la
+  // couleur pleine et l'icône : la hiérarchie de rareté reste lisible.
+  const perfLite = usePerfTier();
+
+  // ── CHANTIER 17 — Montée de niveau : signature haptique dédiée. ──
+  // Il n'existait aucun évènement « level up » côté UI : on le dérive du
+  // niveau d'archétype, seule source de vérité du palier.
+  // CHANTIER 16 — le palier cosmétique « holo » débloqué par le niveau alimente
+  // enfin les cartes : plus le niveau monte, plus l'aura des cartes est riche.
+  const holoLevel = useMemo(() => holoIntensity(getArchetype(powerLevel).level), [powerLevel]);
+
+  const levelRef = useRef(null);
+  useEffect(() => {
+    const lvl = getArchetype(powerLevel).level;
+    if (levelRef.current !== null && lvl > levelRef.current) {
+      haptic("levelup");
+      emitToast(`🎚️ Niveau ${lvl} atteint !`, "success");
+    }
+    levelRef.current = lvl;
+  }, [powerLevel, emitToast]);
+
+  const routineRef = useRef(routine);
+  routineRef.current = routine;
+
+  const xpRef = useRef(xpState);
+  useEffect(() => { xpRef.current = xpState; }, [xpState]);
+  // File d'attente de toasts de badges (chantier 3 : tous notifiés, pas juste le 1er)
+  const [badgeQueue, setBadgeQueue] = useState([]);
   const [devLogs, setDevLogs] = useState([]);
   const [roadmap, setRoadmap] = useState([
     { id: 2, task: "Vision IA (Analyse de schémas)", done: true },
@@ -870,7 +969,7 @@ export default function MemoMaster() {
   const [prepLoading, setPrepLoading] = useState({});
 
   // ── GOD LEVEL – Nouveaux états (v6) ────────────────────────────────────────
-  const { playCorrect, playHard, playAgain } = useAudioFeedback();
+  const { playCorrect, playHard, playAgain, playRating, playCombo, playChest } = useAudioFeedback();
   const fireConfetti = useConfetti();
   const highlightCode = useHighlight();
   const renderMermaid = useMermaid();
@@ -930,7 +1029,8 @@ export default function MemoMaster() {
   const [dashWidgets, setDashWidgets] = useState([
     "overview", "mission", "weekly", "plan", "retention", "modules", "quote", "goals"
   ]); // widgets visibles (ordre)
-  const [dashLeaderboard, setDashLeaderboard] = useState([]);
+  // Chantier 6 : comparaison « vs toi-même » (remplace le classement simulé)
+  const [dashSelfCompare, setDashSelfCompare] = useState(null);
   // ── STATS GOD LEVEL v10 ──
   const [statsDailyProgress, setStatsDailyProgress] = useState([]); // [{date, count}]
   const [statsRetentionCurve, setStatsRetentionCurve] = useState([]); // points FSRS
@@ -1028,7 +1128,7 @@ export default function MemoMaster() {
   }, []);
 
   // ── MOBILE DETECTION ───────────────────────────────────────────────────────
-  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [mobileFabOpen, setMobileFabOpen] = useState(false);
   const [mobileAddSheetOpen, setMobileAddSheetOpen] = useState(false);
@@ -1037,9 +1137,15 @@ export default function MemoMaster() {
   const touchMainStartY = useRef(0);
   const mainViewOrder = ["dashboard", "list", "add", "projects", "certifications", "opensource", "practice"];
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    // Un seul et même seuil pour le JS, le matchMedia du home et le CSS.
+    const mql = window.matchMedia(MOBILE_MQ);
+    const handleResize = () => setIsMobile(mql.matches);
+    mql.addEventListener?.("change", handleResize);
     window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    return () => {
+      mql.removeEventListener?.("change", handleResize);
+      window.removeEventListener("resize", handleResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -1114,7 +1220,7 @@ export default function MemoMaster() {
   // Aperçu de la session du jour (couche 2) — mémoïsé, sert aussi à la
   // bannière leech (couche 4) pour ne PAS recalculer les leeches deux fois.
   const dailySessionPreview = useMemo(
-    () => composeDailySession(todayReviews.filter((e) => !isNewCard(e)), { todayISO: currentDate }),
+    () => composeDailySession(todayReviews, { todayISO: currentDate }),
     [todayReviews, currentDate],
   );
   // Couche 4 : leeches sévères qui ne sont PAS déjà dans la session du jour.
@@ -1363,10 +1469,39 @@ export default function MemoMaster() {
     }
   }, [view, unlockedBadges.length, lastViewedBadgesCount]);
 
+  // CHANTIER 1 — Migration douce : au 1er chargement post-mise à jour, on
+  // crédite l'équivalent de l'ancien powerLevel dérivé (une seule fois).
   useEffect(() => {
-    const calcPower = expressions.length * 10 + stats.streak * 50 + stats.examsDone * 100 + unlockedBadges.length * 200;
-    setPowerLevel(calcPower);
-  }, [expressions, stats, unlockedBadges]);
+    if (!loaded || !xpLoaded) return;
+    migrateOnce({
+      cards: expressions.length,
+      streak: stats.streak || 0,
+      examsDone: stats.examsDone || 0,
+      badges: unlockedBadges.length,
+    });
+  }, [loaded, xpLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Purge des badges morts (catégorie « Héritage » supprimée — chantier 3).
+  useEffect(() => {
+    if (!loaded) return;
+    setUnlockedBadges((prev) => {
+      const cleaned = prev.filter((id) => !RETIRED_BADGE_IDS.includes(id));
+      return cleaned.length === prev.length ? prev : cleaned;
+    });
+  }, [loaded]);
+
+  // Défilement de la file de badges : un toast après l'autre.
+  useEffect(() => {
+    if (badgeQueue.length === 0) return;
+    setNewBadge(badgeQueue[0]);
+    // CHANTIER 17 — signature haptique du badge : le corps sait avant l'œil.
+    haptic("badge", badgeQueue[0]?.rarity);
+    const t = setTimeout(() => {
+      setNewBadge(null);
+      setBadgeQueue((q) => q.slice(1));
+    }, 2600);
+    return () => clearTimeout(t);
+  }, [badgeQueue]);
 
   // ✅ Debounce : on attend 500ms de stabilité avant d'écrire dans Firebase
   // (réduit de 1500ms à 500ms pour limiter les pertes en cas d'actualisation rapide)
@@ -1439,36 +1574,73 @@ export default function MemoMaster() {
   useEffect(() => { if (projectsLoaded) debouncedSave("projects_v1", projects); }, [projects, projectsLoaded]);
   useEffect(() => { if (loaded) debouncedSave("videos_v3", videos); }, [videos, loaded]);
 
-  const checkBadges = useCallback((exps, st, sess, currentBadges) => {
-    const mastered = exps.filter((e) => e.level >= 7).length;
-    const dueCount = exps.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
-    const state = {
+  // ── CHANTIER 4 : construction de l'état des badges avec une maîtrise
+  // DÉSAMBIGUÏSÉE — `plannedMastered` (FSRS / planification) vs `produced` et
+  // `masteredReal` (production réelle, masteryStages.js).
+  const buildBadgeState = useCallback((exps, st) => {
+    const breakdown = getMasteryBreakdown(exps);
+    const xp = xpRef.current || { totalXP: 0, bestCombo: 0 };
+    const level = getArchetype(xp.totalXP || 0).level;
+    return {
       totalCards: exps.length,
-      streak: st.streak,
-      mastered,
-      dueCount,
-      totalReviews: st.totalReviews,
-      aiGenerated: st.aiGenerated,
-      examsDone: st.examsDone,
-      lateNightSessions: st.lateNightSessions || 0,
-      earlyMorningSessions: st.earlyMorningSessions || 0,
-      bestDayReviews: st.bestDayReviews || 0,
-      modulesCount: categories?.length || 0,
-      pdfsAnalyzed: st.pdfsAnalyzed || 0,
+      streak: st?.streak || 0,
+      longestStreak: st?.longestStreak || 0,
+      // Maîtrise « planifiée » (FSRS + legacy level) — critère unique cardStatus.
+      plannedMastered: countMasteredCards(exps),
+      // Maîtrise « réelle » (production active, masteryStages.js)
+      produced: (breakdown.produced || 0) + (breakdown.mastered || 0),
+      masteredReal: breakdown.mastered || 0,
+      recalledNotProduced: breakdown.recalled || 0,
+      dueCount: exps.filter((e) => isDue(e.nextReview, today()) && isCardActive(e) && !e.paused).length,
+      totalReviews: st?.totalReviews || 0,
+      aiGenerated: st?.aiGenerated || 0,
+      lateNightSessions: st?.lateNightSessions || 0,
+      earlyMorningSessions: st?.earlyMorningSessions || 0,
+      bestDayReviews: st?.bestDayReviews || 0,
+      pomodorosDone: st?.pomodorosDone || 0,
+      pdfsAnalyzed: st?.pdfsAnalyzed || 0,
+      leechesRescued: st?.leechesRescued || 0,
+      freezesUsed: st?.freezesUsed || 0,
+      streakRepairs: st?.streakRepairs || 0,
+      modulesCount: categoriesRef.current?.length || 0,
+      totalXP: xp.totalXP || 0,
+      bestCombo: xp.bestCombo || 0,
+      // CHANTIER 26 — les badges « Discipline » lisent le streak de routine.
+      routinePerfectDays: routineRef.current?.routineStats?.perfectDays || 0,
+      routineStreak: routineRef.current?.routineStreak || 0,
+      level,
     };
-    const newlyUnlocked = BADGES.filter((b) => !currentBadges.includes(b.id) && b.check(state));
-    if (newlyUnlocked.length > 0) {
-      const newIds = [...currentBadges, ...newlyUnlocked.map((b) => b.id)];
-      setUnlockedBadges(newIds);
-      setNewBadge(newlyUnlocked[0]);
-      setTimeout(() => setNewBadge(null), 4000);
-    }
   }, []);
+
+  // ── CHANTIER 18 — progression réelle des badges, réutilisée par le
+  //    near-miss du hero mobile (« Encore 3 fiches pour le badge X »). ──
+  const badgeProgressForHooks = useMemo(() => {
+    try {
+      const state = buildBadgeState(expressions, stats);
+      const done = new Set(unlockedBadges || []);
+      return BADGES
+        .filter((b) => !done.has(b.id) && typeof b.progress === "function")
+        .map((b) => ({ label: b.label, icon: b.icon, ...b.progress(state) }))
+        .filter((b) => b.max > 0 && b.cur < b.max);
+    } catch { return []; }
+  }, [buildBadgeState, expressions, stats, unlockedBadges]);
+
+  const checkBadges = useCallback((exps, st, sess, currentBadges) => {
+    const state = buildBadgeState(exps, st);
+    const already = new Set(currentBadges || []);
+    const newlyUnlocked = BADGES.filter((b) => !already.has(b.id) && b.check(state));
+    if (newlyUnlocked.length > 0) {
+      setUnlockedBadges((prev) => Array.from(new Set([...prev, ...newlyUnlocked.map((b) => b.id)])));
+      // Chantier 3 : TOUS les badges débloqués sont notifiés (file d'attente).
+      setBadgeQueue((q) => [...q, ...newlyUnlocked]);
+    }
+  }, [buildBadgeState]);
 
   const showToast = useCallback((msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3200);
   }, []);
+  useEffect(() => { toastRef.current = showToast; }, [showToast]);
 
   // ── Couche 7 : instrumentation (journal local, aucune dépendance externe) ──
   useEffect(() => {
@@ -1486,6 +1658,8 @@ export default function MemoMaster() {
     const n = Number(count) || 0;
     if (n <= 0) return;
     logReviewLoad({ newCardsCreated: n });
+    awardSource("CARD_CREATED", { streak: statsRef.current?.streak || 0, qty: n, silent: true });
+    trackQuest({ cardsCreated: n });
     setExpressions((prev) => {
       const guard = checkCreationGuard(prev);
       if (guard.warn) setTimeout(() => showToast(guard.message, "info"), 800);
@@ -1496,28 +1670,32 @@ export default function MemoMaster() {
   const updateStreakAfterSession = useCallback((count) => {
     const todayStr = today();
     const hour = new Date().getHours();
+    const bonusTokens = bonusFreezeTokens(getArchetype(xpRef.current?.totalXP || 0).level);
     setStats((prev) => {
-      const yesterday = addDays(todayStr, -1);
-      let ns = prev.streak;
-      if (prev.lastSession === yesterday) ns = prev.streak + 1;
-      else if (prev.lastSession !== todayStr) ns = 1;
+      // ── CHANTIER 2 : plus de reset brutal. Les jours manqués sont d'abord
+      // absorbés par les jetons de gel ; sinon le streak casse mais reste
+      // réparable pendant 24h (rattrapage, 1×/mois).
+      const { stats: advanced, outcome, frozenDays } = advanceStreak(prev, todayStr, bonusTokens);
 
-      // 📊 Compteurs additionnels pour les badges (étaient checkés mais jamais incrémentés)
       const lateNight = (hour >= 0 && hour < 5) ? (prev.lateNightSessions || 0) + 1 : (prev.lateNightSessions || 0);
       const earlyMorning = (hour >= 5 && hour < 7) ? (prev.earlyMorningSessions || 0) + 1 : (prev.earlyMorningSessions || 0);
-      // bestDayReviews = max sur une seule journée
       const todayTotal = (prev.lastSession === todayStr ? (prev.todayReviews || 0) : 0) + count;
       const bestDayReviews = Math.max(prev.bestDayReviews || 0, todayTotal);
 
+      if (outcome === "frozen") {
+        setTimeout(() => showToast(`🧊 ${frozenDays} jour${frozenDays > 1 ? "s" : ""} manqué${frozenDays > 1 ? "s" : ""} absorbé${frozenDays > 1 ? "s" : ""} — streak préservé (${Math.max(0, (advanced.freezeTokens || 0))} jeton(s) restant(s)).`, "info"), 400);
+      } else if (outcome === "broken" && (prev.streak || 0) >= 3) {
+        setTimeout(() => showToast("💔 Streak interrompu — tu peux le réparer dans les 24h avec une session de rattrapage.", "info"), 400);
+      }
+
       const newStats = {
-        ...prev,
-        streak: ns,
-        lastSession: todayStr,
-        totalReviews: prev.totalReviews + count,
+        ...advanced,
+        totalReviews: (prev.totalReviews || 0) + count,
         lateNightSessions: lateNight,
         earlyMorningSessions: earlyMorning,
         todayReviews: todayTotal,
         bestDayReviews,
+        freezesUsed: (prev.freezesUsed || 0) + (outcome === "frozen" ? frozenDays : 0),
       };
       statsRef.current = newStats;
       return newStats;
@@ -1527,11 +1705,21 @@ export default function MemoMaster() {
       if (existing) return prev.map((s) => s.date === todayStr ? { ...s, count: s.count + count } : s);
       return [...prev, { date: todayStr, count }];
     });
-    // Trigger XP Burst animation
-    const xpGain = count * 10; // Example: 10 XP per card
-    setXpBurst({ amount: xpGain, key: Date.now() });
-    setTimeout(() => setXpBurst(null), 3000); // Animation duration
-  }, []);
+  }, [showToast]);
+
+  // ── CHANTIER 2 : rattrapage d'un streak cassé (fenêtre 24h, 1×/mois) ────
+  const attemptStreakRepair = useCallback((reviewsInSession) => {
+    const st = statsRef.current || {};
+    if (!canRepairStreak(st, Date.now(), today())) return false;
+    if ((reviewsInSession || 0) < 10) return false;
+    const { stats: repaired, restored } = repairStreak(st, today());
+    const withCount = { ...repaired, streakRepairs: (st.streakRepairs || 0) + 1 };
+    statsRef.current = withCount;
+    setStats(withCount);
+    awardSource("STREAK_REPAIRED", { streak: restored });
+    showToast(`🛠️ Streak réparé — te revoilà à ${restored} jours !`, "success");
+    return true;
+  }, [awardSource, showToast]);
 
   // ── GOD LEVEL FICHES v9 — Nouveaux états ────────────────────────────────
   const [cardsViewMode, setCardsViewMode] = useState("grid"); // grid | graph | timeline | clusters
@@ -1620,11 +1808,8 @@ export default function MemoMaster() {
 
   // ── GOD LEVEL – Feedback audio & confetti intégré ──────────────────────
   const handleAnswerWithFeedback = useCallback((q, exp) => {
-    if (q === 0) {
-      playAgain();
-    }
-    else if (q === 1) playHard();
-    else playCorrect();
+    // CHANTIER 10 : signature sonore DIFFÉRENCIÉE par note (Again/Hard/Good/Easy).
+    playRating(q);
 
     // Decrease stamina
     const staminaCost = q === 0 ? 5 : q === 1 ? 3 : 1; // More cost for wrong answers
@@ -1644,6 +1829,29 @@ export default function MemoMaster() {
     }
 
     // ── Auto-détection du style d'apprentissage (après 10 révisions) ──
+
+    // ── CHANTIER 1 : XP réelle par révision (difficulté + combo + streak) ──
+    const gain = awardReview(q, statsRef.current?.streak || 0);
+    setXpBurst({ amount: gain.amount, key: Date.now(), combo: gain.comboLabel });
+    // CHANTIER 10 : son dédié au franchissement d'un palier de combo.
+    if (gain.comboLabel && gain.comboCount && [3, 5, 10, 20].includes(gain.comboCount)) {
+      playCombo(gain.comboCount >= 20 ? 4 : gain.comboCount >= 10 ? 3 : gain.comboCount >= 5 ? 2 : 1);
+    }
+    // CHANTIER 8 : événement optionnel `bonusRoll` (coffre surprise).
+    if (gain.bonusRoll) playChest(gain.bonusRoll.rarity);
+    // CHANTIER 9 : progression des quêtes du jour / de la semaine.
+    trackQuest({
+      reviews: 1,
+      goodReviews: q >= 3 ? 1 : 0,
+      bestCombo: gain.comboCount || 0,
+      xp: gain.amount,
+      chests: gain.bonusRoll ? 1 : 0,
+    });
+    setTimeout(() => setXpBurst(null), 2500);
+    // Maîtrise réellement atteinte (critère unifié) → XP dédiée.
+    if (!isCardMastered(exp) && isCardMastered({ ...exp, ...updated, level: newLevel })) {
+      awardSource("CARD_MASTERED", { streak: statsRef.current?.streak || 0, silent: true });
+    }
 
     const done = reviewSessionDone + 1;
     setReviewSessionDone(done);
@@ -1693,6 +1901,14 @@ export default function MemoMaster() {
         }
       } catch (e) { console.warn("[couche5] invitation production", e); }
 
+      awardSource("SESSION_COMPLETED", { streak: statsRef.current?.streak || 0, silent: true });
+      trackQuest({
+        sessions: 1,
+        earlySession: new Date().getHours() < 10 ? 1 : 0,
+        lateSession: new Date().getHours() >= 21 ? 1 : 0,
+      });
+      attemptStreakRepair(done);
+      resetCombo();
       setShowSessionSummary(true);
       setView("review");
     } else {
@@ -1706,7 +1922,7 @@ export default function MemoMaster() {
       setMnemonicSaved(false);
       setCardStartTime(Date.now());
     }
-  }, [playCorrect, playHard, playAgain, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast]);
+  }, [playRating, playCombo, playChest, trackQuest, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast]);
 
   const handleAnswer = useCallback((q) => {
     const exp = reviewQueue[reviewIndex];
@@ -2304,6 +2520,7 @@ ${ATOMIC_CARD_RULES}`;
       aiGenerated: prev.aiGenerated + newExps.length,
       pdfsAnalyzed: (prev.pdfsAnalyzed || 0) + (meta.source === 'pdf' ? 1 : 0),
     }));
+    if (meta.source === 'pdf') awardSource("PDF_ANALYZED", { streak: statsRef.current?.streak || 0 });
     
     if (!meta.silent) {
       if (skippedCount > 0) {
@@ -2504,6 +2721,8 @@ ${ATOMIC_CARD_RULES}`;
         lapseCount: 0,
       } : c));
 
+      setStats((prev) => ({ ...prev, leechesRescued: (prev.leechesRescued || 0) + 1 }));
+      awardSource("LEECH_RESCUED", { streak: statsRef.current?.streak || 0 });
       // Couche 7 : les fiches issues d'un sauvetage « ATOMISER » sont de
       // vraies nouvelles fiches — elles doivent être comptées comme telles.
       if (additions.length) notifyCardsCreated(additions.length);
@@ -2530,6 +2749,7 @@ ${ATOMIC_CARD_RULES}`;
         setExpressions((prev) => prev.map((e) => {
           if (e.id !== card.id) return e;
           const updated = recordProductiveUse(e, { context: "writing", correct: true, note: sentence });
+          setTimeout(() => awardSource(updated.masteryStage === "mastered" ? "CARD_MASTERED" : "CARD_PRODUCED", { streak: statsRef.current?.streak || 0 }), 0);
           const srs = fsrsFromProduction({ ...updated, elapsedDays: null });
           return {
             ...updated,
@@ -3047,7 +3267,13 @@ ${ATOMIC_CARD_RULES}`;
       } else {
         const basePool = catFilter ? todayReviews.filter((e) => e.category === catFilter) : [...todayReviews];
 
-        // ── Couche 3 : budget d'entrée des fiches jamais vues ──────────────
+        // ── Couche 3 : budget d'entrée des fiches JAMAIS VUES uniquement ──
+        // (isNewCard, pas isYoungCard) : une fiche déjà vue une fois
+        // (discovered, reps<2) reste une fiche de RÉVISION et suit la courbe
+        // FSRS naturelle — la gater ici retarderait son 2e passage, or c'est
+        // justement ce rapprochement précoce qui stabilise la mémoire
+        // (Cepeda et al. 2006 ; Bahrick 1979). Elle reste plafonnée comme
+        // toute fiche de révision par composeDailySession juste après.
         const { newCards, reviewCards } = splitNewAndReview(basePool);
         const intake = selectNewCardsForToday(newCards, {
           todayISO: today(),
@@ -4451,14 +4677,29 @@ ${ATOMIC_CARD_RULES}`;
     setDashWeeklyGoals(prev => prev.filter((_, i) => i !== idx));
   };
 
-  // Classement simulé
-  const loadLeaderboard = () => {
-    setDashLeaderboard([
-      { name: "El Hadji Malick", xp: powerLevel, rank: 1 },
-      { name: "Ami(e) 1", xp: Math.floor(powerLevel * 0.8), rank: 2 },
-      { name: "Ami(e) 2", xp: Math.floor(powerLevel * 0.6), rank: 3 },
-    ]);
-  };
+  // ── CHANTIER 6 (option A) : plus de faux classement social. On compare
+  // l'utilisateur À LUI-MÊME (7 derniers jours vs 30 derniers jours).
+  const computeSelfComparison = useCallback(() => {
+    const avg = (days) => {
+      const cutoff = addDays(today(), -days);
+      const rows = (sessions || []).filter((x) => x.date > cutoff);
+      const total = rows.reduce((acc, x) => acc + (x.count || 0), 0);
+      return { total, perDay: total / days };
+    };
+    const week = avg(7);
+    const month = avg(30);
+    const xpWeek = (xpState.daily || []).filter(d => d.date > addDays(today(), -7)).reduce((a, d) => a + d.xp, 0);
+    const xpMonth = (xpState.daily || []).filter(d => d.date > addDays(today(), -30)).reduce((a, d) => a + d.xp, 0);
+    const delta = month.perDay > 0 ? Math.round(((week.perDay - month.perDay) / month.perDay) * 100) : (week.perDay > 0 ? 100 : 0);
+    setDashSelfCompare({
+      reviews7: week.total,
+      perDay7: Math.round(week.perDay * 10) / 10,
+      perDay30: Math.round(month.perDay * 10) / 10,
+      delta,
+      xpWeek,
+      xpPerDay30: Math.round((xpMonth / 30) * 10) / 10,
+    });
+  }, [sessions, xpState]);
 
   // Initialisations
   useEffect(() => {
@@ -4466,6 +4707,7 @@ ${ATOMIC_CARD_RULES}`;
       computeFormIndex();
       computeNextExam();
       computeUrgentCards();
+      computeSelfComparison();
       if (!dashQuote) loadDailyQuote();
     }
   }, [view, expressions, stats]);
@@ -5752,8 +5994,19 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         input:focus, textarea:focus, select:focus { border-color: #4D6BFE !important; box-shadow: 0 0 0 3px rgba(77,107,254,0.15) !important; }
         .tab-active { background: rgba(255,255,255,0.22) !important; font-weight: 700 !important; color: white !important; }
         .code-block { background: ${isDarkMode ? "#060B18" : "#EEF2FF"}; border: 1px solid ${theme.border}; border-radius: 12px; padding: 14px; font-family: 'Fira Code', monospace; white-space: pre-wrap; }
+        /* ══ CHANTIER 21 — MODE ALLÉGÉ (appareil modeste / reduced-motion) ══ */
+        ${PERF_LITE_CSS}
+
+        /* ══ CHANTIER 18/19 — near-miss d'accueil + rituel de réouverture ══ */
+        .mhv2-hero-hook { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 12px; border-radius: 14px; background: rgba(255,255,255,0.12); font-size: 13px; font-weight: 700; line-height: 1.35; animation: hookIn .45s cubic-bezier(0.16,1,0.3,1); }
+        .mhv2-hero-hook-ico { font-size: 15px; flex: 0 0 auto; }
+        @keyframes hookIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+        @keyframes ritualFlame { 0%,100% { transform: scale(1); } 20% { transform: scale(1.45) rotate(-6deg); } 45% { transform: scale(1.2) rotate(5deg); } 70% { transform: scale(1.35) rotate(-3deg); } }
+        .mhv2-ritual { animation: ritualFlame 1.6s cubic-bezier(0.34,1.56,0.64,1) 1; filter: drop-shadow(0 0 10px rgba(251,146,60,0.85)); }
+        body.perf-lite .mhv2-ritual { animation: none; filter: none; }
+
         /* ══ MOBILE RESPONSIVE — SYSTÈME COMPLET ══ */
-        @media (max-width: 767px) {
+        @media (max-width: 767.98px) {
           /* ── Layout ── */
           .desktop-sidebar { display: none !important; }
           .desktop-sidebar-spacer { display: none !important; }
@@ -5894,7 +6147,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         /* Safe area for iPhone with notch — main content reserve via --nav-h */
         @supports (padding-bottom: env(safe-area-inset-bottom)) {
-          @media (max-width: 767px) {
+          @media (max-width: 767.98px) {
             .main-content { padding-bottom: calc(var(--nav-h, 92px) + env(safe-area-inset-bottom, 0px)) !important; }
           }
         }
@@ -5905,11 +6158,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           .app-orb-1 { display: none; } .app-orb-2 { display: none; }
         `}
         /* Hide heavy decorative orbs on mobile (perf + overflow) */
-        @media (max-width: 767px) {
+        @media (max-width: 767.98px) {
           .app-orb-1, .app-orb-2 { display: none !important; }
         }
         /* Hide top navigation bar on mobile — cleaner UX */
-        @media (max-width: 767px) {
+        @media (max-width: 767.98px) {
           .nav-top { display: none !important; }
           .main-content { padding-top: calc(env(safe-area-inset-top, 0px) + 8px) !important; }
         }
@@ -5928,7 +6181,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         .ai-orb-container { position: fixed; bottom: 32px; right: 32px; z-index: 1000; display: flex; align-items: center; gap: 12px; pointer-events: none; }
         .ai-orb-bubble { pointer-events: auto; transform-origin: right center; max-width: 240px; }
         .ai-orb-btn { pointer-events: auto; width: 56px; height: 56px; }
-        @media (max-width: 767px) {
+        @media (max-width: 767.98px) {
           .ai-orb-container { bottom: calc(var(--nav-h, 92px) + 12px + env(safe-area-inset-bottom, 0px)) !important; right: 16px !important; flex-direction: column !important; align-items: flex-end !important; gap: 8px !important; }
           .ai-orb-bubble { max-width: 220px !important; font-size: 12px !important; padding: 10px 14px !important; transform-origin: bottom right !important; }
           .ai-orb-btn { width: 44px !important; height: 44px !important; font-size: 20px !important; }
@@ -5955,6 +6208,13 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         </div>
       )}
 
+      {/* CHANTIER 23 — Défense en profondeur contre la « barre noire » mobile :
+          la règle CSS .nav-top { display:none } ne suffit pas (elle laissait
+          passer une bande fixe pendant le scroll dès que le seuil CSS et le
+          seuil JS divergeaient d'1 px). On ne rend tout simplement plus la nav
+          en mobile, et les trois seuils (isMobile, matchMedia du home, media
+          query CSS) partagent désormais MOBILE_MQ / MOBILE_BREAKPOINT. */}
+      {!isMobile && (
       <nav className="nav-top" style={{
         background: isScrolled
           ? (isDarkMode ? "rgba(7,13,31,0.85)" : "rgba(52,81,209,0.85)")
@@ -6054,10 +6314,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           >
             🔄 Sync
           </button>
-          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900, backdropFilter: "blur(4px)" }}>⚡ {todayReviews.length}</span>}
+          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900, backdropFilter: "blur(4px)" }} title={`Session du jour : ${dailySessionPreview.length || todayReviews.length} fiches sur un total de ${todayReviews.length}`}>⚡ {dailySessionPreview.length || todayReviews.length}</span>}
           {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 900, boxShadow: "0 0 12px rgba(239,68,68,0.5)" }}>🚨</span>}
         </div>
       </nav>
+      )}
 
       {/* ── LAYOUT PRINCIPAL : Sidebar + Content ── */}
       <div style={{ height: zenFocusMode ? 0 : 68, transition: "height 0.3s cubic-bezier(0.4,0,0.2,1)" }} />{/* spacer nav fixe */}
@@ -6129,7 +6390,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               const NAV_GROUPS = [
                 {
                   items: [
-                    { id: "dashboard", icon: "⚡", label: "Accueil", badge: todayReviews.length > 0 ? todayReviews.length : null, badgeColor: "#6B82F5", shortcut: "1", hint: `${todayReviews.length} fiches à réviser` },
+                    { id: "dashboard", icon: "⚡", label: "Accueil", badge: (dailySessionPreview.length || todayReviews.length) > 0 ? (dailySessionPreview.length || todayReviews.length) : null, badgeColor: "#6B82F5", shortcut: "1", hint: `${dailySessionPreview.length || todayReviews.length} fiches au programme` },
                     { id: "routine", icon: "🌟", label: "Routine", shortcut: "R", hint: "Ma routine du jour" },
                     { id: "projects", icon: "🗂️", label: "Projets", badge: projects.filter(p => p.status !== "terminé").length || null, badgeColor: "#4D6BFE", shortcut: "2", hint: `${projects.filter(p => p.status !== "terminé").length} projets actifs` },
                     { id: "add", icon: "✦", label: editingId ? "Éditer" : "Ajouter", shortcut: "3", hint: "Créer une nouvelle fiche" },
@@ -6280,7 +6541,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 view={view}
                 isDarkMode={isDarkMode}
                 badges={{
-                  dashboard: todayReviews.length > 0 ? todayReviews.length : 0,
+                  dashboard: (dailySessionPreview.length || todayReviews.length) > 0 ? (dailySessionPreview.length || todayReviews.length) : 0,
                   list: dueCount > 0 ? dueCount : 0,
                 }}
                 onNavigate={(id) => {
@@ -6440,22 +6701,24 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             touchAction: 'auto',
           }}
         >
-          {view === "dashboard" && (() => {
+          {(view === "dashboard" || view === "home") && (() => {
             // ── Données locales dashboard ──────────────────────────────────────────
             const totalCards = expressions.length;
-            const dueCount = todayReviews.length;
+            const sessionTargetCount = dailySessionPreview.length;
+            const dueCount = sessionTargetCount > 0 ? sessionTargetCount : todayReviews.length;
             const mastPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
             const estMinutes = Math.ceil(dueCount * 0.5);
             const formColor = dashFormIndex >= 70 ? "#4ADE80" : dashFormIndex >= 40 ? "#FACC15" : "#F87171";
             const canReview = dueCount > 0;
 
             // ── MOBILE : Home V2 simplifiée (la version desktop reste intacte ci-dessous) ──
-            const isMobileHome = typeof window !== "undefined" && window.matchMedia("(max-width: 768px)").matches;
+            const isMobileHome = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
             if (isMobileHome) {
+              const sessionPool = dailySessionPreview.length > 0 ? dailySessionPreview : todayReviews;
               const dueModules = categories
                 .map(c => ({
                   name: c.name,
-                  count: expressions.filter(e => e.category === c.name && isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length
+                  count: sessionPool.filter(e => e.category === c.name).length
                 }))
                 .filter(c => c.count > 0);
 
@@ -6477,11 +6740,34 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     mastery: mastPct,
                     nextExamDays: null,
                   }}
+                  // ── CHANTIER 15/16 : quêtes + icône de streak débloquée ──
+                  quests={(questBoard?.daily || []).map((q) => ({
+                    id: q.id, label: q.label, done: q.done,
+                  }))}
+                  questsProgress={{
+                    done: questBoard?.doneCount || 0,
+                    total: questBoard?.total || 0,
+                  }}
+                  onOpenQuests={() => setView("stats")}
+                  streakIcon={unlockedStreakIcon(getArchetype(powerLevel).level)}
+                  // ── CHANTIER 18 : la raison de revenir, dès le hero ──
+                  nearMissInput={{
+                    totalXP: powerLevel,
+                    questState,
+                    sessionBestCombo,
+                    bestComboEver,
+                    badges: badgeProgressForHooks,
+                  }}
+                  // ── CHANTIER 28 : alerte routine identique au desktop ──
+                  routine={routine}
+                  onOpenRoutine={() => setView("routine")}
                   shortcuts={[
                     { id: "routine", icon: "🌟", label: "Routine", sub: "Du Jour", onClick: () => setView("routine") },
+                    { id: "quests", icon: "🎯", label: "Quêtes", sub: `${questBoard?.doneCount || 0}/${questBoard?.total || 3} faites`, onClick: () => setView("quests") },
                     { id: "veille", icon: "📰", label: "Veille tech", sub: "News & IA", onClick: () => setView("veille") },
                     { id: "stats", icon: "📊", label: "Rapport", sub: "Cette semaine", onClick: () => setView("stats") },
                     { id: "list", icon: "🗂️", label: "Mes fiches", sub: `${totalCards} cartes`, onClick: () => setView("list") },
+                    { id: "lab", icon: "🧪", label: "Lab IA", sub: "Explorer", onClick: () => setView("lab") },
                   ]}
                 />
               );
@@ -6493,6 +6779,18 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 display: "flex", flexDirection: "column", gap: 20,
                 pointerEvents: isEnteringFlow ? "none" : "auto"
               }}>
+                {/* ── CHANTIER 27/28 : alerte routine — même composant, même
+                       état et même cadrage positif que sur mobile. ── */}
+                {routine?.summary && (
+                  <RoutineAlertCard
+                    summary={routine.summary}
+                    framing={routine.framing}
+                    routineStreak={routine.routineStreak}
+                    theme={theme}
+                    onOpen={() => setView("routine")}
+                  />
+                )}
+
                 {/* ── COUCHE 4 : détection de leech proactive ─────────────── */}
                 {proactiveLeeches.length > 0 && (
                   <div style={{
@@ -6522,7 +6820,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
                 {/* ══ HERO HEADER ══════════════════════════════════════════════════════ */}
 
-                <HoloCard className="dash-hero-card" glowColor={theme.highlight} style={{
+                <HoloCard holo={holoLevel} className="dash-hero-card" glowColor={theme.highlight} style={{
                   position: "relative", borderRadius: 20, overflow: "hidden",
                   background: theme.gradient,
                   padding: "20px 24px 18px",
@@ -6586,7 +6884,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       {/* Streak */}
                       <div style={{ background: "rgba(255,255,255,0.08)", backdropFilter: "blur(12px)", borderRadius: 12, padding: "8px 14px", textAlign: "center", border: "1px solid rgba(255,255,255,0.12)" }}>
                         <div style={{ fontSize: 18, fontWeight: 900, color: "#FCD34D", lineHeight: 1 }}>{stats.streak}</div>
-                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginTop: 3 }}>🔥 Jours</div>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginTop: 3 }}>{unlockedStreakIcon(getArchetype(powerLevel).level)} Jours</div>
                       </div>
                       {/* Examen */}
                       {dashNextExam && (
@@ -6607,6 +6905,19 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                       {dashQuoteLoading ? "⏳ chargement…" : "↻ nouvelle citation"}
                     </button>
                   </div>
+
+                  {/* ── Vs toi-même (chantier 6) ── */}
+                  {dashSelfCompare && (
+                    <div style={{ marginTop: 12, position: "relative", zIndex: 1, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 14, padding: "10px 14px" }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.75)", textTransform: "uppercase", letterSpacing: 1 }}>📊 Toi vs toi-même</span>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", fontWeight: 700 }}>{dashSelfCompare.perDay7} rév./j (7 j)</span>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>vs {dashSelfCompare.perDay30} (30 j)</span>
+                      <span style={{ fontSize: 12, fontWeight: 900, color: dashSelfCompare.delta >= 0 ? "#34D399" : "#F87171" }}>
+                        {dashSelfCompare.delta >= 0 ? "▲" : "▼"} {Math.abs(dashSelfCompare.delta)}%
+                      </span>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>· {dashSelfCompare.xpWeek} XP cette semaine</span>
+                    </div>
+                  )}
 
                   {/* Barres RPG : XP & Stamina */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, position: 'relative', zIndex: 1, marginTop: 10 }}>
@@ -6640,113 +6951,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   </div>
                 </HoloCard>
 
-                {/* ══ ALERTES ROUTINE ══════════════════════════════════════════════════ */}
-                {(() => {
-                  let checked = {};
-                  try {
-                    const raw = localStorage.getItem("memomaitre_daily_routine_v2");
-                    if (raw) {
-                      const s = JSON.parse(raw);
-                      const t = new Date().toISOString().slice(0, 10);
-                      if (s?.date === t) checked = s.checked || {};
-                    }
-                  } catch {}
-                  const currentPeriod = hour >= 5 && hour < 12
-                    ? "matin"
-                    : hour >= 12 && hour < 14
-                      ? "midi"
-                      : hour >= 14 && hour < 18
-                        ? "midi"
-                        : hour >= 18 && hour < 21
-                          ? "soir"
-                          : hour >= 21 && hour < 23
-                            ? "nuit_debut"
-                            : "nuit";
-                  const periodMeta = {
-                    matin: { label: "Ce matin", color: "#F59E0B" },
-                    midi: { label: "Pauses de la journée", color: "#4D6BFE" },
-                    soir: { label: "Ce soir — 18h · Anglais", color: "#7C3AED" },
-                    nuit_debut: { label: "Après les cours", color: "#0891B2" },
-                    nuit: { label: "Avant de dormir", color: "#6D28D9" },
-                  }[currentPeriod];
-                  const routineSteps = [
-                    { id: "matin_stats", period: "matin", icon: "📊", label: "Stats du jour", duration: 2 },
-                    { id: "matin_revision", period: "matin", icon: "🧠", label: "Révision FSRS", duration: 20 },
-                    { id: "matin_actu", period: "matin", icon: "📰", label: "Actualités Tech", duration: 10 },
-                    { id: "pause_revision", period: "midi", icon: "⚡", label: "Révision en pause", duration: 10 },
-                    { id: "soir_video_en", period: "soir", icon: "🎬", label: "Vidéo Anglais", duration: 10 },
-                    { id: "soir_ajout_expressions", period: "soir", icon: "✍️", label: "Ajouter expressions", duration: 5 },
-                    { id: "soir_ecrit", period: "soir", icon: "📝", label: "Écriture EN", duration: 5 },
-                    { id: "soir_dictee", period: "soir", icon: "🎧", label: "Dictée EN", duration: 5 },
-                    { id: "soir_parler", period: "soir", icon: "🗣️", label: "Parler EN", duration: 5 },
-                    { id: "soir_revision_nouvelles", period: "soir", icon: "🔄", label: "Fiches fraîches", duration: 10 },
-                    { id: "apres_fiches_cours", period: "nuit_debut", icon: "📚", label: "Fiches des cours du jour", duration: 20 },
-                    { id: "apres_revision_cours", period: "nuit_debut", icon: "🎯", label: "Révision fiches cours", duration: 15 },
-                    { id: "nuit_review_finale", period: "nuit", icon: "🌙", label: "Review finale", duration: 20 },
-                    { id: "nuit_expressions_soir", period: "nuit", icon: "💡", label: "Expressions de la nuit", duration: 5 },
-                  ];
-                  const pending = routineSteps.filter(s => s.period === currentPeriod && !checked[s.id]);
-                  const overdue = routineSteps.filter(s => {
-                    const order = ["matin", "midi", "soir", "nuit_debut", "nuit"];
-                    return order.indexOf(s.period) < order.indexOf(currentPeriod) && !checked[s.id];
-                  });
-                  if (pending.length === 0 && overdue.length === 0) return null;
-                  return (
-                    <div style={{
-                      background: theme.cardBg,
-                      border: `1px solid ${theme.border}`,
-                      borderLeft: `3px solid ${periodMeta.color}`,
-                      borderRadius: 16,
-                      padding: "14px 18px",
-                    }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <span style={{ width: 6, height: 6, borderRadius: "50%", background: periodMeta.color, boxShadow: `0 0 8px ${periodMeta.color}` }} />
-                          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.5, textTransform: "uppercase", color: theme.textMuted }}>Alertes routine</span>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: periodMeta.color }}>· {periodMeta.label}</span>
-                        </div>
-                        <button onClick={() => setView("routine")} style={{ background: "none", border: `1px solid ${theme.border}`, color: theme.text, fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>
-                          Ouvrir la routine →
-                        </button>
-                      </div>
-                      {pending.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: overdue.length > 0 ? 10 : 0 }}>
-                          {pending.map(s => (
-                            <div key={s.id} style={{
-                              display: "inline-flex", alignItems: "center", gap: 6,
-                              padding: "6px 10px", borderRadius: 10,
-                              background: theme.inputBg,
-                              border: `1px solid ${theme.border}`,
-                              fontSize: 12, fontWeight: 600, color: theme.text,
-                            }}>
-                              <span>{s.icon}</span>
-                              <span>{s.label}</span>
-                              <span style={{ fontSize: 10, color: theme.textMuted, fontWeight: 500 }}>· {s.duration}min</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {overdue.length > 0 && (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: "#EF4444", textTransform: "uppercase", letterSpacing: 1 }}>⚠ En retard :</span>
-                          {overdue.slice(0, 6).map(s => (
-                            <span key={s.id} style={{
-                              padding: "3px 8px", borderRadius: 8,
-                              background: "rgba(239,68,68,0.08)",
-                              border: "1px solid rgba(239,68,68,0.3)",
-                              fontSize: 11, fontWeight: 600, color: "#EF4444",
-                            }}>
-                              {s.icon} {s.label}
-                            </span>
-                          ))}
-                          {overdue.length > 6 && (
-                            <span style={{ fontSize: 11, color: theme.textMuted }}>+{overdue.length - 6} autres</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
 
                 {/* ══ GOD UPGRADES — Heatmap + Resume + Smart Reco ════════════════ */}
                 <YearHeatmap
@@ -6764,8 +6968,18 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     (typeof lastQuiz !== "undefined" && lastQuiz) && { icon: "❓", label: "Quiz à finir", sublabel: `${lastQuiz.done}/${lastQuiz.total}`, onClick: () => (typeof resumeQuiz === "function" ? resumeQuiz(lastQuiz.id) : setView("review")) },
                   ].filter(Boolean)}
                 />
+                {/* CHANTIER 9 — quêtes du jour + jauge hebdo, toujours visibles */}
+                <DailyQuestBar summary={questBoard} theme={theme} dailyMultiplier={todayMultiplier} />
                 {(() => {
-                  const reco = getSmartSessionRecommendation({ dueCount, streak: stats.streak, hour });
+                  // CHANTIER 13 — cadrage positif + créneau optimal personnel
+                  const promotableCount = countPromotable(expressions, today());
+                  const reco = getSmartSessionRecommendation({
+                    dueCount,
+                    streak: stats.streak,
+                    hour,
+                    promotableCount,
+                    bestHour: bestStudyHour(stats).hour,
+                  });
                   return (
                     <button onClick={() => {
                       if (reco.mode === "explore") { setView("lab"); return; }
@@ -6812,7 +7026,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 ) : (
                   <>
                     {/* ══ BLOC MISSION DU JOUR ════════════════════════════════════════ */}
-                    <HoloCard theme={theme} glowColor={canReview ? "#7B93FF" : "#4ADE80"} style={{
+                    <HoloCard holo={holoLevel} theme={theme} glowColor={canReview ? "#7B93FF" : "#4ADE80"} style={{
                       borderRadius: 24, overflow: "hidden",
                       background: isDarkMode ? "linear-gradient(135deg, #0f172a, #111827)" : "linear-gradient(135deg, #f8faff, #ffffff)",
                       border: `1px solid ${theme.border}`,
@@ -6922,7 +7136,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
                     {/* ══ MODULES ═════════════════════════════════════════════════════ */}
                     {categories.length > 0 && (
-                      <HoloCard className="dash-widget-card" theme={theme} style={{ background: theme.cardBg, borderRadius: 20, padding: "22px 24px", border: `1px solid ${theme.border}` }} glowColor="#7B93FF">
+                      <HoloCard holo={holoLevel} className="dash-widget-card" theme={theme} style={{ background: theme.cardBg, borderRadius: 20, padding: "22px 24px", border: `1px solid ${theme.border}` }} glowColor="#7B93FF">
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
                           <span style={{ fontSize: 16 }}>⚡</span>
                           <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Constellation des Connaissances</span>
@@ -7052,6 +7266,19 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   >Plus tard</button>
                 </div>
               )}
+              {/* CHANTIER 11 — near-miss VRAI + « Encore 5 cartes » chiffré */}
+              <SessionEndHook
+                totalXP={powerLevel}
+                questState={questState}
+                sessionBestCombo={sessionBestCombo}
+                bestComboEver={bestComboEver}
+                avgXPPerReview={sessionSummary?.totalCards ? Math.max(3, Math.round((xpState.daily?.slice(-1)[0]?.xp || 0) / Math.max(1, sessionSummary.totalCards))) : 10}
+                remainingCards={todayReviews.length}
+                theme={theme}
+                compact={isMobile}
+                badges={badgeProgressForHooks}
+                onContinue={(n) => { setShowSessionSummary(false); startReview(null, "standard", todayReviews.slice(0, n)); }}
+              />
               <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
             </div>
           ) : reviewQueue.length === 0 ? (
@@ -7065,6 +7292,10 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 <button onClick={() => { clearInterval(sessionTimerRef.current); setView("dashboard"); if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone); }} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "8px 16px", color: theme.highlight, cursor: "pointer", fontSize: 13, fontWeight: 600 }}>← Quitter</button>
                 <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme.textMuted }}><span style={{ color: theme.highlight, fontWeight: 800 }}>{reviewIndex + 1}</span> / {reviewQueue.length}</div>
                 <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: "#FFFFFF", color: "#3451D1", padding: "4px 12px", borderRadius: 8 }}>⏱ {Math.floor(sessionTimer / 60)}:{(sessionTimer % 60).toString().padStart(2, '0')}</div>
+              </div>
+              {/* CHANTIER 10 — combo TOUJOURS visible pendant la session */}
+              <div style={{ marginBottom: 12 }}>
+                <ComboBar combo={reviewCombo} theme={theme} compact={isMobile} />
               </div>
               <div style={{ height: 8, background: theme.inputBg, borderRadius: 4, marginBottom: 32, overflow: "hidden" }}>
                 <div style={{ height: "100%", background: "linear-gradient(90deg, #3451D1, #4D6BFE)", borderRadius: 4, transition: "width 0.4s ease", width: `${((reviewIndex + 1) / reviewQueue.length) * 100}%` }} />
@@ -9159,9 +9390,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                               <button onClick={() => { startDuel(expandedCard); setExpandedCard(null); }} className="btn-glow hov" style={{ flex: 1, padding: "16px", background: "linear-gradient(135deg, #4D6BFE, #1E3A8A)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                                 <span style={{ fontSize: 20 }}>⚔️</span> Duel IA Instantané
                               </button>
-                              {isNewCard(expandedCard) && (
-                                <button onClick={() => handleLearnNow(expandedCard)} className="hov" title={`Budget du jour : ${newCardsRemainingToday}/${newCardBudget} nouvelles fiches restantes`} style={{ padding: "16px", background: "linear-gradient(135deg,#10B981,#047857)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>
-                                  🚀 Apprendre maintenant <span style={{ opacity: 0.8, fontWeight: 600 }}>({newCardsRemainingToday}/{newCardBudget})</span>
+                              {(isYoungCard(expandedCard) || expandedCard?.paused) && (
+                                <button onClick={() => handleLearnNow(expandedCard)} className="hov" title={`Budget du jour : ${newCardsRemainingToday}/${newCardBudget} slots restants`} style={{ padding: "16px", background: "linear-gradient(135deg,#10B981,#047857)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>
+                                  🚀 Apprendre aujourd'hui <span style={{ opacity: 0.8, fontWeight: 600 }}>({newCardsRemainingToday}/{newCardBudget})</span>
                                 </button>
                               )}
                               <button onClick={() => { startEdit(expandedCard); setExpandedCard(null); }} className="hov" style={{ padding: "16px", background: theme.inputBg, color: theme.text, border: `1px solid ${theme.border}`, borderRadius: 16, fontWeight: 700, cursor: "pointer" }}>
@@ -9484,7 +9715,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 onShowToast={showToast}
                 PomodoroStudy={PomodoroStudy}
                 AskMyDocs={AskMyDocs}
-                pomodoroProps={{ theme, showToast, onPhaseChange: (phase) => { if (phase.id === "flash") setView("review"); } }}
+                pomodoroProps={{ theme, showToast, onPhaseChange: (phase) => { if (phase.id === "flash") setView("review"); }, onComplete: () => { setStats(prev => ({ ...prev, pomodorosDone: (prev.pomodorosDone || 0) + 1 })); awardSource("POMODORO_DONE", { streak: statsRef.current?.streak || 0 }); } }}
                 askMyDocsProps={{ theme, callClaude, docs: (typeof labMultiFiles !== "undefined" ? labMultiFiles : []).map(f => ({ name: f.name, content: f.text || f.content })) }}
 
                 showToast={showToast}
@@ -10551,15 +10782,46 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "routine" && (
             <div style={{ maxWidth: 800, margin: "0 auto", padding: "16px 0", animation: "fadeUp 0.3s ease" }}>
               <DailyRoutineTracker
+                routine={routine}
                 theme={theme}
                 isDarkMode={isDarkMode}
-                onAction={(actionId) => {
+                onBack={() => setView("dashboard")}
+                onAction={(actionId, duration, label, stepId) => {
+                  if (stepId && routine?.checkStep) routine.checkStep(stepId);
                   if (actionId === "review") startReview(null, "standard");
-                  else if (actionId === "add") { setView("add"); }
+                  else if (actionId === "add") setView("add");
                   else if (actionId === "practice") setView("practice");
+                  else if (actionId === "veille") setView("veille");
+                  else if (actionId === "lab") setView("lab");
+                  else if (actionId === "stats") setView("stats");
                   else setView(actionId);
                 }}
               />
+            </div>
+          )}
+
+          {view === "quests" && (
+            <div style={{ maxWidth: 800, margin: "0 auto", padding: "16px 0", animation: "fadeUp 0.3s ease" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <button
+                  type="button"
+                  onClick={() => setView("dashboard")}
+                  style={{
+                    background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.08)",
+                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(77,107,254,0.2)"}`,
+                    color: theme.text || "#0F172A",
+                    fontSize: 13, fontWeight: 800,
+                    padding: "7px 16px", borderRadius: 12,
+                    cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                  }}
+                >
+                  ← Accueil
+                </button>
+                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: theme.text }}>🎯 Mes Quêtes</h2>
+                <div style={{ width: 80 }} />
+              </div>
+              <DailyQuestBar summary={questBoard} theme={theme} dailyMultiplier={todayMultiplier} />
             </div>
           )}
 
@@ -10689,6 +10951,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         ]}
       />
 
+      {/* CHANTIER 8 — révélation du coffre surprise */}
+      <RewardChest chest={lastChest} onClose={clearChest} theme={theme} />
       {xpBurst && (
         <div key={xpBurst.key} style={{
           position: 'fixed', inset: 0, zIndex: 9999,

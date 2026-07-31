@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { composeDailySession, getDailySessionTarget } from '../lib/memoryLab.js';
-import { getNewCardBudget, isNewCard, splitNewAndReview, selectNewCardsForToday, makeIntakeState } from '../lib/newCardIntake.js';
+import { getNewCardBudget, isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, selectNewCardsForToday, makeIntakeState } from '../lib/newCardIntake.js';
 
 const mkCard = (i, over = {}) => ({
   id: `c${i}`, front: `question numero ${i}`, back: `reponse ${i}`,
@@ -46,6 +46,24 @@ test('Couche 3 — seules les fiches jamais vues sont gatées', () => {
   const { newCards, reviewCards } = splitNewAndReview([fresh, failing, mkCard(3)]);
   assert.equal(newCards.length, 1);
   assert.equal(reviewCards.length, 2);
+});
+
+test('Couche 3 — détection des fiches jeunes et exclusion stricte des leeches', () => {
+  const fresh = mkCard(1, { repetitions: 0, reviewHistory: [] });
+  const youngDiscovered = mkCard(2, { repetitions: 1, masteryStage: 'discovered', reviewHistory: [{ date: '2026-07-29', q: 3 }] });
+  const failingLeech = mkCard(3, { repetitions: 0, lapseCount: 4, reviewHistory: [{ q: 0 }, { q: 0 }, { q: 0 }, { q: 0 }] });
+  const oldRecalled = mkCard(4, { repetitions: 2, masteryStage: 'recalled', reviewHistory: [{ q: 3 }, { q: 3 }] });
+  const oldMastered = mkCard(5, { repetitions: 5, masteryStage: 'produced', reviewHistory: [{ q: 5 }] });
+
+  assert.equal(isYoungCard(fresh), true, 'Fiche neuve doit être jeune');
+  assert.equal(isYoungCard(youngDiscovered), true, 'Fiche sans échec vue 1x doit être jeune');
+  assert.equal(isYoungCard(failingLeech), false, 'Un leech ne doit JAMAIS être classé comme jeune');
+  assert.equal(isYoungCard(oldRecalled), false);
+  assert.equal(isYoungCard(oldMastered), false);
+
+  const { youngCards, reviewCards } = splitYoungAndReview([fresh, youngDiscovered, failingLeech, oldRecalled, oldMastered]);
+  assert.equal(youngCards.length, 2);
+  assert.equal(reviewCards.length, 3);
 });
 
 test('Couche 3 — pile > 150 : seulement 5 nouvelles fiches admises', () => {

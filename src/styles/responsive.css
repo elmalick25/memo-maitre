@@ -51,7 +51,7 @@ img, video, canvas, svg {
 }
 
 /* ── 2. ≤ 768 px (mobile) ────────────────────────────────────────────────── */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
 
   /* —— Layout général —— */
   body, #root { font-size: 15px; }
@@ -330,7 +330,7 @@ img, video, canvas, svg {
 }
 .battle-action-btn:hover  { transform: translateY(-4px) scale(1.02); box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
 .battle-action-btn:active { transform: translateY(2px)  scale(0.98); }
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   .battle-action-btn:hover { transform: none; box-shadow: none; }
 }
 
@@ -341,13 +341,13 @@ img, video, canvas, svg {
 }
 
 /* ── 8. Empêche tout débordement horizontal résiduel ─────────────────────── */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   pre, code { white-space: pre-wrap !important; word-break: break-word !important; }
   a { word-break: break-word; }
 }
 
 /* ── Mobile: collapse Fiches omnibar / English tabs / Add tabs / Chat cockpit ── */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   /* Fiches — entire omnibar contents collapse behind ⚙ Vue button. Not sticky. */
   .fiches-omnibar {
     position: static !important;
@@ -397,7 +397,7 @@ img, video, canvas, svg {
 /* ════════════════════════════════════════════════════════════════════════════
  * 🩹 PATCH — Home cut-off / vertical color rail / chat voice
  * ════════════════════════════════════════════════════════════════════════════ */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   /* —— Anti débordement horizontal global, plus strict —— */
   html, body, #root, .main-content, .main-content-area {
     overflow-x: hidden !important;

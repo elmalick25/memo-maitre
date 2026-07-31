@@ -1,3 +1,5 @@
+import { analyzeLeech } from "./memoryLab.js";
+
 // src/lib/newCardIntake.js
 //
 // Couche 3 — Budget d'entrée pour les fiches JAMAIS VUES (repetitions === 0).
@@ -51,6 +53,27 @@ export function isNewCard(card) {
   return (card?.repetitions || 0) === 0 && !(Array.isArray(card?.reviewHistory) && card.reviewHistory.length > 0);
 }
 
+/** 
+ * Une fiche « jeune » : fiche en phase d'apprentissage initiale (jamais vue ou
+ * stade discovered sans historique d'échecs).
+ * ⚠️ Protection Leech & Répétition : une fiche avec un historique d'échecs
+ * (lapseCount > 0, leech, ou révisée plusieurs fois) n'est PAS une jeune fiche ;
+ * elle fait partie du travail de révision/consolidation et ne doit JAMAIS être
+ * retardée par le budget d'entrée.
+ */
+export function isYoungCard(card) {
+  if (!card || typeof card !== 'object') return false;
+  const history = Array.isArray(card.reviewHistory) ? card.reviewHistory : [];
+  if ((card.lapseCount || 0) > 0 || history.length > 1) return false;
+  if (analyzeLeech(card).isLeech) return false;
+
+  if (isNewCard(card)) return true;
+  const reps = Number(card.repetitions) || 0;
+  const stage = card.masteryStage;
+  if (stage === 'discovered' && reps < 2) return true;
+  return false;
+}
+
 /** Sépare une liste en { newCards, reviewCards }. */
 export function splitNewAndReview(cards) {
   const list = Array.isArray(cards) ? cards : [];
@@ -58,6 +81,15 @@ export function splitNewAndReview(cards) {
   const reviewCards = [];
   for (const c of list) (isNewCard(c) ? newCards : reviewCards).push(c);
   return { newCards, reviewCards };
+}
+
+/** Sépare une liste en { youngCards, reviewCards }. */
+export function splitYoungAndReview(cards) {
+  const list = Array.isArray(cards) ? cards : [];
+  const youngCards = [];
+  const reviewCards = [];
+  for (const c of list) (isYoungCard(c) ? youngCards : reviewCards).push(c);
+  return { youngCards, reviewCards };
 }
 
 // ── État d'admission du jour (persisté par l'appelant) ────────────────────

@@ -25,6 +25,43 @@
 //   FSRS  : difficulty haut = difficile  → struggling = tri DESC  (INVERSÉ)
 // ══════════════════════════════════════════════════════════════════════════════
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Couche 8 — Impact réel du plafonnement sur la rétention (Q : "ça baisse mes 90% ?")
+//
+// Le plafond de session (Couche 2) ne modifie JAMAIS `nextReview` : une fiche
+// non servie reste due, inchangée, et continue de décliner selon la courbe de
+// l'oubli. Cette fonction mesure, sur l'état ACTUEL des fiches en retard, la
+// rétrievabilité réelle (R, formule FSRS) vs la cible théorique (~90%) —
+// sans avoir besoin de reconstruire tout l'historique.
+// ══════════════════════════════════════════════════════════════════════════════
+import { fsrsR } from "./fsrs.js";
+import { diffDays } from "../utils/dateUtils.js";
+
+/**
+ * @returns {{ count: number, avgRetention: number|null, avgOverdueDays: number, worstRetention: number|null }}
+ */
+export function estimateBacklogRetention(expressions, todayISO) {
+  const list = (Array.isArray(expressions) ? expressions : []).filter(
+    (e) => e && typeof e.stability === "number" && e.stability > 0 && e.nextReview
+  );
+  let sumR = 0, sumOverdue = 0, counted = 0, worst = 1;
+  for (const e of list) {
+    const overdueDays = Math.max(0, diffDays(todayISO, e.nextReview));
+    if (overdueDays <= 0) continue; // pas en retard → pas concernée
+    const elapsed = (Number(e.interval) || 0) + overdueDays;
+    const r = fsrsR(elapsed, e.stability);
+    sumR += r; sumOverdue += overdueDays; counted++;
+    if (r < worst) worst = r;
+  }
+  if (!counted) return { count: 0, avgRetention: null, avgOverdueDays: 0, worstRetention: null };
+  return {
+    count: counted,
+    avgRetention: +(sumR / counted).toFixed(3),
+    avgOverdueDays: +(sumOverdue / counted).toFixed(1),
+    worstRetention: +worst.toFixed(3),
+  };
+}
+
 // ── Score buttons (repris tels quels depuis SRSEngine, pure UI) ───────────────
 export const SCORE_BUTTONS = [
   { score: 0, label: "Oublié",    emoji: "😵", color: "#EF4444", bg: "rgba(239,68,68,0.12)" },

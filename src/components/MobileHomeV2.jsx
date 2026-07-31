@@ -17,7 +17,24 @@
 //
 // Aucune dépendance externe au design system existant (utilise mobile-redesign.css).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { computeNearMiss } from "../lib/nearMiss";
+import { haptic } from "../lib/haptics";
+import { today as todayStr } from "../utils/dateUtils";
+import RoutineAlertCard from "./RoutineAlertCard";
+
+// CHANTIER 19 — Rituel de réouverture : UNE fois par jour, pas à chaque
+// navigation. Même logique de garde journalière que monthKey/refillFreezeTokens
+// dans streakGuard.js : un flag daté en localStorage, rien de plus.
+const RITUAL_KEY = "mm_home_ritual_day";
+
+function shouldPlayRitual() {
+  try {
+    if (localStorage.getItem(RITUAL_KEY) === todayStr()) return false;
+    localStorage.setItem(RITUAL_KEY, todayStr());
+    return true;
+  } catch { return false; }
+}
 
 export default function MobileHomeV2({
   userName = "Mémorisateur",
@@ -38,8 +55,48 @@ export default function MobileHomeV2({
   onOpenQuests,
   shortcuts,
   children,
+  // ── CHANTIER 16 — icône de streak débloquée par le niveau (parité desktop) ──
+  streakIcon = "🔥",
+  // ── CHANTIER 18 — le near-miss dès l'accueil, pas seulement en fin de session ──
+  nearMissInput = null,
+  // ── CHANTIER 28 — l'alerte routine, identique à celle du desktop ──
+  routine = null,
+  onOpenRoutine,
 }) {
   const [isSelectingModule, setIsSelectingModule] = useState(false);
+  const [ritual, setRitual] = useState(false);
+  const [hookIndex, setHookIndex] = useState(0);
+  const ritualDone = useRef(false);
+
+  // ── CHANTIER 18 — un SEUL near-miss affiché, le plus proche (hooks[0] est
+  //    déjà trié par priorité/proximité), recalculé à chaque ouverture. ──
+  const hooks = useMemo(
+    () => (nearMissInput ? computeNearMiss(nearMissInput).slice(0, 3) : []),
+    [nearMissInput],
+  );
+  const activeHook = hooks.length ? hooks[hookIndex % hooks.length] : null;
+
+  // Rotation lente : on donne plusieurs raisons de revenir sans jamais noyer
+  // le hero (une ligne à la fois).
+  useEffect(() => {
+    if (hooks.length < 2) return undefined;
+    const id = setInterval(() => setHookIndex((i) => i + 1), 6000);
+    return () => clearInterval(id);
+  }, [hooks.length]);
+
+  // ── CHANTIER 19 — le rituel : la flamme s'anime, un haptique discret, une
+  //    seule fois dans la journée. Ouvrir l'app devient gratifiant en soi. ──
+  useEffect(() => {
+    if (ritualDone.current) return;
+    ritualDone.current = true;
+    if (streak > 0 && shouldPlayRitual()) {
+      setRitual(true);
+      haptic("ritual");
+      const t = setTimeout(() => setRitual(false), 2200);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+  }, [streak]);
 
   const greeting = useMemo(() => {
     const h = new Date().getHours();
@@ -57,10 +114,10 @@ export default function MobileHomeV2({
   const hasDue = dueCount > 0;
 
   const defaultShortcuts = [
-    { id: "plan", icon: "🎯", label: "Plan IA", sub: "Recommandé du jour" },
-    { id: "report", icon: "📊", label: "Rapport", sub: "Cette semaine" },
-    { id: "graph", icon: "🌌", label: "Constellation", sub: "Carte des savoirs" },
-    { id: "act", icon: "🔥", label: "Activité", sub: "Heatmap année" },
+    { id: "routine", icon: "🌟", label: "Routine", sub: "Du Jour", onClick: onOpenRoutine },
+    { id: "quests", icon: "🎯", label: "Quêtes", sub: `${questsProgress.done}/${questsProgress.total || 3} faites`, onClick: onOpenQuests },
+    { id: "report", icon: "📊", label: "Rapport", sub: "Cette semaine", onClick: () => onOpenStats?.("report") },
+    { id: "list", icon: "🗂️", label: "Mes fiches", sub: "Toutes les cartes" },
   ];
   const finalShortcuts = shortcuts && shortcuts.length ? shortcuts : defaultShortcuts;
 
@@ -181,7 +238,10 @@ export default function MobileHomeV2({
 
         <div className="mhv2-hero-stats">
           <div className="mhv2-hero-stat" title={`Série de ${streak} jours`}>
-            <span className="mhv2-hero-stat-ico" data-tone="fire">🔥</span>
+            <span
+              className={`mhv2-hero-stat-ico${ritual ? " mhv2-ritual" : ""}`}
+              data-tone="fire"
+            >{streakIcon}</span>
             <span className="mhv2-hero-stat-body">
               <strong>{streak}</strong>
               <em>Jour{streak > 1 ? "s" : ""}</em>
@@ -202,6 +262,14 @@ export default function MobileHomeV2({
             </span>
           </div>
         </div>
+
+        {/* ── CHANTIER 18 — la raison de rentrer, AVANT même de commencer ── */}
+        {activeHook && (
+          <div className="mhv2-hero-hook" key={activeHook.id} aria-live="polite">
+            <span className="mhv2-hero-hook-ico" aria-hidden="true">{activeHook.icon}</span>
+            <span className="mhv2-hero-hook-text">{activeHook.text}</span>
+          </div>
+        )}
       </div>
 
       {/* ── CTA UNIQUE — Le seul élément dominant ── */}
@@ -223,17 +291,29 @@ export default function MobileHomeV2({
           }
         }}
       >
-        <span className="mhv2-cta-icon">
-          {hasDue ? "▶" : "🧪"}
-        </span>
-        <span className="mhv2-cta-title">
-          {hasDue ? "Réviser maintenant" : "Explorer le Lab"}
-        </span>
-        <span className="mhv2-cta-sub">
-          {hasDue
-            ? `${dueCount} fiche${dueCount > 1 ? "s" : ""} · ~${estMinutes || Math.max(1, Math.ceil(dueCount * 0.5))} min`
-            : "Rien à réviser pour l'instant — explore une nouvelle session"}
-        </span>
+        <div className="mhv2-cta-content">
+          <div className="mhv2-cta-badge">
+            <span className="mhv2-cta-icon">{hasDue ? "▶" : "🧪"}</span>
+          </div>
+          <div className="mhv2-cta-body">
+            <span className="mhv2-cta-title">
+              {hasDue ? "Réviser maintenant" : "Explorer le Lab"}
+            </span>
+            <div className="mhv2-cta-meta">
+              {hasDue ? (
+                <>
+                  <span className="mhv2-cta-pill mhv2-cta-pill-count">{dueCount} fiche{dueCount > 1 ? "s" : ""}</span>
+                  <span className="mhv2-cta-pill mhv2-cta-pill-time">~{estMinutes || Math.max(1, Math.ceil(dueCount * 0.5))} min</span>
+                </>
+              ) : (
+                <span className="mhv2-cta-sub">Explorer une nouvelle session</span>
+              )}
+            </div>
+          </div>
+          <div className="mhv2-cta-arrow" aria-hidden="true">
+            ➜
+          </div>
+        </div>
       </button>
 
       {/* ── 3 tuiles compactes ── */}
@@ -251,32 +331,6 @@ export default function MobileHomeV2({
           <div className="mhv2-tile-label">Discussion</div>
         </button>
       </div>
-
-      {/* ── Quêtes simplifiées ── */}
-      {(quests.length > 0 || questsProgress.total > 0) && (
-        <>
-          <div className="mhv2-section-title">Quêtes de la semaine</div>
-          <div className="mhv2-quests" onClick={onOpenQuests} role="button" tabIndex={0}>
-            <div className="mhv2-quests-head">
-              <span className="mhv2-quests-title">
-                {questsProgress.done}/{questsProgress.total} complétée{questsProgress.done > 1 ? "s" : ""}
-              </span>
-              <span className="mhv2-quests-count">{questPct}%</span>
-            </div>
-            <div className="mhv2-quest-bar">
-              <div className="mhv2-quest-bar-fill" style={{ width: `${questPct}%` }} />
-            </div>
-            {quests.slice(0, 3).map(q => (
-              <div key={q.id} className={`mhv2-quest ${q.done ? "done" : ""}`}>
-                <span className={`mhv2-quest-check ${q.done ? "done" : "todo"}`}>
-                  {q.done ? "✓" : "○"}
-                </span>
-                <span className="mhv2-quest-label">{q.label}</span>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
 
       {/* ── Raccourcis ── */}
       <div className="mhv2-section-title">Raccourcis</div>

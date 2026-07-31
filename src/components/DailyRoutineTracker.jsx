@@ -1,263 +1,39 @@
 // 📅 DailyRoutineTracker.jsx
 // Planificateur de Routine Quotidienne — El Hadji Malick
-// Affiche le planning personnalisé, permet de cocher chaque étape,
-// se réinitialise automatiquement à chaque nouveau jour.
+//
+// CHANTIER 24 — SOURCE DE VÉRITÉ UNIQUE : les 14 étapes ne vivent plus ici mais
+// dans lib/routineSteps.js. Ce composant n'est plus qu'une VUE ; l'état (coché,
+// XP, streak de routine) vient de useDailyRoutine, partagé avec l'alerte
+// d'accueil mobile ET desktop (chantier 28). Résultat : impossible que la vue
+// et l'alerte affichent deux vérités différentes.
 //
 // Props :
-//   theme        : { text, textMuted, cardBg, border, inputBg, highlight }
-//   isDarkMode   : bool
-//   onAction     : (actionId) => void  → pour déclencher les actions app (startReview, setView, etc.)
+//   theme, isDarkMode, onAction(actionId)
+//   routine  : valeur de useDailyRoutine() — optionnelle (fallback : hook local)
 
-import { useState, useEffect, useCallback } from "react";
-import { today as todayStr } from "../utils/dateUtils";
-
-// ─── Définition du planning personnalisé ────────────────────────────────────
-// Chaque étape a : id, periode, label, sub, icon, duration (min), actionId
-const ROUTINE_STEPS = [
-  // ─── MATIN ───────────────────────────────────────────────────────────────
-  {
-    id: "matin_stats",
-    period: "matin",
-    periodLabel: "☀️ Matin",
-    periodColor: "#F59E0B",
-    icon: "📊",
-    label: "Stats du jour",
-    sub: "Voir les fiches dues, la progression, le streak",
-    duration: 2,
-    actionId: "stats",
-    tip: "Commence par savoir combien de fiches tu as à réviser aujourd'hui",
-  },
-  {
-    id: "matin_revision",
-    period: "matin",
-    periodLabel: "☀️ Matin",
-    periodColor: "#F59E0B",
-    icon: "🧠",
-    label: "Révision FSRS",
-    sub: "Réviser TOUTES les fiches dues (Flow State recommandé)",
-    duration: 20,
-    actionId: "review",
-    tip: "La révision du matin = mémoire fraîche. C'est le meilleur moment scientifiquement.",
-  },
-  {
-    id: "matin_actu",
-    period: "matin",
-    periodLabel: "☀️ Matin",
-    periodColor: "#F59E0B",
-    icon: "📰",
-    label: "Actualités Tech",
-    sub: "Veille technologique + créer des fiches sur les news importantes",
-    duration: 10,
-    actionId: "veille",
-    tip: "1 news = au moins 1 fiche. Crée des fiches sur ce qui t'intéresse ou t'est utile.",
-  },
-
-  // ─── PAUSE MIDI ────────────────────────────────────────────────────────────
-  {
-    id: "pause_revision",
-    period: "midi",
-    periodLabel: "⚡ Pauses",
-    periodColor: "#4D6BFE",
-    icon: "⚡",
-    label: "Révision en pause",
-    sub: "5-10 min de révision pendant les pauses de la journée",
-    duration: 10,
-    actionId: "review",
-    tip: "Les micro-sessions en pause consolident la mémoire à long terme.",
-  },
-
-  // ─── SOIR 18h ─────────────────────────────────────────────────────────────
-  {
-    id: "soir_video_en",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "🎬",
-    label: "Vidéo Anglais",
-    sub: "Regarder 1 vidéo en anglais (podcast, YouTube, news)",
-    duration: 10,
-    actionId: "practice",
-    tip: "Utilise CoachNewsAnchor pour les actualités en anglais ou Live News Module.",
-  },
-  {
-    id: "soir_ajout_expressions",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "✍️",
-    label: "Ajouter expressions apprises",
-    sub: "Créer des fiches sur les expressions entendues dans la vidéo",
-    duration: 5,
-    actionId: "add",
-    tip: "Tape les expressions dans la section Ajouter → Chat Copilot IA pour les enrichir automatiquement.",
-  },
-  {
-    id: "soir_ecrit",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "📝",
-    label: "Écriture en anglais",
-    sub: "Rédiger quelques phrases ou un court paragraphe en anglais",
-    duration: 5,
-    actionId: "practice",
-    tip: "Dans EnglishPractice → Mode Écriture. Génère une évaluation IA de ta rédaction.",
-  },
-  {
-    id: "soir_dictee",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "🎧",
-    label: "Dictée anglaise",
-    sub: "Écouter et retranscrire un passage en anglais",
-    duration: 5,
-    actionId: "practice",
-    tip: "CoachSpeedListening avec vitesse réduite au départ, puis augmenter progressivement.",
-  },
-  {
-    id: "soir_parler",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "🗣️",
-    label: "Parler anglais",
-    sub: "Conversation orale avec Nova AI ou en mode VoiceMirror",
-    duration: 5,
-    actionId: "practice",
-    tip: "Ouvre EnglishPractice → Nova Voice. Parle de ta journée ou d'un sujet de ton choix.",
-  },
-  {
-    id: "soir_revision_nouvelles",
-    period: "soir",
-    periodLabel: "🌆 Soir (18h)",
-    periodColor: "#7C3AED",
-    icon: "🔄",
-    label: "Révision fiches fraîches",
-    sub: "Réviser les fiches créées le soir (1ère révision à chaud)",
-    duration: 10,
-    actionId: "review",
-    tip: "Crée tes fiches d'abord, puis révise-les immédiatement. Le premier rappel est crucial.",
-  },
-
-  // ─── APRÈS LE SOIR ─────────────────────────────────────────────────────────
-  {
-    id: "apres_fiches_cours",
-    period: "nuit_debut",
-    periodLabel: "📚 Après (cours)",
-    periodColor: "#0891B2",
-    icon: "📚",
-    label: "Fiches des cours du jour",
-    sub: "Créer les fiches sur les matières étudiées aujourd'hui",
-    duration: 20,
-    actionId: "add",
-    tip: "Utilise Batch IA ou le Lab (si tu as un PDF de cours) pour générer vite.",
-  },
-  {
-    id: "apres_revision_cours",
-    period: "nuit_debut",
-    periodLabel: "📚 Après (cours)",
-    periodColor: "#0891B2",
-    icon: "🎯",
-    label: "Révision des fiches de cours",
-    sub: "Réviser immédiatement les fiches créées depuis les cours du jour",
-    duration: 15,
-    actionId: "review",
-    tip: "La révision immédiate après création = taux de mémorisation x2.",
-  },
-
-  // ─── NUIT ──────────────────────────────────────────────────────────────────
-  {
-    id: "nuit_review_finale",
-    period: "nuit",
-    periodLabel: "🌙 Nuit",
-    periodColor: "#6D28D9",
-    icon: "🌙",
-    label: "Review finale",
-    sub: "Terminer les fiches dues restantes si session pas complète",
-    duration: 20,
-    actionId: "review",
-    tip: "Révision avant le sommeil = consolidation pendant la nuit. Très puissant scientifiquement.",
-  },
-  {
-    id: "nuit_expressions_soir",
-    period: "nuit",
-    periodLabel: "🌙 Nuit",
-    periodColor: "#6D28D9",
-    icon: "💡",
-    label: "Expressions de la nuit",
-    sub: "Ajouter les expressions ou mots appris avant de dormir",
-    duration: 5,
-    actionId: "add",
-    tip: "Les 5 dernières minutes avant de dormir = or pur pour la mémorisation.",
-  },
-];
-
-// Grouper les étapes par période
-const PERIODS_ORDER = ["matin", "midi", "soir", "nuit_debut", "nuit"];
-
-function getPeriodMeta(period) {
-  const map = {
-    matin: { label: "☀️ Matin", color: "#F59E0B", bg: "rgba(245,158,11,0.08)" },
-    midi: { label: "⚡ Pauses journée", color: "#4D6BFE", bg: "rgba(77,107,254,0.08)" },
-    soir: { label: "🌆 Soir — 18h (Anglais)", color: "#7C3AED", bg: "rgba(124,58,237,0.08)" },
-    nuit_debut: { label: "📚 Fiches des cours du jour", color: "#0891B2", bg: "rgba(8,145,178,0.08)" },
-    nuit: { label: "🌙 Nuit — Avant de dormir", color: "#6D28D9", bg: "rgba(109,40,217,0.08)" },
-  };
-  return map[period] || { label: period, color: "#888", bg: "rgba(0,0,0,0.05)" };
-}
-
-// ─── Storage key ─────────────────────────────────────────────────────────────
-const STORAGE_KEY = "memomaitre_daily_routine_v2";
-
-function loadRoutineState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch { return null; }
-}
-
-function saveRoutineState(state) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {}
-}
-
-// todayStr is imported from dateUtils
+import { useState } from "react";
+import {
+  ROUTINE_STEPS,
+  PERIODS_ORDER,
+  getPeriodMeta,
+  ROUTINE_TOTAL_MINUTES,
+} from "../lib/routineSteps";
+import useDailyRoutine from "../hooks/useDailyRoutine";
 
 // ─── Composant principal ──────────────────────────────────────────────────────
-export default function DailyRoutineTracker({ theme, isDarkMode, onAction }) {
-  const [checked, setChecked] = useState({});
+export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routine, onBack }) {
+  // Si le parent ne fournit pas l'état partagé, on monte le hook localement :
+  // le composant reste autonome sans jamais dupliquer la logique.
+  const fallback = useDailyRoutine();
+  const { checked, toggleStep, routineStreak, framing } = routine || fallback;
   const [collapsed, setCollapsed] = useState(false);
   const [expandedPeriod, setExpandedPeriod] = useState(null);
-
-  // Charger depuis localStorage
-  useEffect(() => {
-    const saved = loadRoutineState();
-    const today = todayStr();
-    if (saved && saved.date === today) {
-      setChecked(saved.checked || {});
-    } else {
-      // Nouveau jour → reset
-      setChecked({});
-      saveRoutineState({ date: today, checked: {} });
-    }
-  }, []);
-
-  const toggleStep = useCallback((id) => {
-    setChecked(prev => {
-      const next = { ...prev, [id]: !prev[id] };
-      saveRoutineState({ date: todayStr(), checked: next });
-      return next;
-    });
-  }, []);
 
   const doneCount = ROUTINE_STEPS.filter(s => checked[s.id]).length;
   const totalCount = ROUTINE_STEPS.length;
   const pct = Math.round((doneCount / totalCount) * 100);
 
-  const totalMinutes = ROUTINE_STEPS.reduce((sum, s) => sum + s.duration, 0);
+  const totalMinutes = ROUTINE_TOTAL_MINUTES;
   const doneMinutes = ROUTINE_STEPS.filter(s => checked[s.id]).reduce((sum, s) => sum + s.duration, 0);
 
   // Trouver l'étape courante (première non cochée)
@@ -298,6 +74,28 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction }) {
         boxShadow: isComplete ? "0 0 12px rgba(16,185,129,0.6)" : "0 0 16px rgba(124,58,237,0.5)",
       }} />
 
+      {/* ── Bouton Retour ── */}
+      {onBack && (
+        <div style={{ padding: "20px 28px 0" }}>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onBack(); }}
+            style={{
+              background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.08)",
+              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(77,107,254,0.2)"}`,
+              color: theme.text || "#0F172A",
+              fontSize: 13, fontWeight: 800,
+              padding: "7px 16px", borderRadius: 12,
+              cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+              transition: "transform 0.15s ease",
+            }}
+          >
+            ← Accueil
+          </button>
+        </div>
+      )}
+
       {/* ── Header ── */}
       <div style={{ padding: "32px 28px 20px", cursor: "pointer", userSelect: "none" }} onClick={() => setCollapsed(c => !c)}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -313,9 +111,24 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction }) {
               {isComplete ? "🎉" : "🗓️"}
             </div>
             <div>
-              <h3 style={{ margin: 0, fontWeight: 900, color: theme.text, fontSize: 20, letterSpacing: -0.5 }}>
+              <h3 style={{ margin: 0, fontWeight: 900, color: theme.text, fontSize: 20, letterSpacing: -0.5, display: "flex", alignItems: "center", gap: 10 }}>
                 Ma Routine
+                {/* CHANTIER 26 — streak de routine, distinct du streak de révision */}
+                <span
+                  title={`${routineStreak} jour(s) de routine complète d'affilée`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 900,
+                    background: "rgba(16,185,129,0.12)", color: "#10B981",
+                  }}
+                >🌱 {routineStreak}</span>
               </h3>
+              {/* CHANTIER 27 — cadrage positif partagé avec l'alerte d'accueil */}
+              {framing?.text && (
+                <p style={{ margin: "6px 0 0", fontSize: 12.5, color: theme.textMuted, fontWeight: 600 }}>
+                  {framing.icon} {framing.text}
+                </p>
+              )}
               <p style={{ margin: "4px 0 0", fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>
                 {isComplete
                   ? "Journée terminée en beauté !"
@@ -550,7 +363,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction }) {
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onAction(step.actionId, step.duration, step.label);
+                                      onAction(step.actionId, step.duration, step.label, step.id);
                                     }}
                                     className="btn-glow"
                                     style={{
