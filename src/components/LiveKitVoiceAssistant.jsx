@@ -162,7 +162,7 @@ CRITICAL RULES:
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         token={token}
         connect={micReady}
-        audio={false}
+        audio={true}
         video={false}
         onDisconnected={onClose}
         style={{ display: "contents" }}
@@ -336,12 +336,19 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
     };
 
     const onConnected = () => { ensureMicOn(); };
+    const onStateChanged = (state) => {
+      if (state === "connected" || room.state === "connected") {
+        ensureMicOn();
+      }
+    };
     room.on(RoomEvent.Connected, onConnected);
+    room.on(RoomEvent.StateChanged, onStateChanged);
     if (room.state === "connected") onConnected();
 
     return () => {
       cancelled = true;
       room.off(RoomEvent.Connected, onConnected);
+      room.off(RoomEvent.StateChanged, onStateChanged);
     };
   }, [room, localParticipant, onMicBlockedChange, onMicErrorReason]);
 
