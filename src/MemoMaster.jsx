@@ -6706,6 +6706,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             const totalCards = expressions.length;
             const sessionTargetCount = dailySessionPreview.length;
             const dueCount = sessionTargetCount > 0 ? sessionTargetCount : todayReviews.length;
+            const sessionPool = dailySessionPreview.length > 0 ? dailySessionPreview : todayReviews;
             const mastPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
             const estMinutes = Math.ceil(dueCount * 0.5);
             const formColor = dashFormIndex >= 70 ? "#4ADE80" : dashFormIndex >= 40 ? "#FACC15" : "#F87171";
@@ -6714,7 +6715,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             // ── MOBILE : Home V2 simplifiée (la version desktop reste intacte ci-dessous) ──
             const isMobileHome = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
             if (isMobileHome) {
-              const sessionPool = dailySessionPreview.length > 0 ? dailySessionPreview : todayReviews;
               const dueModules = categories
                 .map(c => ({
                   name: c.name,
@@ -7142,7 +7142,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Constellation des Connaissances</span>
                         </div>
                         <KnowledgeGraph
-                          categories={categories} expressions={expressions}
+                          categories={categories} expressions={expressions} sessionPool={sessionPool}
                           theme={theme} isDarkMode={isDarkMode}
                           onNodeClick={(categoryName) => startReview(categoryName, "standard")}
                         />

@@ -6,23 +6,23 @@ import { useMemo, useState } from "react";
 import { lightenColor, darkenColor } from "../lib/colorUtils";
 import { today } from "../utils/dateUtils";
 
-const KnowledgeGraph = ({ categories, expressions, theme, isDarkMode, onNodeClick }) => {
+const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMode, onNodeClick }) => {
   const [hovered, setHovered] = useState(null);
 
   const nodes = useMemo(() => {
     return categories.map((cat) => {
       const catExps = expressions.filter(e => e.category === cat.name);
       const todayStr = today();
-      // Une fiche compte comme "due" si elle est vraiment en retard ET pas maîtrisée.
-      // Exception : les fiches en PAUSE ne comptent QUE si elles ne sont plus "nouvelles"
-      // (level > 0, donc déjà apprises avant la mise en pause) — sinon un module mis en
-      // pause pour ses fiches neuves réapparaîtrait à tort comme "à réviser".
-      const due = catExps.filter(e => {
-        if (!e.nextReview || String(e.nextReview) > String(todayStr)) return false;
-        if ((e.level || 0) >= 7) return false;
-        if (e.paused && (e.level || 0) === 0) return false; // fiche neuve en pause → ignorée
-        return true;
-      }).length;
+      // Si sessionPool est fourni, décompter le nombre exact de fiches de cette session pour ce module.
+      // Sinon, décompter le nombre brut de fiches dues hors maîtrisées et hors fiches neuves en pause.
+      const due = Array.isArray(sessionPool)
+        ? sessionPool.filter(e => e.category === cat.name).length
+        : catExps.filter(e => {
+            if (!e.nextReview || String(e.nextReview) > String(todayStr)) return false;
+            if ((e.level || 0) >= 7) return false;
+            if (e.paused && (e.level || 0) === 0) return false;
+            return true;
+          }).length;
       const mastered = catExps.filter(e => (e.level || 0) >= 7).length;
 
       // ── Progression DOUCE et ROBUSTE ───────────────────────────────────
