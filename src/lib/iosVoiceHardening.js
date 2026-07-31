@@ -129,8 +129,7 @@ export function armIosAudio() {
         typeof navigator !== "undefined" &&
         navigator.mediaDevices &&
         typeof navigator.mediaDevices.getUserMedia === "function" &&
-        !micPermissionPromise &&
-        isIos()
+        !micPermissionPromise
       ) {
         micPermissionPromise = navigator.mediaDevices
           .getUserMedia({

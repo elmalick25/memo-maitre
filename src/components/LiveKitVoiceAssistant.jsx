@@ -157,7 +157,7 @@ CRITICAL RULES:
   // geste initial (armIosAudio), donc ces tentatives n'ont pas besoin d'un
   // nouveau geste utilisateur pour réussir.
   return (
-    <div style={{ position: "fixed", width: 0, height: 0, overflow: "hidden", pointerEvents: "none" }}>
+    <div style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 99999 }}>
       <LiveKitRoom
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         token={token}
