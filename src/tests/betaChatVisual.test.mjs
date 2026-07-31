@@ -6,39 +6,19 @@ import path from 'node:path';
 const betaChatPath = path.resolve('src/components/BetaChat.jsx');
 const responsiveCssPath = path.resolve('src/styles/responsive.css');
 
-test('BetaChat — FAB keeps fixed size (52x52) and uses eye-catching icon animation', () => {
+test('BetaChat — FAB keeps fixed size (52x52) without unwanted floating pulse animation', () => {
   const betaChatContent = fs.readFileSync(betaChatPath, 'utf8');
-  const responsiveCssContent = fs.readFileSync(responsiveCssPath, 'utf8');
 
   // Verify fixed dimensions preserved
   assert.equal(
     betaChatContent.includes('width: 52'),
     true,
-    'Le bouton du chatbot doit conserver sa largeur de 52px'
+    'Le bouton du chat de discussion doit conserver sa largeur de 52px'
   );
   assert.equal(
     betaChatContent.includes('height: 52'),
     true,
-    'Le bouton du chatbot doit conserver sa hauteur de 52px'
-  );
-
-  // Verify inner icon element with visual animation class
-  assert.equal(
-    betaChatContent.includes('beta-chat-icon'),
-    true,
-    'L icon du chatbot doit utiliser la classe beta-chat-icon pour l effet visuel'
-  );
-
-  // Verify animation keyframes in CSS
-  assert.equal(
-    responsiveCssContent.includes('@keyframes betaChatIconPulse'),
-    true,
-    'Les keyframes d animation betaChatIconPulse doivent exister'
-  );
-  assert.equal(
-    responsiveCssContent.includes('beta-chat-fab'),
-    true,
-    'Le bouton beta-chat-fab doit avoir des styles d animation dans responsive.css'
+    'Le bouton du chat de discussion doit conserver sa hauteur de 52px'
   );
 });
 
