@@ -256,7 +256,7 @@ export default function BetaChat() {
           display: "flex", alignItems: "center", justifyContent: "center",
         }}
       >
-        💬
+        <span className="beta-chat-icon">💬</span>
         {unreadHint && !open && (
           <span style={{
             position: "absolute", top: 4, right: 4,
@@ -272,7 +272,7 @@ export default function BetaChat() {
           aria-label="Discussion bêta"
           style={{
             position: "fixed", inset: 0, zIndex: 9999,
-            background: "rgba(0,0,0,.55)",
+            background: "#09090d",
             display: "flex", alignItems: "flex-end", justifyContent: "center",
             fontFamily: "'Outfit', sans-serif",
           }}
@@ -283,14 +283,14 @@ export default function BetaChat() {
             background: "#0f0f13", color: "#fff",
             borderRadius: "20px 20px 0 0",
             display: "flex", flexDirection: "column",
-            border: "1px solid rgba(139,92,246,.25)",
+            border: "1px solid #2d264f",
             overflow: "hidden",
           }}>
             {/* Header */}
             <div style={{
               padding: "14px 16px", display: "flex", alignItems: "center", gap: 10,
-              background: "linear-gradient(135deg,rgba(139,92,246,.15),rgba(99,102,241,.1))",
-              borderBottom: "1px solid rgba(255,255,255,.08)",
+              background: "linear-gradient(135deg,#1e1b3a,#161836)",
+              borderBottom: "1px solid #222232",
             }}>
               <div style={{ fontSize: 20 }}>💬</div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -313,8 +313,8 @@ export default function BetaChat() {
             {isOwner && (
               <div style={{
                 padding: "8px 12px", display: "flex", gap: 6, overflowX: "auto",
-                borderBottom: "1px solid rgba(255,255,255,.06)",
-                background: "rgba(255,255,255,.02)",
+                borderBottom: "1px solid #222232",
+                background: "#13131a",
               }}>
                 {threads.length === 0 && (
                   <div style={{ color: "#71717a", fontSize: 12, padding: "6px 4px" }}>
@@ -329,9 +329,9 @@ export default function BetaChat() {
                       key={t.id}
                       onClick={() => setActiveTester(t.id)}
                       style={{
-                        background: active ? "linear-gradient(135deg,#8b5cf6,#6366f1)" : "rgba(255,255,255,.05)",
+                        background: active ? "linear-gradient(135deg,#8b5cf6,#6366f1)" : "#1c1c28",
                         color: active ? "#fff" : "#d4d4d8",
-                        border: "1px solid " + (active ? "transparent" : "rgba(255,255,255,.08)"),
+                        border: "1px solid " + (active ? "transparent" : "#2a2a38"),
                         borderRadius: 999, padding: "6px 12px", fontSize: 12, fontWeight: 700,
                         cursor: "pointer", whiteSpace: "nowrap",
                       }}
@@ -365,11 +365,11 @@ export default function BetaChat() {
                       maxWidth: "82%",
                       background: mine
                         ? "linear-gradient(135deg,#8b5cf6,#6366f1)"
-                        : "rgba(255,255,255,.06)",
+                        : "#1f1f2c",
                       color: "#fff",
                       padding: "8px 12px", borderRadius: mine ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
                       fontSize: 14, lineHeight: 1.4, wordBreak: "break-word",
-                      border: mine ? "none" : "1px solid rgba(255,255,255,.08)",
+                      border: mine ? "none" : "1px solid #2a2a38",
                     }}>
                       <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div>
                       <div style={{
@@ -388,8 +388,8 @@ export default function BetaChat() {
               onSubmit={(e) => { e.preventDefault(); send(); }}
               style={{
                 padding: 10, display: "flex", gap: 8,
-                borderTop: "1px solid rgba(255,255,255,.08)",
-                background: "rgba(255,255,255,.02)",
+                borderTop: "1px solid #222232",
+                background: "#13131a",
               }}
             >
               <textarea
@@ -403,8 +403,8 @@ export default function BetaChat() {
                 rows={1}
                 style={{
                   flex: 1, resize: "none", maxHeight: 120,
-                  background: "rgba(255,255,255,.05)", color: "#fff",
-                  border: "1px solid rgba(255,255,255,.1)", borderRadius: 12,
+                  background: "#1a1a24", color: "#fff",
+                  border: "1px solid #2a2a38", borderRadius: 12,
                   padding: "10px 12px", fontSize: 14, fontFamily: "inherit",
                   outline: "none",
                 }}

@@ -24,10 +24,21 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 15 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,wasm,mp3}'],
+        globIgnores: ['**/audio/focus/*.mp3'],
         navigateFallback: '/index.html',
         // Ne pas cacher workbox lui-même (géré par Firebase headers)
         navigateFallbackDenylist: [/^\/__/, /\/[^/?]+\.[^/]+$/],
         runtimeCaching: [
+          {
+            urlPattern: ({ url }) => url.pathname.startsWith('/audio/focus/'),
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'focus-music-v1',
+              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] },
+              rangeRequests: true
+            }
+          },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',

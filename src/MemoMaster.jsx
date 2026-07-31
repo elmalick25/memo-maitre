@@ -31,6 +31,9 @@ import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeD
 import { isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, selectNewCardsForToday, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
 import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
 import { getAudioObjectUrl } from "./lib/audioStore";
+import { FOCUS_PLAYLIST, OFFLINE_TRACKS, LIVE_STATIONS, CATEGORY_LABELS, totalPlaylistBytes, formatBytes } from "./lib/musicLibrary";
+import { listDownloadedIds, downloadTrack, downloadAll, deleteTrack as deleteMusicTrack, getDownloadedSize, getTrackObjectUrl, revokeObjectUrl } from "./lib/musicStore";
+import { getNetworkStatus, onNetworkChange, shouldReduceData } from "./lib/networkStatus";
 import useAudioFeedback from "./hooks/useAudioFeedback";
 import useConfetti from "./hooks/useConfetti";
 import useHighlight from "./hooks/useHighlight";
@@ -76,6 +79,8 @@ import RichText from "./components/RichText";
 import MobileSpeedDial from "./components/MobileSpeedDial";
 import MobileAddSheet from "./components/MobileAddSheet";
 import MobileHomeV2 from "./components/MobileHomeV2";
+import AgentPanel from "./components/AgentPanel";
+
 import DailyRoutineTracker from "./components/DailyRoutineTracker";
 import RoutineAlertCard from "./components/RoutineAlertCard";
 import useDailyRoutine from "./hooks/useDailyRoutine";
@@ -521,17 +526,91 @@ export default function MemoMaster() {
   const [lofiVolume, setLofiVolume] = useState(0.4);
   const [lofiStation, setLofiStation] = useState(0);
   const [showLofiPlayer, setShowLofiPlayer] = useState(false);
+  // ── Assistant IA : popup flottant (desktop) / bottom sheet (mobile) ──
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const [agentSheetOpen, setAgentSheetOpen] = useState(false);
+
   const audioRef = useRef(null);
 
-  const RADIO_STATIONS = [
-    { name: "Lofi Study (Deep Work)", url: "https://streams.ilovemusic.de/iloveradio17.mp3", emoji: "📚" },
-    { name: "Piano Focus (Classique)", url: "https://live.radioart.com/fSolo_piano.mp3", emoji: "🎹" },
-    { name: "Alpha Waves & Ambient", url: "https://ice1.somafm.com/deepspaceone-128-mp3", emoji: "🌌" },
-    { name: "Flow State (Minimalist)", url: "https://ice1.somafm.com/groovesalad-128-mp3", emoji: "🌊" },
-    { name: "RDR2 - Stand Unshaken", url: "/audio/unshaken.mp3", emoji: "🤠" },
-    { name: "RDR2 - See The Fire", url: "/audio/seethefire.mp3", emoji: "🔥" },
-    { name: "Train - Conor & Jay", url: "/audio/train.mp3", emoji: "🚂" },
-  ];
+  // ── RADIO FOCUS : playlist hors-ligne (fichiers possédés) + flux live ──
+  const [isOnline, setIsOnline] = useState(() => getNetworkStatus().online);
+  const [downloadedIds, setDownloadedIds] = useState([]);
+  const [dlProgress, setDlProgress] = useState({});      // { [trackId]: 0..1 }
+  const [dlAllProgress, setDlAllProgress] = useState(null); // { index, total }
+  const [offlineSize, setOfflineSize] = useState(0);
+  const [trackSrc, setTrackSrc] = useState(null);
+
+  useEffect(() => onNetworkChange((s) => setIsOnline(!!s.online)), []);
+
+  const currentTrack = FOCUS_PLAYLIST[lofiStation] || FOCUS_PLAYLIST[0];
+
+  const refreshOfflineState = useCallback(async () => {
+    try {
+      const ids = await listDownloadedIds();
+      setDownloadedIds(ids);
+      setOfflineSize(await getDownloadedSize());
+    } catch (e) { console.error("musicStore refresh:", e); }
+  }, []);
+  useEffect(() => { refreshOfflineState(); }, [refreshOfflineState]);
+
+  // Hors-ligne : un flux live n'est pas lisible → bascule sur une piste téléchargée
+  useEffect(() => {
+    if (isOnline || !currentTrack?.live) return;
+    const fallback = FOCUS_PLAYLIST.findIndex((t) => !t.live && downloadedIds.includes(t.id));
+    if (fallback >= 0) setLofiStation(fallback);
+    else setLofiPlaying(false);
+  }, [isOnline, currentTrack, downloadedIds]);
+
+  // Résolution de la source : blob IndexedDB prioritaire, sinon URL réseau
+  useEffect(() => {
+    let cancelled = false;
+    let created = null;
+    (async () => {
+      const { url } = await getTrackObjectUrl(currentTrack);
+      if (cancelled) { revokeObjectUrl(url); return; }
+      created = url;
+      setTrackSrc(url);
+    })();
+    return () => { cancelled = true; revokeObjectUrl(created); };
+  }, [currentTrack, downloadedIds]);
+
+  const handleDownloadTrack = useCallback(async (track) => {
+    if (!track || track.live) return;
+    setDlProgress((p) => ({ ...p, [track.id]: 0 }));
+    const res = await downloadTrack(track, (ratio) => setDlProgress((p) => ({ ...p, [track.id]: ratio })));
+    setDlProgress((p) => { const n = { ...p }; delete n[track.id]; return n; });
+    if (res.ok) { showToast(`« ${track.title} » disponible hors-ligne`, "success"); }
+    else { showToast(`Téléchargement impossible : ${res.reason}`, "error"); }
+    refreshOfflineState();
+  }, [refreshOfflineState]);
+
+  const handleDeleteTrack = useCallback(async (track) => {
+    await deleteMusicTrack(track.id);
+    showToast(`« ${track.title} » retiré du hors-ligne`, "info");
+    refreshOfflineState();
+  }, [refreshOfflineState]);
+
+  const handleDownloadAll = useCallback(async () => {
+    const missing = OFFLINE_TRACKS.filter((t) => !downloadedIds.includes(t.id));
+    if (!missing.length) { showToast("Toute la playlist est déjà hors-ligne", "info"); return; }
+    const bytes = missing.reduce((sum, t) => sum + (t.approxBytes || 0), 0);
+    // Avertissement avant un téléchargement massif (mobile / 4G / Save-Data)
+    const heavy = bytes > 5 * 1024 * 1024 || shouldReduceData();
+    if (heavy && typeof window !== "undefined" && !window.confirm(
+      `Télécharger ${missing.length} piste(s) — environ ${formatBytes(bytes)}.\nSur données mobiles, cela peut consommer votre forfait. Continuer ?`
+    )) return;
+    setDlAllProgress({ index: 0, total: missing.length });
+    const res = await downloadAll(missing, ({ index, total, trackId, ratio }) => {
+      setDlAllProgress({ index, total });
+      setDlProgress((p) => ({ ...p, [trackId]: ratio }));
+    });
+    setDlAllProgress(null);
+    setDlProgress({});
+    if (res.ok) showToast(`Playlist hors-ligne prête (${formatBytes(res.bytes)})`, "success");
+    else showToast(`${res.failed.length} piste(s) non téléchargée(s) : ${res.failed[0]?.reason || ""}`, "error");
+    refreshOfflineState();
+  }, [downloadedIds, refreshOfflineState]);
+
 
   // Gestion native du lecteur audio (plus robuste pour les flux de webradio)
   useEffect(() => {
@@ -5901,6 +5980,96 @@ ${history ? `Historique récent:\n${history}` : ""}`,
     ? { bg: "var(--mm-bg)", text: "var(--mm-fg)", textMuted: "var(--mm-fg-muted)", cardBg: "var(--mm-bg-card)", border: "var(--mm-border)", inputBg: "var(--mm-bg-elev)", highlight: "var(--mm-primary)", nav: "var(--mm-bg-overlay)", gradient: "var(--mm-grad-primary)" }
     : { bg: "var(--mm-bg)", text: "var(--mm-fg)", textMuted: "var(--mm-fg-muted)", cardBg: "var(--mm-bg-card)", border: "var(--mm-border)", inputBg: "var(--mm-bg-elev)", highlight: "var(--mm-primary)", nav: "var(--mm-grad-primary)", gradient: "var(--mm-grad-primary)" };
 
+  // ══ ASSISTANT IA ══════════════════════════════════════════════════════════
+  // Contexte live injecté dans le system prompt à chaque message.
+  const buildAgentContext = useCallback(() => {
+    const totalCards = expressions.length;
+    const dueCount = dailySessionPreview.length > 0 ? dailySessionPreview.length : todayReviews.length;
+    const pool = dailySessionPreview.length > 0 ? dailySessionPreview : todayReviews;
+    const arch = getArchetype(powerLevel);
+    return {
+      view,
+      totalCards,
+      dueCount,
+      masteryPct: totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0,
+      formIndex: dashFormIndex,
+      streak: stats?.streak || 0,
+      level: arch.level,
+      xp: powerLevel,
+      energy: stamina,
+      questsDone: questBoard?.doneCount || 0,
+      questsTotal: questBoard?.total || 0,
+      modules: categories
+        .map((c) => ({ name: c.name, count: pool.filter((e) => e.category === c.name).length }))
+        .filter((c) => c.count > 0)
+        .slice(0, 8),
+      isDarkMode,
+      zen: zenFocusMode,
+      lofi: lofiPlaying,
+    };
+  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying]);
+
+  // Les commandes du CommandPalette exposées comme "tools" exécutables.
+  const runAgentTool = useCallback((tool, args = {}) => {
+    const closeMobile = () => setAgentSheetOpen(false);
+    switch (tool) {
+      case "navigate": {
+        const v = String(args.view || "dashboard");
+        setView(v); closeMobile();
+        return `Ouverture de « ${v} »`;
+      }
+      case "start_review":
+        startReview(args.module || null, "standard"); closeMobile();
+        return args.module ? `Révision lancée : ${args.module}` : "Révision lancée";
+      case "toggle_lofi":
+        setLofiPlaying((p) => !p);
+        return "Radio focus basculée";
+      case "toggle_dark":
+        setIsDarkMode((d) => !d);
+        return "Thème basculé";
+      case "toggle_zen":
+        setZenFocusMode((z) => !z);
+        return "Mode Zen basculé";
+      case "start_pomodoro":
+        navigate("lab/pomodoro"); closeMobile();
+        return "Pomodoro 25 min ouvert";
+      case "open_command_palette":
+        setCmdOpen(true); closeMobile();
+        return "Palette de commandes ouverte";
+      default:
+        return null;
+    }
+  }, [navigate]);
+
+  const agentAsk = useCallback(
+    (systemPrompt, userMessage) =>
+      callClaude(systemPrompt, userMessage, { task: "chat", json: true, maxTokens: 900, temperature: 0.4 }),
+    [],
+  );
+
+  // Mobile : la tuile "Assistant IA" de l'accueil ouvre le bottom sheet.
+  // (la tuile "Discussion" séparée ouvre BetaChat, le chat avec un autre utilisateur / le propriétaire)
+  useEffect(() => {
+    const onOpen = () => setAgentSheetOpen(true);
+    window.addEventListener("open_agent_panel", onOpen);
+    return () => window.removeEventListener("open_agent_panel", onOpen);
+  }, []);
+
+  // Raccourci desktop ⌘J / Ctrl+J
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "j" || e.key === "J")) {
+        e.preventDefault();
+        const isMobile = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
+        if (isMobile) setAgentSheetOpen((o) => !o);
+        else setShowAgentPanel((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+
   const currentCard = reviewQueue.length > 0 ? reviewQueue[reviewIndex] : null;
 
   const activeFacet = useMemo(() => {
@@ -6193,7 +6362,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
       {/* Lecteur Audio natif */}
       <audio
         ref={audioRef}
-        src={RADIO_STATIONS[lofiStation].url}
+        src={trackSrc || undefined}
         loop
         preload="none"
         style={{ display: "none" }}
@@ -10884,7 +11053,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               {showLofiPlayer && (
                 <div style={{
                   position: "absolute", bottom: "calc(100% + 16px)", right: -40,
-                  width: 260, background: isDarkMode ? "rgba(13,21,53,0.95)" : "rgba(255,255,255,0.95)",
+                  width: 300, maxHeight: "70vh", overflowY: "auto",
+                  background: isDarkMode ? "rgba(13,21,53,0.95)" : "rgba(255,255,255,0.95)",
                   backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
                   border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(77,107,254,0.15)"}`,
                   borderRadius: 20, padding: 18, boxShadow: "0 20px 50px rgba(0,0,0,0.3)",
@@ -10896,13 +11066,22 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <button onClick={() => setShowLofiPlayer(false)} style={{ background: "none", border: "none", color: theme.textMuted, cursor: "pointer", fontSize: 16 }}>✕</button>
                   </div>
 
+                  {!isOnline && (
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#F59E0B", background: "rgba(245,158,11,0.12)", padding: "6px 10px", borderRadius: 8 }}>
+                      📴 Hors-ligne — seules les pistes téléchargées sont lisibles.
+                    </div>
+                  )}
+
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <button onClick={() => setLofiPlaying(!lofiPlaying)} style={{ width: 44, height: 44, borderRadius: 14, background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, boxShadow: "0 4px 12px rgba(77,107,254,0.4)" }}>
                       {lofiPlaying ? "⏸" : "▶"}
                     </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: theme.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{RADIO_STATIONS[lofiStation].name}</div>
-                      <div style={{ fontSize: 11, color: lofiPlaying ? "#22C55E" : theme.textMuted, fontWeight: 600, marginTop: 2 }}>{lofiPlaying ? "En direct..." : "En pause"}</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: theme.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{currentTrack?.title}</div>
+                      <div style={{ fontSize: 11, color: lofiPlaying ? "#22C55E" : theme.textMuted, fontWeight: 600, marginTop: 2 }}>
+                        {lofiPlaying ? (currentTrack?.live ? "En direct…" : "Lecture en cours…") : "En pause"}
+                        {!currentTrack?.live && downloadedIds.includes(currentTrack?.id) ? " • hors-ligne" : ""}
+                      </div>
                     </div>
                   </div>
 
@@ -10911,13 +11090,72 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                     <input type="range" min="0" max="1" step="0.05" value={lofiVolume} onChange={e => setLofiVolume(parseFloat(e.target.value))} style={{ flex: 1, accentColor: theme.highlight, cursor: "pointer" }} />
                   </div>
 
+                  {/* Téléchargement global + espace utilisé */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <button
+                      onClick={handleDownloadAll}
+                      disabled={!isOnline || !!dlAllProgress}
+                      style={{ padding: "8px 12px", borderRadius: 10, border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(77,107,254,0.2)"}`, background: "transparent", color: theme.text, fontSize: 11, fontWeight: 800, cursor: (!isOnline || dlAllProgress) ? "not-allowed" : "pointer", opacity: (!isOnline || dlAllProgress) ? 0.5 : 1 }}
+                    >
+                      {dlAllProgress ? `⬇️ Téléchargement ${dlAllProgress.index}/${dlAllProgress.total}…` : `⬇️ Télécharger toute la playlist (~${formatBytes(totalPlaylistBytes())})`}
+                    </button>
+                    <div style={{ fontSize: 10, color: theme.textMuted, fontWeight: 600 }}>
+                      {downloadedIds.length}/{OFFLINE_TRACKS.length} piste(s) hors-ligne • {formatBytes(offlineSize)} utilisés
+                    </div>
+                  </div>
+
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
-                    {RADIO_STATIONS.map((station, idx) => (
-                      <button key={idx} onClick={() => { setLofiStation(idx); setLofiPlaying(true); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 10, background: lofiStation === idx ? (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.1)") : "transparent", border: "none", color: theme.text, cursor: "pointer", textAlign: "left", fontSize: 12, fontWeight: 700, transition: "background 0.2s" }} onMouseEnter={e => { if (lofiStation !== idx) e.currentTarget.style.background = isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.05)" }} onMouseLeave={e => { if (lofiStation !== idx) e.currentTarget.style.background = "transparent" }}>
-                        <span style={{ fontSize: 16 }}>{station.emoji}</span> {station.name}
-                        {lofiStation === idx && lofiPlaying && <span style={{ marginLeft: "auto", color: theme.highlight, fontSize: 12 }}>♪</span>}
-                      </button>
-                    ))}
+                    <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: theme.textMuted, padding: "4px 2px" }}>PISTES ({OFFLINE_TRACKS.length})</div>
+                    {FOCUS_PLAYLIST.map((station, idx) => {
+                      const downloaded = downloadedIds.includes(station.id);
+                      const progress = dlProgress[station.id];
+                      const disabled = station.live ? !isOnline : (!isOnline && !downloaded);
+                      const isLiveHeader = station.live && FOCUS_PLAYLIST[idx - 1] && !FOCUS_PLAYLIST[idx - 1].live;
+                      return (
+                        <div key={station.id}>
+                          {isLiveHeader && (
+                            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1, color: theme.textMuted, padding: "10px 2px 4px" }}>
+                              RADIOS EN DIRECT (en ligne uniquement)
+                            </div>
+                          )}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, opacity: disabled ? 0.4 : 1 }}>
+                            <button
+                              disabled={disabled}
+                              onClick={() => { if (disabled) return; setLofiStation(idx); setLofiPlaying(true); }}
+                              style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: lofiStation === idx ? (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.1)") : "transparent", border: "none", color: theme.text, cursor: disabled ? "not-allowed" : "pointer", textAlign: "left", fontSize: 12, fontWeight: 700, transition: "background 0.2s" }}
+                            >
+                              <span style={{ fontSize: 15 }}>{station.emoji}</span>
+                              <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {station.title}
+                                <span style={{ display: "block", fontSize: 9, fontWeight: 600, color: theme.textMuted }}>
+                                  {CATEGORY_LABELS[station.category] || station.category}
+                                </span>
+                              </span>
+                              {station.live && (
+                                <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 0.5, color: "#EF4444", border: "1px solid #EF4444", borderRadius: 5, padding: "1px 4px" }}>EN DIRECT</span>
+                              )}
+                              {lofiStation === idx && lofiPlaying && <span style={{ color: theme.highlight, fontSize: 12 }}>♪</span>}
+                            </button>
+                            {!station.live && (
+                              progress != null ? (
+                                <div title="Téléchargement…" style={{ width: 34, height: 4, borderRadius: 3, background: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)", overflow: "hidden", flexShrink: 0 }}>
+                                  <div style={{ width: `${Math.round(progress * 100)}%`, height: "100%", background: theme.highlight, transition: "width 0.2s" }} />
+                                </div>
+                              ) : (
+                                <button
+                                  title={downloaded ? "Disponible hors-ligne — cliquer pour supprimer" : "Télécharger pour écouter hors-ligne"}
+                                  onClick={() => (downloaded ? handleDeleteTrack(station) : handleDownloadTrack(station))}
+                                  disabled={!downloaded && !isOnline}
+                                  style={{ background: "none", border: "none", cursor: (!downloaded && !isOnline) ? "not-allowed" : "pointer", fontSize: 13, padding: 2, flexShrink: 0 }}
+                                >
+                                  {downloaded ? "✅" : "⬇️"}
+                                </button>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -10925,6 +11163,30 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 🎧 {lofiPlaying && <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 10, opacity: 0.8 }}><span style={{ width: 2, height: "60%", background: theme.highlight, animation: "pulse 0.8s infinite alternate" }} /><span style={{ width: 2, height: "100%", background: theme.highlight, animation: "pulse 0.8s infinite alternate 0.2s" }} /><span style={{ width: 2, height: "40%", background: theme.highlight, animation: "pulse 0.8s infinite alternate 0.4s" }} /></span>}
               </button>
             </div>
+
+            {/* BOUTON ET POPUP ASSISTANT IA — même moule que la Radio Focus */}
+            <div style={{ position: "relative" }}>
+              <AgentPanel
+                open={showAgentPanel}
+                onClose={() => setShowAgentPanel(false)}
+                variant="popup"
+                theme={theme}
+                isDarkMode={isDarkMode}
+                getContext={buildAgentContext}
+                runTool={runAgentTool}
+                ask={agentAsk}
+              />
+              <button
+                onClick={() => setShowAgentPanel(p => !p)}
+                className="hov robot-assistant-btn"
+                style={{ background: "none", border: "none", color: showAgentPanel ? theme.highlight : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
+                title="Assistant IA (⌘J)"
+              >
+                <span className="robot-assistant-icon">🤖</span>
+              </button>
+            </div>
+
+
 
             <button onClick={() => setIsPomoActive(!isPomoActive)} style={{ background: "none", border: "none", color: isPomoActive ? theme.highlight : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: "bold" }}>
               ⏱ {Math.floor(pomoTime / 60)}:{String(pomoTime % 60).padStart(2, "0")}
@@ -10948,8 +11210,29 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           { icon: "🌙", label: "Basculer thème sombre/clair", action: () => setIsDarkMode(d => !d) },
           { icon: "🎧", label: "Activer/Désactiver Lofi", action: () => setLofiPlaying(p => !p) },
           { icon: "🍅", label: "Lancer une session 25 min", action: () => navigate("lab/pomodoro") },
+          {
+            icon: "🤖", label: "Ouvrir l'assistant IA", shortcut: "J",
+            action: () => {
+              const isMobile = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
+              if (isMobile) setAgentSheetOpen(true); else setShowAgentPanel(true);
+            },
+          },
         ]}
       />
+
+      {/* ASSISTANT IA — bottom sheet plein écran (mobile) */}
+      <AgentPanel
+        open={agentSheetOpen}
+        onClose={() => setAgentSheetOpen(false)}
+        variant="sheet"
+        theme={theme}
+        isDarkMode={isDarkMode}
+        getContext={buildAgentContext}
+        runTool={runAgentTool}
+        ask={agentAsk}
+      />
+
+
 
       {/* CHANTIER 8 — révélation du coffre surprise */}
       <RewardChest chest={lastChest} onClose={clearChest} theme={theme} />
