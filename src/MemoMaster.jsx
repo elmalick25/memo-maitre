@@ -1273,6 +1273,15 @@ export default function MemoMaster() {
   // fini les `level >= 7` inline incohérents avec l'état FSRS.
   // Couche 9 : `isDueCard` est désormais LE seul filtre "due" de toute l'app.
   const todayReviews = useMemo(() => getDueCards(expressions, currentDate), [expressions, currentDate]);
+
+  const reviewedTodayIds = useMemo(() => {
+    return expressions
+      .filter(e => {
+        if (!e.reviewHistory || !Array.isArray(e.reviewHistory)) return false;
+        return e.reviewHistory.some(h => h.date === currentDate);
+      })
+      .map(e => e.id);
+  }, [expressions, currentDate]);
   const masteredCount = useMemo(() => countMasteredCards(expressions), [expressions]);
 
   // ── Couche 3 : budget d'entrée des fiches jamais vues ───────────────────
@@ -1326,8 +1335,8 @@ export default function MemoMaster() {
   }, [todayReviews, newCardIntake, newCardBudget]);
 
   const dailyPlanResult = useMemo(
-    () => buildDailyPlan({ plan: dailyPlanState, dueCards: dailyEligiblePool, todayISO: currentDate }),
-    [dailyPlanState, dailyEligiblePool, currentDate],
+    () => buildDailyPlan({ plan: dailyPlanState, dueCards: dailyEligiblePool, todayISO: currentDate, reviewedTodayIds }),
+    [dailyPlanState, dailyEligiblePool, currentDate, reviewedTodayIds],
   );
 
   // Persistance + resynchronisation du plan (sans boucle de rendu : on ne

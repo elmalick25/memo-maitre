@@ -95,9 +95,22 @@ export function normalizeDailyPlan(raw, todayISO) {
  *            doneCount: number, plannedCount: number, target: number|null,
  *            pileSize: number, capped: boolean, completed: boolean}}
  */
-export function buildDailyPlan({ plan, dueCards, todayISO, compose = composeDailySession } = {}) {
+export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = [], compose = composeDailySession } = {}) {
   const cards = Array.isArray(dueCards) ? dueCards : [];
-  const base = normalizeDailyPlan(plan, todayISO);
+  let base = normalizeDailyPlan(plan, todayISO);
+
+  // Auto-intégration des fiches révisées aujourd'hui (même si faites sur un autre appareil)
+  if (Array.isArray(reviewedTodayIds) && reviewedTodayIds.length > 0) {
+    for (const id of reviewedTodayIds) {
+      if (!base.doneIds.includes(id)) {
+        base.doneIds.push(id);
+        if (!base.ids.includes(id)) {
+          // On l'ajoute au plan officiel (pas en bonus) pour qu'elle consomme le quota.
+          base.ids.push(id);
+        }
+      }
+    }
+  }
 
   const byId = new Map();
   for (const c of cards) if (c && c.id !== undefined) byId.set(c.id, c);
