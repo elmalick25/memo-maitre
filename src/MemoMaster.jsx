@@ -1473,6 +1473,8 @@ export default function MemoMaster() {
           storedProjects,
           storedLivingMemory,
           viewedBadges,
+          fetchedDailyPlan,
+          fetchedNewCardIntake,
         ] = await Promise.all([
           loadInitialExpressionsFromWatermelon(),
           storage.get("categories_v3"),
@@ -1487,6 +1489,8 @@ export default function MemoMaster() {
           storage.get("projects_v1"),
           storage.get("livingMemory_v1"),
           storage.get("badges_viewed_count"),
+          storage.get("dailyPlan_v1"),
+          storage.get("newCardIntake_v1"),
         ]);
 
         // ✅ Toutes les données sont récupérées AVANT de toucher aux états
@@ -1501,6 +1505,8 @@ export default function MemoMaster() {
         setUnlockedBadges(badges || []);
         setVideos(storedVids || []);
         setCustomExams(storedCustomExams || []);
+        setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
+        setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
         setDevLogs(storedLogs || []);
         setRoadmap(storedRoadmap || roadmap);
         setLessonCache(storedLessonCache || {});
@@ -1552,7 +1558,7 @@ export default function MemoMaster() {
       (async () => {
         try {
           // ⚡ Rechargement après changement d'utilisateur — aussi en parallèle
-          const [exps, cats, sess, st, badges, storedProjects, viewedBadges] = await Promise.all([
+          const [exps, cats, sess, st, badges, storedProjects, viewedBadges, fetchedDailyPlan, fetchedNewCardIntake] = await Promise.all([
             loadInitialExpressionsFromWatermelon(),
             storage.get("categories_v3"),
             storage.get("sessions_v3"),
@@ -1560,6 +1566,8 @@ export default function MemoMaster() {
             storage.get("badges_v3"),
             storage.get("projects_v1"),
             storage.get("badges_viewed_count"),
+            storage.get("dailyPlan_v1"),
+            storage.get("newCardIntake_v1"),
           ]);
            const expsRepaired2 = repairCardDates(exps || []).repaired.map(ensureMasteryStage);
            setExpressions(expsRepaired2);
@@ -1571,6 +1579,8 @@ export default function MemoMaster() {
           setUnlockedBadges(badges || []);
           setLastViewedBadgesCount(viewedBadges || 0);
           setProjects(storedProjects || []);
+          setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
+          setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
           setTimeout(() => setLoaded(true), 100);
         } catch (e) {
           console.error("[onAuthReady] Rechargement échoué:", e);
@@ -1588,6 +1598,16 @@ export default function MemoMaster() {
         const { repaired } = repairCardDates(exps || []);
         setExpressionsState(repaired.map(ensureMasteryStage));
         console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
+        
+        // Recharge aussi les états de session qui dictent le compteur de fiches dues
+        forceSyncNow();
+        const [fetchedDailyPlan, fetchedNewCardIntake] = await Promise.all([
+          storage.get("dailyPlan_v1"),
+          storage.get("newCardIntake_v1")
+        ]);
+        setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
+        setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
+        console.info('[sync] État du plan et des nouvelles fiches synchronisé');
       } catch (e) {
         console.warn('[sync] reload après cards_synced KO:', e);
       }
@@ -1713,6 +1733,8 @@ export default function MemoMaster() {
   useEffect(() => { if (loaded) debouncedSave("sessions_v3", sessions); }, [sessions, loaded]);
   useEffect(() => { if (loaded) debouncedSave("stats_v3", stats); }, [stats, loaded]);
   useEffect(() => { if (loaded) debouncedSave("badges_v3", unlockedBadges); }, [unlockedBadges, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("dailyPlan_v1", dailyPlanState); }, [dailyPlanState, loaded]);
+  useEffect(() => { if (loaded) debouncedSave("newCardIntake_v1", newCardIntake); }, [newCardIntake, loaded]);
   useEffect(() => { if (loaded) debouncedSave("customExams_v1", customExams); }, [customExams, loaded]);
   useEffect(() => { if (loaded) debouncedSave("devLogs_v1", devLogs); }, [devLogs, loaded]);
   useEffect(() => { if (loaded) debouncedSave("roadmap_v1", roadmap); }, [roadmap, loaded]);
