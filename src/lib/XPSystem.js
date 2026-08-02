@@ -26,11 +26,13 @@ export function updateStreak(lastDateStr, currentDateStr, currentStreak, longest
   const current = new Date(currentDateStr);
   current.setHours(0, 0, 0, 0);
   
-  const diffTime = Math.abs(current - lastDate);
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  // Écart SIGNÉ : Math.abs() transformait une date passée incohérente
+  // (horloge décalée, changement de fuseau) en « lendemain » et gonflait
+  // la série. Un écart négatif ou nul ne change jamais rien.
+  const diffDays = Math.round((current - lastDate) / (1000 * 60 * 60 * 24));
   
-  if (diffDays === 0) {
-    // Same day, no change
+  if (diffDays <= 0) {
+    // Same day (or clock skew), no change
     return { streak: currentStreak, longest: longestStreak };
   } else if (diffDays === 1) {
     // Next day, increment

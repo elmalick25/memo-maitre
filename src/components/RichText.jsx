@@ -203,7 +203,9 @@ function preprocessContent(content) {
   text = text.replace(/^[•·]\s+/gm, "- ");
 
   // Normalisation des sections Rétro-Ingénierie (⚙️ 1., 🔍 2., ⚠️ 3., 💻 4.) en H3 Markdown
-  const SECTION_HEADER = /^(?:###\s*|\*\*)?([\u{1F300}-\u{1FFFF}⚙️🔍⚠️💻💡📌🔑⚡🗣]\s*\d?\s*\.?\s*[^:\n]+)(?:\*\*)?$/gmu;
+  // Le sélecteur de variation (U+FE0F) présent dans ⚙️/⚠️ doit être consommé,
+  // sinon ces titres ne sont jamais convertis en H3.
+  const SECTION_HEADER = /^(?:###\s*|\*\*)?([\u{1F300}-\u{1FAFF}\u{2699}\u{26A0}\u{26A1}\u{1F511}]\u{FE0F}?\s*\d?\s*\.?\s*[^:\n]+)(?:\*\*)?$/gmu;
   text = text.replace(SECTION_HEADER, "\n### $1\n");
 
   return text;

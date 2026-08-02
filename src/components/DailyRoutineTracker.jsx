@@ -25,7 +25,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
   // Si le parent ne fournit pas l'état partagé, on monte le hook localement :
   // le composant reste autonome sans jamais dupliquer la logique.
   const fallback = useDailyRoutine();
-  const { checked, toggleStep, routineStreak, framing } = routine || fallback;
+  const { checked, toggleStep, routineStreak, framing, resetDay } = routine || fallback;
   const [collapsed, setCollapsed] = useState(false);
   const [expandedPeriod, setExpandedPeriod] = useState(null);
 
@@ -423,8 +423,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
               <button
                 onClick={() => {
                   if (window.confirm("Réinitialiser toutes les étapes pour recommencer ?")) {
-                    setChecked({});
-                    saveRoutineState({ date: todayStr(), checked: {} });
+                    resetDay();
                   }
                 }}
                 style={{

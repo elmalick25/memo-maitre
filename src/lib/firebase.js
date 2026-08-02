@@ -46,20 +46,61 @@ export const setFbUser = (uid) => {
   console.info("[firebase] FB_USER →", uid);
 };
 
-const firebaseApp = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
+// ─── Garde-fou config ────────────────────────────────────────────────────────
+// Sans variables VITE_FIREBASE_*, getAuth() lève `auth/invalid-api-key` AU
+// MOMENT DE L'IMPORT : l'app entière ne monte jamais → écran blanc muet.
+// On détecte le cas en amont et on bascule en mode dégradé (100 % local),
+// avec un message explicite au lieu d'un plantage silencieux.
+export const isFirebaseConfigured = Boolean(
+  FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId
+);
 
-// ─── Firestore avec Persistance Hors Ligne Activée ───────────────────────────
-const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+let firebaseApp = null;
+let _db = null;
+let _fbStorage = null;
+let _auth = null;
+let _provider = null;
 
-export const db = initializeFirestore(firebaseApp, {
-  localCache: isLocalhost
-    ? undefined // évite les blocages IndexedDB en local avec Vite HMR
-    : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
+// Firestore avec persistance hors ligne activée.
+// NB : on couvre localhost ET 127.0.0.1 (même contexte de dev, IndexedDB
+// bloquée par le HMR Vite dans les deux cas).
+const isLocalhost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-export const fbStorage = getStorage(firebaseApp);
-export const auth = getAuth(firebaseApp);
-export const provider = new GoogleAuthProvider();
+if (isFirebaseConfigured) {
+  try {
+    firebaseApp = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
+    _db = initializeFirestore(firebaseApp, {
+      localCache: isLocalhost
+        ? undefined // évite les blocages IndexedDB en local avec Vite HMR
+        : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    });
+    _fbStorage = getStorage(firebaseApp);
+    _auth = getAuth(firebaseApp);
+    _provider = new GoogleAuthProvider();
+  } catch (e) {
+    console.error('[firebase] Initialisation impossible — mode local seul :', e?.message || e);
+    firebaseApp = null;
+    _db = null;
+    _fbStorage = null;
+    _auth = null;
+    _provider = null;
+  }
+} else {
+  console.error(
+    "[firebase] Configuration absente (VITE_FIREBASE_API_KEY / PROJECT_ID / APP_ID). " +
+    "L'app démarre en mode local : aucune synchronisation ni connexion Google."
+  );
+}
+
+export const db = _db;
+export const fbStorage = _fbStorage;
+export const auth = _auth;
+export const provider = _provider;
+
+// Toute la couche Firestore ci-dessous doit être inerte sans `db`.
+const firestoreReady = () => Boolean(_db);
 
 // ─── Clés volumineuses → sharding activé ─────────────────────────────────────
 const SHARDED_KEYS = new Set(["sessions_v3"]);
@@ -166,6 +207,7 @@ async function shardedGet(key) {
 
   const local = lsGet(key);
 
+  if (!firestoreReady()) return local;
   if (isCircuitOpen()) return local;
   if (_bootstrappedKeys.has(key)) return local; // déjà tenté cette session → local uniquement
   _bootstrappedKeys.add(key);
@@ -217,7 +259,7 @@ async function shardedSet(key, val) {
   const uid = getFbUser();
   const ts = Date.now();
   lsSet(key, val, ts);
-  if (!uid) return;
+  if (!uid || !firestoreReady()) return;
   localStorage.setItem(LS_PREFIX + key + "_dirty", "true");
   scheduleFlush();
 }
@@ -261,6 +303,7 @@ async function simpleGet(key) {
 
   const local = lsGet(key);
 
+  if (!firestoreReady()) return local;
   if (isCircuitOpen()) return local;
   if (_bootstrappedKeys.has(key)) return local;
   _bootstrappedKeys.add(key);
@@ -292,7 +335,7 @@ async function simpleSet(key, val) {
   const uid = getFbUser();
   const ts = Date.now();
   lsSet(key, val, ts);
-  if (!uid) return;
+  if (!uid || !firestoreReady()) return;
   localStorage.setItem(LS_PREFIX + key + "_dirty", "true");
   scheduleFlush();
 }
@@ -317,6 +360,7 @@ function scheduleFlush() {
 // prochain cycle — rien n'est perdu, tout reste disponible en localStorage.
 export async function flushDirtyKeys() {
   if (_flushInFlight) return;
+  if (!firestoreReady()) return;
   if (isCircuitOpen()) return;
   const uid = getFbUser();
   if (!uid) return;
@@ -362,6 +406,7 @@ export async function flushDirtyKeys() {
 // ─── API publique (inchangée pour les composants) ───────────────────────────
 export const storage = {
   async get(key) {
+    if (!key) return null;
     return SHARDED_KEYS.has(key) ? shardedGet(key) : simpleGet(key);
   },
   async set(key, val) {
@@ -397,7 +442,7 @@ export const triggerAuthReady = () => authReadyCallbacks.forEach((cb) => cb());
 // ==========================================
 export const publicAnnotationsAPI = {
   async getPublicAnnotations(chapKey) {
-    if (isCircuitOpen()) return [];
+    if (!firestoreReady() || isCircuitOpen()) return [];
     try {
       const q = query(
         collection(db, "public_annotations"),
@@ -417,7 +462,7 @@ export const publicAnnotationsAPI = {
   },
 
   async addPublicAnnotation(chapKey, annotationData) {
-    if (isCircuitOpen()) return null;
+    if (!firestoreReady() || isCircuitOpen()) return null;
     try {
       const docRef = await addDoc(collection(db, "public_annotations"), {
         ...annotationData,
@@ -434,7 +479,7 @@ export const publicAnnotationsAPI = {
   },
 
   async voteForAnnotation(annotationId) {
-    if (isCircuitOpen()) return false;
+    if (!firestoreReady() || isCircuitOpen()) return false;
     try {
       const annRef = doc(db, "public_annotations", annotationId);
       await updateDoc(annRef, {

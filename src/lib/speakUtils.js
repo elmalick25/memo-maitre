@@ -10,7 +10,10 @@ export function extractEnglishSpeechText(text) {
   
   let clean = text
     .replace(/^#+\s*/g, "") // Supprime # ## ###
-    .replace(/[🇬🇧⚠️⚙️🔍🧠💻📌❌✅]/g, "") // Supprime emojis d'en-tête
+    // Supprime les emojis d'en-tête (drapeaux, pictos) sans casser les paires
+    // de substitution : le flag `u` traite chaque emoji comme un seul point de code.
+    .replace(/[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")
+    .replace(/[\u{26A0}\u{2699}\u{1F50D}\u{1F9E0}\u{1F4BB}\u{1F4CC}\u{274C}\u{2705}]\uFE0F?/gu, "")
     .replace(/[`*_~]/g, "") // Supprime markdown formatting (*, _, `)
     .trim();
 

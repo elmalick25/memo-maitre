@@ -9,6 +9,34 @@ import { today as localToday } from "./utils/dateUtils";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
 import SoundwavePlayer from "./components/SoundwavePlayer";
 
+// ── Rotation des clés OpenRouter (fallback vision) ───────────────────────────
+// Ces helpers étaient utilisés dans callVisionAI mais n'existaient nulle part :
+// la 3e étape du fallback levait un ReferenceError au lieu de basculer.
+const OPENROUTER_KEYS = [
+  import.meta.env.VITE_OPENROUTER_API_KEY,
+  import.meta.env.VITE_OPENROUTER_API_KEY_2,
+  import.meta.env.VITE_OPENROUTER_API_KEY_3,
+].filter(Boolean);
+
+const _cd = { or: {} };   // { index: timestamp de fin de cooldown }
+const _idx = { or: { i: 0 } };
+
+function pickKey(keys, cooldowns, cursor) {
+  if (!keys.length) return null;
+  const now = Date.now();
+  for (let n = 0; n < keys.length; n++) {
+    const idx = (cursor.i + n) % keys.length;
+    if ((cooldowns[idx] || 0) > now) continue;
+    cursor.i = (idx + 1) % keys.length;
+    return { key: keys[idx], idx };
+  }
+  return null;
+}
+
+function markCd(cooldowns, idx, ms = 60_000) {
+  cooldowns[idx] = Date.now() + ms;
+}
+
 // ── IndexedDB Helper pour la persistance des Blobs audio ─────────────────────
 const DB_NAME = "lab_audio_db";
 const STORE_NAME = "audio_blobs";
@@ -941,8 +969,24 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
   </div>
 );
 
-export default function Lab({ theme, isDarkMode, categories = [], onAddCards, onShowToast }) {
-  const [tab, setTab] = useState("pdf");
+export default function Lab({
+  theme, isDarkMode, categories = [], onAddCards, onShowToast,
+  // ── Navigation profonde pilotée par le routeur / l'assistant IA ──────────
+  // MemoMaster passe navState.subView ici : navigate("lab/photo") ouvre
+  // directement le bon onglet, sans clic manuel.
+  subView,
+  // ── Outils injectés par MemoMaster (définis dans MemoMasterUpgrades) ─────
+  PomodoroStudy, AskMyDocs, pomodoroProps = {}, askMyDocsProps = {},
+}) {
+  const LAB_TABS_IDS = ["pdf", "resume", "audio", "photo", "pomodoro", "docs"];
+  const initialTab = LAB_TABS_IDS.includes(subView) ? subView : "pdf";
+  const [tab, setTab] = useState(initialTab);
+
+  // Synchronise l'onglet quand la route change (assistant IA, palette, deep link).
+  useEffect(() => {
+    if (subView && LAB_TABS_IDS.includes(subView) && subView !== tab) setTab(subView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subView]);
 
   // ── 🔍 GOD MODE : Rayon-X Sémantique ───────────────────────────────────────
   const [xrayKeyword, setXrayKeyword] = useState(null);
@@ -1030,26 +1074,6 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
 
 
 
-  // Restore audio URLs on mount
-  useEffect(() => {
-    const restoreAudio = async () => {
-      let changed = false;
-      const updated = await Promise.all(audioCards.map(async c => {
-        if (c.audioUrl && c.audioUrl.startsWith('blob:')) {
-           // We can't easily check if blob is alive, but usually on reload they aren't.
-           const newUrl = await getAudioObjectUrl(c.id);
-           if (newUrl && newUrl !== c.audioUrl) {
-             changed = true;
-             return { ...c, audioUrl: newUrl };
-           }
-        }
-        return c;
-      }));
-      if (changed) setAudioCards(updated);
-    };
-    if (audioCards.length > 0) restoreAudio();
-  }, []);
-
   // ── État de la session audio ──────────────────────────────────
 
 
@@ -1073,25 +1097,35 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
     }
   }, [categories]);
 
-  // Restaure les URLs d'objets pour les Blobs audio depuis IndexedDB au montage
+  // Restaure les URLs d'objets audio depuis IndexedDB au montage.
+  // (Auparavant deux effets concurrents faisaient ce travail sur le même
+  // instantané du tableau : le dernier à résoudre écrasait l'autre.)
   useEffect(() => {
     let active = true;
     const restoreUrls = async () => {
       const restored = await Promise.all(
         audioCards.map(async (c) => {
-          if (c.audioUrl) return c;
-          const blob = await getAudioBlob(c.id);
-          if (blob && active) {
-            return { ...c, audioUrl: URL.createObjectURL(blob) };
+          // URL manquante -> on la recrée depuis le blob stocké
+          if (!c.audioUrl) {
+            const blob = await getAudioBlob(c.id);
+            if (blob) return { ...c, audioUrl: URL.createObjectURL(blob) };
+            return c;
+          }
+          // URL blob: héritée d'une session précédente -> révoquée, à régénérer
+          // (getAudioObjectUrl n'existe pas dans ce module : l'ancien code
+          // levait un ReferenceError ici.)
+          if (c.audioUrl.startsWith("blob:")) {
+            const blob = await getAudioBlob(c.id);
+            if (blob) return { ...c, audioUrl: URL.createObjectURL(blob) };
           }
           return c;
         })
       );
-      if (active) {
-        setAudioCards(restored);
-      }
+      if (!active) return;
+      const byId = new Map(restored.map((c) => [c.id, c]));
+      setAudioCards((prev) => prev.map((c) => byId.get(c.id) || c));
     };
-    restoreUrls();
+    if (audioCards.length > 0) restoreUrls();
     return () => {
       active = false;
     };
@@ -1204,8 +1238,10 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
       ? `🚀 ${added} fiches ajoutées au module "${pdfModule}" (${skipped} doublon(s) ignoré(s))`
       : `🚀 ${added} fiches ajoutées au module "${pdfModule}" !`);
     // Retirer les ajoutées de pdfCards
-    const addedSet = new Set(cardsToAdd.map(c => c.front));
-    setPdfCards(prev => prev.filter(c => !addedSet.has(c.front)));
+    // Retrait par identité de référence, pas par texte de recto : deux fiches
+    // différentes peuvent partager le même recto générique.
+    const addedRefs = new Set(cardsToAdd);
+    setPdfCards(prev => prev.filter(c => !addedRefs.has(c)));
     setSelectedCardIndexes(new Set());
     if (pdfCards.length - cardsToAdd.length === 0) { setPdfPreview(false); setPdfProgress(""); }
   };
@@ -1816,6 +1852,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       badge: photoItems.filter(p => p.status === "done").length > 0
         ? photoItems.filter(p => p.status === "done").length : null
     },
+    ...(PomodoroStudy ? [{ id: "pomodoro", icon: "🍅", label: "Pomodoro", color: "#DC2626" }] : []),
+    ...(AskMyDocs ? [{ id: "docs", icon: "🔎", label: "Ask My Docs", color: "#7C3AED" }] : []),
   ];
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -1828,6 +1866,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
     resume: "#3451D1", // Violet
     audio: "#EA580C",  // Orange
     photo: "#059669",  // Émeraude
+    pomodoro: "#DC2626", // Rouge
+    docs: "#7C3AED",   // Violet
   };
   const activeColor = tabColors[tab] || "#4D6BFE";
 
@@ -2873,6 +2913,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
           )}
         </div>
       )}
+
+      {/* ── 🍅 POMODORO D'ÉTUDE — route lab/pomodoro ─────────────────────── */}
+      {tab === "pomodoro" && PomodoroStudy && <PomodoroStudy {...pomodoroProps} />}
+
+      {/* ── 🔎 ASK MY DOCS — route lab/docs ──────────────────────────────── */}
+      {tab === "docs" && AskMyDocs && <AskMyDocs {...askMyDocsProps} />}
     </div>
   );
 }

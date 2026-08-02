@@ -136,6 +136,7 @@ export function useNovaAgent({ transcribeWithGroq, callClaude, getNextGroqKey: _
       audio.onerror = () => {
         setIsSpeaking(false);
         audioRef.current = null;
+        URL.revokeObjectURL(audioUrl); // sinon fuite de blob à chaque échec de lecture
       };
       await audio.play().catch((err) => {
         console.warn("[Nova speak] autoplay blocked:", err.message);
@@ -188,6 +189,7 @@ export function useNovaAgent({ transcribeWithGroq, callClaude, getNextGroqKey: _
       audio.onerror = () => {
         setIsSpeaking(false);
         audioRef.current = null;
+        URL.revokeObjectURL(audioUrl); // sinon fuite de blob à chaque échec de lecture
         setError("Impossible de lire l'audio");
       };
 

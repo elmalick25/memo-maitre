@@ -71,11 +71,13 @@ const renderTable = (lines) => {
 // ── Inline (gras, italique, code, liens) ──────────────────────────────────────
 const inline = (s) => {
   let out = escapeHtml(s);
-  // inline code
-  out = out.replace(
-    /`([^`\n]+)`/g,
-    '<code style="background:#8882;padding:1px 6px;border-radius:6px;font-family:\'JetBrains Mono\',monospace;font-size:0.9em;">$1</code>'
-  );
+  // Le code inline est mis de côté AVANT gras/italique/liens : sinon le contenu
+  // d'un `code[a](b)` ou `**x**` était réinterprété comme du Markdown.
+  const codeSpans = [];
+  out = out.replace(/`([^`\n]+)`/g, (_m, code) => {
+    codeSpans.push(code);
+    return `\u0000${codeSpans.length - 1}\u0000`;
+  });
   // bold
   out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
   // italic
@@ -84,6 +86,10 @@ const inline = (s) => {
   out = out.replace(
     /\[([^\]]+)\]\(([^)\s]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener" style="color:#4D6BFE;text-decoration:underline;">$1</a>'
+  );
+  // Restitution du code inline, à l'abri des transformations ci-dessus.
+  out = out.replace(/\u0000(\d+)\u0000/g, (_m, i) =>
+    `<code style="background:#8882;padding:1px 6px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:0.9em;">${codeSpans[Number(i)]}</code>`
   );
   return out;
 };

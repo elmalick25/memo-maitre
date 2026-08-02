@@ -250,6 +250,17 @@ export default function EnglishInTheWild({
   const shadowChunksRef = useRef([]);
   const shadowTimerRef = useRef(null);
 
+  // Cleanup au démontage : sans ça, quitter l'onglet pendant un enregistrement
+  // laissait le micro actif et le timeout de 15 s appelait setState après coup.
+  useEffect(() => () => {
+    if (shadowTimerRef.current) clearTimeout(shadowTimerRef.current);
+    try {
+      const rec = shadowRecorderRef.current;
+      if (rec?.state === "recording") rec.stop();
+      rec?.stream?.getTracks?.().forEach(t => t.stop());
+    } catch { /* ignore */ }
+  }, []);
+
   // ── Sauvegarde ────────────────────────────────────────────────────────────
   const [savedToMemo, setSavedToMemo] = useState([]);   // indices des expressions sauvegardées
   const [history, setHistory] = useState([]);           // sessions passées
@@ -264,6 +275,9 @@ export default function EnglishInTheWild({
 
   // ── Vocab in Context Mining States ────────────────────────────────────────────
   const [miningState, setMiningState] = useState({ isOpen: false, loading: false, word: "", context: "", data: null, tab: "formal", testMode: false });
+  // Réponses du mini-test de rétention (l'état manquait : le rendu du mode test
+  // plantait avec « miningTestAnswers is not defined »).
+  const [miningTestAnswers, setMiningTestAnswers] = useState({});
 
   // ── Phase 3/4/5 — Pipeline production active (hook partagé avec EnglishPractice)
   // Analyse le texte produit par l'utilisateur (dictée + shadowing) à la fin d'une

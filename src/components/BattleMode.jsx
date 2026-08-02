@@ -109,6 +109,11 @@ export default function BattleMode({ callClaude, storage, showToast, theme, isDa
   const timeRemainingRef = useRef(0);
   const rAFRef = useRef(null);
   const lastTimeRef = useRef(0);
+  // Drapeau synchrone : `phase` ne peut pas servir de garde dans la boucle rAF
+  // (la closure capture la valeur du rendu courant, donc encore "select" quand
+  // startTimer est planifié juste après setPhase("play") → le chrono ne
+  // démarrait jamais).
+  const runningRef = useRef(false);
 
   // ── CHARGEMENT STATS ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -127,12 +132,14 @@ export default function BattleMode({ callClaude, storage, showToast, theme, isDa
 
   // ── LOGIQUE TIMER ─────────────────────────────────────────────────────────
   const startTimer = (seconds) => {
+    if (rAFRef.current) cancelAnimationFrame(rAFRef.current);
+    runningRef.current = true;
     timeRemainingRef.current = seconds;
     // eslint-disable-next-line react-hooks/purity
     lastTimeRef.current = performance.now();
     
     const updateTimer = (currentTime) => {
-      if (phase !== "play") return; // Arrêt propre
+      if (!runningRef.current) return; // Arrêt propre
       
       const deltaTime = (currentTime - lastTimeRef.current) / 1000;
       lastTimeRef.current = currentTime;
@@ -152,6 +159,7 @@ export default function BattleMode({ callClaude, storage, showToast, theme, isDa
       if (timeRemainingRef.current > 0) {
         rAFRef.current = requestAnimationFrame(updateTimer);
       } else {
+        runningRef.current = false;
         handleTimeUp();
       }
     };
@@ -160,7 +168,9 @@ export default function BattleMode({ callClaude, storage, showToast, theme, isDa
   };
 
   const stopTimer = () => {
+    runningRef.current = false;
     if (rAFRef.current) cancelAnimationFrame(rAFRef.current);
+    rAFRef.current = null;
   };
 
   const handleTimeUp = () => {

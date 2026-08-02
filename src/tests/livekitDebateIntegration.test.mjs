@@ -37,8 +37,11 @@ test('LiveKitVoiceAssistant : Transmet metadata au niveau racine du JWT', () => 
   assert.match(src, /metadata:\s*(?:metadataString|JSON\.stringify)/, "LiveKitVoiceAssistant doit transmettre metadata dans le token JWT");
 });
 
-test('agent.py : Ne surcharge pas le greeting on_enter avec un texte générique hors-sujet', () => {
+test('agent.py : Ne surcharge pas le greeting on_enter avec un texte générique hors-sujet', (t) => {
   const agentPyPath = path.resolve(__dirname, '../../agent.py');
+  // agent.py vit hors du dossier src : sur un checkout src-only le test est
+  // sans objet plutôt qu'en échec (avant ce correctif : crash ENOENT).
+  if (!fs.existsSync(agentPyPath)) return t.skip('agent.py absent de ce checkout');
   const agentPy = fs.readFileSync(agentPyPath, 'utf8');
   assert.doesNotMatch(agentPy, /instructions="""Greet the user and offer your assistance\."""/, "on_enter ne doit pas surcharger le prompt avec une salutation générique");
   assert.match(agentPy, /extract_instructions/, "agent.py doit utiliser la fonction d'extraction d'instructions multi-sources");

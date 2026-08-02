@@ -129,10 +129,17 @@ export function useXP(storage, showToast, callClaude) {
       };
 
       if (todayIndex >= 0) {
-        newState.sessionsHistory[todayIndex] = todayRecord;
+        // FIX : `{ ...prev }` est une copie superficielle → `newState.sessionsHistory`
+        // est LE MÊME tableau que celui de l'état précédent. L'écriture par index
+        // mutait donc l'état React en place (re-renders manqués, mémoïsations
+        // faussées). On remplace l'entrée du jour dans un nouveau tableau.
+        newState.sessionsHistory = newState.sessionsHistory.map((s, i) =>
+          i === todayIndex ? todayRecord : s
+        );
       } else {
         newState.sessionsHistory = [...newState.sessionsHistory, todayRecord].slice(-30);
       }
+
       
       // Sauvegarde dans le storage depuis l'updater (bien que techniquement asynchrone, ok car storage.set n'interagit pas avec React)
       storage.set(STORAGE_KEY, newState);

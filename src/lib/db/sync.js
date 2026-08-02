@@ -74,6 +74,7 @@ export async function pushExpressionsToFirebase() {
 
 export function listenToSyncSignal(uid, onSignal) {
   if (!uid) return () => {};
+  if (!firestoreDb) return () => {}; // Firebase non configuré → mode local seul
   if (isCircuitOpen()) {
     console.info('[sync] Circuit breaker actif — listenToSyncSignal désactivé pour cette session.');
     return () => {};
@@ -175,6 +176,7 @@ async function bumpSyncSignal(uid) {
 export async function syncWithFirebase(forceReconcile = false) {
   const uid = getFbUser()
   if (!uid) return false
+  if (!firestoreDb) return false // Firebase non configuré → mode local seul
   if (!forceReconcile && isCircuitOpen()) return false
   if (isSyncing) {
     rerunRequested = true

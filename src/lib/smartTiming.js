@@ -75,9 +75,15 @@ export function countPromotable(cards = [], todayISO = new Date().toISOString().
 /** Le moment est-il opportun pour un rappel local (± 1 h du créneau) ? */
 export function isGoodReminderMoment(nowHour, stats) {
   const best = bestStudyHour(stats).hour;
-  const diff = Math.abs(((nowHour - best + 36) % 24) - 12);
-  return Math.abs(12 - diff) <= 1;
+  // FIX : l'ancien calcul (`Math.abs(12 - Math.abs(((nowHour-best+36)%24)-12)) <= 1`)
+  // était inversé — il ne renvoyait `true` que lorsque l'heure courante était à
+  // ~12 h du créneau optimal, donc au PIRE moment possible. On mesure ici la
+  // vraie distance circulaire entre les deux heures.
+  const raw = Math.abs(Number(nowHour) - best);
+  const diff = Math.min(raw, 24 - raw);
+  return diff <= 1;
 }
+
 
 /**
  * Rappel LOCAL, opt-in, calé sur le créneau optimal. Ne fait rien si
