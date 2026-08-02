@@ -159,14 +159,20 @@ function App() {
     // partagé. Avant : chaque événement lançait une sync complète →
     // amplification massive de lectures Firestore → quota dépassé.
     const SYNC_PERIOD_MS = 5 * 60 * 1000 // interval de fond : 5 min
-    const MIN_SYNC_GAP_MS = 5 * 1000     // au moins 5 s entre deux syncs (restaure le temps réel)
+    const MIN_SYNC_GAP_MS = 5 * 1000     // au moins 5 s entre deux syncs ordinaires
     let lastSyncAt = 0
     let pendingTimer = null
     const forceSync = (reason) => {
       if (navigator.onLine === false || !initStarted.current) return
       const now = Date.now()
-      const wait = Math.max(0, MIN_SYNC_GAP_MS - (now - lastSyncAt))
-      if (pendingTimer) return // déjà planifiée
+      const isRealtime = reason === 'realtime'
+      const minGap = isRealtime ? 200 : MIN_SYNC_GAP_MS
+      const wait = Math.max(0, minGap - (now - lastSyncAt))
+      if (pendingTimer) {
+        if (!isRealtime) return
+        clearTimeout(pendingTimer)
+        pendingTimer = null
+      }
       pendingTimer = setTimeout(() => {
         pendingTimer = null
         lastSyncAt = Date.now()

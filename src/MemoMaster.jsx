@@ -1586,7 +1586,7 @@ export default function MemoMaster() {
       try {
         const exps = await loadInitialExpressionsFromWatermelon();
         const { repaired } = repairCardDates(exps || []);
-        setExpressions(repaired.map(ensureMasteryStage));
+        setExpressionsState(repaired.map(ensureMasteryStage));
         console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
       } catch (e) {
         console.warn('[sync] reload après cards_synced KO:', e);
