@@ -9,7 +9,7 @@ import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthRe
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
-import { isCardMastered, countMasteredCards, getDueCards } from "./lib/cardStatus";
+import { isCardMastered, countMasteredCards, getDueCards, isDueCard } from "./lib/cardStatus";
 import { DAILY_PLAN_STORAGE_KEY, buildDailyPlan, markCardDone, normalizeDailyPlan } from "./lib/dailyPlan";
 import {
   pickProductionInvite,
@@ -5316,7 +5316,7 @@ ${ATOMIC_CARD_RULES}`;
     let list = filterCat === "Toutes" ? expressions : expressions.filter((e) => _normCat(e.category) === _normCat(filterCat));
     if (filterLevel !== "Tous") {
       if (filterLevel === "Maîtrisées") list = list.filter((e) => e.level >= 7);
-      else if (filterLevel === "En retard") list = list.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused);
+      else if (filterLevel === "En retard") list = list.filter((e) => isDueCard(e, today()));
       else if (filterLevel === "Nouvelles") list = list.filter((e) => e.level === 0);
       else if (filterLevel === "En pause") list = list.filter((e) => e.paused);
     }
@@ -6664,7 +6664,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {/* Nav items (Scrollable) */}
           <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "visible", paddingBottom: 16, paddingRight: 6 }}>
             {(() => {
-              const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+              const dueCount = getDueCards(expressions, today()).length;
               const masteredCount = expressions.filter(e => e.level >= 7).length;
               const totalCards = expressions.length;
               const masteredPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
@@ -6814,7 +6814,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         {/* ═══ MOBILE SPEED DIAL (replaces 5-button bottom nav) ═══ */}
         {isMobile && (() => {
-          const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+          const dueCount = getDueCards(expressions, today()).length;
 
           return (
             <>
@@ -10047,7 +10047,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "badges" && (() => {
             // ── Données de progression pour les barres ──
             const mastered = expressions.filter(e => e.level >= 7).length;
-            const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+            const dueCount = getDueCards(expressions, today()).length;
 
             // ── Système de rareté ──
             const RARITY = {
@@ -10828,7 +10828,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   }).map(cat => {
                     const isFav = catsFavorites.includes(cat.name);
                     const catExps = expressions.filter(e => e.category === cat.name);
-                    const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+                    const dueCount = getDueCards(catExps, today()).length;
                     const mastered = catExps.filter(e => e.level >= 7).length;
                     const pausedCount = catExps.filter(e => e.paused).length;
                     const newUnpausedCount = catExps.filter(e => !e.paused && (e.level || 0) === 0).length;
