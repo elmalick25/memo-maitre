@@ -2,7 +2,8 @@ import { Suspense, lazy, useEffect, useState, useRef } from 'react'
 import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
 import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
-import { syncWithFirebase, listenToSyncSignal } from './lib/db/sync'
+import { syncWithFirebase, listenToSyncSignal, setRemoteSignature } from './lib/db/sync'
+import { startRealtimeExpressions, stopRealtimeExpressions } from './lib/db/realtimeExpressions'
 import { auth, provider, setFbUser } from './lib/firebase'
 import {
   signInWithPopup,
@@ -92,6 +93,7 @@ function App() {
       })
 
     let unsubscribeRealtime = null;
+    let unsubscribeCards = null;
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (cancelled) return
       setAuthChecking(true)
@@ -110,6 +112,7 @@ function App() {
         setAccessDenied(true)
         setAuthChecking(false)
         if (unsubscribeRealtime) unsubscribeRealtime();
+        stopRealtimeExpressions();
         return
       }
 
@@ -119,10 +122,20 @@ function App() {
       setAuthChecking(false)
 
       if (unsubscribeRealtime) unsubscribeRealtime();
-      unsubscribeRealtime = listenToSyncSignal(user.uid, () => {
-        console.info("[sync] Remote change detected, triggering real-time sync!");
+      unsubscribeRealtime = listenToSyncSignal(user.uid, (data) => {
+        // La signature distante voyage dans le document sentinelle : elle rend
+        // la détection de divergence instantanée ET gratuite.
+        if (data?.signature) setRemoteSignature(data.signature);
+        console.info("[sync] Changement distant détecté → synchronisation.");
         forceSync('realtime');
       });
+
+      // ⚡ TEMPS RÉEL FICHE PAR FICHE — c'est ce qui aligne le compteur
+      // « fiches à réviser » entre le téléphone et le PC en une seconde,
+      // sans réconciliation complète : Firestore ne facture que les fiches
+      // réellement modifiées (3 fiches révisées = 3 lectures).
+      if (unsubscribeCards) unsubscribeCards();
+      unsubscribeCards = startRealtimeExpressions(user.uid);
 
       if (!initStarted.current) {
         initStarted.current = true
@@ -159,20 +172,14 @@ function App() {
     // partagé. Avant : chaque événement lançait une sync complète →
     // amplification massive de lectures Firestore → quota dépassé.
     const SYNC_PERIOD_MS = 5 * 60 * 1000 // interval de fond : 5 min
-    const MIN_SYNC_GAP_MS = 5 * 1000     // au moins 5 s entre deux syncs ordinaires
+    const MIN_SYNC_GAP_MS = 5 * 1000     // au moins 5 s entre deux syncs (restaure le temps réel)
     let lastSyncAt = 0
     let pendingTimer = null
     const forceSync = (reason) => {
       if (navigator.onLine === false || !initStarted.current) return
       const now = Date.now()
-      const isRealtime = reason === 'realtime'
-      const minGap = isRealtime ? 200 : MIN_SYNC_GAP_MS
-      const wait = Math.max(0, minGap - (now - lastSyncAt))
-      if (pendingTimer) {
-        if (!isRealtime) return
-        clearTimeout(pendingTimer)
-        pendingTimer = null
-      }
+      const wait = Math.max(0, MIN_SYNC_GAP_MS - (now - lastSyncAt))
+      if (pendingTimer) return // déjà planifiée
       pendingTimer = setTimeout(() => {
         pendingTimer = null
         lastSyncAt = Date.now()
@@ -203,6 +210,8 @@ function App() {
       cancelled = true
       unsubAuth()
       if (unsubscribeRealtime) unsubscribeRealtime();
+      if (unsubscribeCards) unsubscribeCards();
+      stopRealtimeExpressions();
       if (pendingTimer) clearTimeout(pendingTimer)
       window.removeEventListener('firebase_sync_updated', handleSync)
       window.removeEventListener('online', doSync)

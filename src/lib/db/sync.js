@@ -3,8 +3,19 @@ import { database } from './index'
 import { Q } from '@nozbe/watermelondb'
 import { db as firestoreDb, getFbUser, isCircuitOpen, closeCircuitBreaker, reportFirestoreError } from '../firebase'
 import { collection, query, where, getDocs, getCountFromServer, writeBatch, doc, serverTimestamp, setDoc, onSnapshot } from 'firebase/firestore'
-import { normalizeDate } from '../../utils/dateUtils'
 import { logEvent } from '../telemetry'
+import { resolveConflict } from './conflictResolution'
+import { localSignature, signaturesMatch } from './syncSignature'
+import {
+  applyRawToExpression,
+  firebaseDocToRaw,
+  markSynced,
+  rawToCamelCase,
+  recordToFirestore,
+  safeArray,
+  stripUndefined,
+  toMs,
+} from './expressionMapper'
 
 let isSyncing = false
 let rerunRequested = false
@@ -22,29 +33,37 @@ let _lastCountCheckAt = 0
 const LAST_FULL_SYNC_KEY = 'memo_last_full_sync_ms'
 
 const expressionsPath = (uid) => `users/${uid}/expressions`
-const toMs = (value, fallback = Date.now()) => {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (value instanceof Date) return value.getTime()
-  if (value && typeof value.toMillis === 'function') return value.toMillis()
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Date.parse(value)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-  return fallback
-}
-const safeArray = (value) => {
-  if (Array.isArray(value)) return value
-  if (typeof value === 'string') {
-    try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : [] } catch { return [] }
-  }
-  return []
-}
-const stripUndefined = (value) => JSON.parse(JSON.stringify(value))
 
 // Un enregistrement WatermelonDB jamais poussé au serveur a _status === 'created'.
 // C'est LE signal fiable pour distinguer « nouvelle fiche locale » (à pousser)
 // de « fiche déjà synchronisée puis supprimée ailleurs » (à supprimer ici).
 const isNeverSynced = (record) => record?._raw?._status === 'created'
+
+// ─── Signature distante (publiée par les autres appareils) ──────────────────
+// { count, reps, hist } — voir syncSignature.js. Mise à jour par le listener
+// temps réel du document `sync_signal/latest`, donc sans lecture facturée
+// supplémentaire.
+let _remoteSignature = null
+export function setRemoteSignature(sig) {
+  if (sig && typeof sig === 'object') _remoteSignature = sig
+}
+export function getRemoteSignature() {
+  return _remoteSignature
+}
+
+/** Identifiant d'appareil stable — utile au débogage multi-appareils. */
+function deviceId() {
+  try {
+    let id = localStorage.getItem('memo_device_id')
+    if (!id) {
+      id = Math.random().toString(36).slice(2, 10)
+      localStorage.setItem('memo_device_id', id)
+    }
+    return id
+  } catch {
+    return 'unknown'
+  }
+}
 
 export async function pushExpressionsToFirebase() {
   const uid = getFbUser()
@@ -84,7 +103,14 @@ export function listenToSyncSignal(uid, onSignal) {
     (snap) => {
       if (snap.exists() && !snap.metadata.hasPendingWrites) {
         if (isCircuitOpen()) return;
-        onSignal();
+        const data = snap.data() || {};
+        // La signature distante est publiée par l'appareil qui vient d'écrire.
+        // On la mémorise : la détection de divergence devient GRATUITE
+        // (plus besoin d'un agrégat `count` distant toutes les minutes) et,
+        // surtout, elle voit désormais les RÉVISIONS (le nombre de fiches,
+        // lui, ne bouge pas quand on révise).
+        if (data.signature) setRemoteSignature(data.signature);
+        onSignal(data);
       }
     },
     (err) => {
@@ -166,7 +192,16 @@ async function getRemoteActiveCount(uid) {
 
 async function bumpSyncSignal(uid) {
   try {
-    await setDoc(doc(firestoreDb, 'users', uid, 'sync_signal', 'latest'), { lastUpdate: serverTimestamp() }, { merge: true })
+    // On publie la signature DANS le document sentinelle déjà écouté :
+    // 1 écriture au lieu de 2, 0 lecture supplémentaire côté récepteurs.
+    let signature = null
+    try { signature = await localSignature(database) } catch { /* ignore */ }
+    _remoteSignature = signature || _remoteSignature
+    await setDoc(
+      doc(firestoreDb, 'users', uid, 'sync_signal', 'latest'),
+      { lastUpdate: serverTimestamp(), at: Date.now(), device: deviceId(), signature },
+      { merge: true },
+    )
   } catch (e) {
     console.warn('[sync] Failed to write sync_signal', e)
   }
@@ -196,8 +231,16 @@ export async function syncWithFirebase(forceReconcile = false) {
         // NB : `updatedAt` est TOUJOURS écrit en millisecondes (nombre) — voir
         // commitExpressionWrites. Un champ de type Timestamp trierait après les
         // nombres dans Firestore et casserait ce filtre incrémental.
+        // Marge anti-dérive d'horloge : `updatedAt` est écrit avec l'horloge de
+        // l'appareil émetteur. Sans marge, une fiche révisée sur un appareil
+        // dont l'horloge retarde de quelques minutes passait sous le filtre et
+        // n'arrivait JAMAIS sur l'autre appareil (compteur figé à 34).
+        const PULL_SKEW_MARGIN_MS = 5 * 60 * 1000
         const q = lastPulledAt
-          ? query(collection(firestoreDb, expressionsPath(uid)), where('updatedAt', '>', lastPulledAt))
+          ? query(
+              collection(firestoreDb, expressionsPath(uid)),
+              where('updatedAt', '>', Math.max(0, lastPulledAt - PULL_SKEW_MARGIN_MS)),
+            )
           : collection(firestoreDb, expressionsPath(uid))
 
         const snapshot = await getDocs(q)
@@ -233,33 +276,27 @@ export async function syncWithFirebase(forceReconcile = false) {
           const local = localById.get(docSnap.id)
 
           if (local) {
-            // 🛡️ Résolution de conflit type CRDT : la progression la plus avancée gagne.
-            const remoteRepetitions = Number(data.repetitions || 0)
-            const localRepetitions = Number(local.repetitions || 0)
-
-            const remoteNextReview = data.nextReview ? new Date(data.nextReview).getTime() : 0
-            const localNextReview = local.nextReview ? new Date(normalizeDate(local.nextReview)).getTime() : 0
-
-            const remoteIsMoreAdvanced =
-              remoteRepetitions > localRepetitions ||
-              (remoteRepetitions === localRepetitions && remoteNextReview > localNextReview + 86400000)
-
-            const localIsMoreAdvanced =
-              localRepetitions > remoteRepetitions ||
-              (localRepetitions === remoteRepetitions && localNextReview > remoteNextReview + 86400000)
-
-            if (remoteIsMoreAdvanced) {
+            // 🛡️ Règle de conflit UNIQUE (conflictResolution.js) : l'historique
+            // de révision le plus long gagne, puis les répétitions, puis la
+            // date de prochaine révision, et l'horodatage en dernier recours.
+            const winner = resolveConflict(
+              {
+                reviewHistory: data.reviewHistory,
+                repetitions: data.repetitions,
+                nextReview: data.nextReview,
+                updatedAt: docUpdatedAt,
+              },
+              {
+                reviewHistory: local.reviewHistory,
+                repetitions: local.repetitions,
+                nextReview: local.nextReview,
+                updatedAt: toMs(local._raw?.updated_at, 0),
+              },
+            )
+            if (winner === 'remote') {
               updated.push(raw)
-            } else if (localIsMoreAdvanced) {
+            } else if (winner === 'local') {
               fixesToPush.push({ id: docSnap.id, data: { ...recordToFirestore(local), _deleted: false }, merge: true })
-            } else {
-              const remoteUpdated = docUpdatedAt
-              const localUpdated = toMs(local._raw?.updated_at, 0)
-              if (remoteUpdated > localUpdated + 1000) {
-                updated.push(raw)
-              } else if (localUpdated > remoteUpdated + 1000) {
-                fixesToPush.push({ id: docSnap.id, data: { ...recordToFirestore(local), _deleted: false }, merge: true })
-              }
             }
           } else {
             created.push(raw)
@@ -286,6 +323,36 @@ export async function syncWithFirebase(forceReconcile = false) {
         await commitExpressionWrites(uid, writes)
         if (writes.length > 0) await bumpSyncSignal(uid)
       },
+      // ⚠️ FIX MAJEUR. Par défaut, WatermelonDB protège les colonnes modifiées
+      // localement : lors d'un pull, la valeur distante de ces colonnes est
+      // IGNORÉE, puis la valeur locale (périmée) est repoussée au serveur.
+      // C'est exactement ce qui figeait le PC à 34 fiches et pouvait annuler
+      // les 3 révisions faites sur le téléphone. Ici, quand la version
+      // distante gagne la règle de conflit, elle écrase pour de bon.
+      conflictResolver: (table, local, remote, resolved) => {
+        if (table !== 'expressions') return resolved
+        const winner = resolveConflict(
+          {
+            reviewHistory: remote.review_history,
+            repetitions: remote.repetitions,
+            nextReview: remote.next_review,
+            updatedAt: remote.updated_at,
+          },
+          {
+            reviewHistory: local.review_history,
+            repetitions: local.repetitions,
+            nextReview: local.next_review,
+            updatedAt: local.updated_at,
+          },
+        )
+        if (winner !== 'remote') return resolved
+        const forced = { ...resolved }
+        for (const key of Object.keys(remote)) {
+          if (key === 'id' || key.startsWith('_')) continue
+          forced[key] = remote[key]
+        }
+        return forced
+      },
     })
 
     // ── Réconciliation complète ────────────────────────────────────────────
@@ -299,13 +366,25 @@ export async function syncWithFirebase(forceReconcile = false) {
     let divergent = false
     if (!forceReconcile && Date.now() - _lastCountCheckAt > COUNT_CHECK_MIN_GAP_MS) {
       _lastCountCheckAt = Date.now()
-      const [localCount, remoteCount] = await Promise.all([
-        database.collections.get('expressions').query().fetchCount(),
-        getRemoteActiveCount(uid),
-      ])
-      if (remoteCount !== null && remoteCount !== localCount) {
-        divergent = true
-        console.warn(`[sync] Divergence détectée (local ${localCount} ≠ serveur ${remoteCount}) → réconciliation forcée.`)
+      const localSig = await localSignature(database)
+
+      if (_remoteSignature) {
+        // Chemin GRATUIT (0 lecture) : la signature distante nous a été poussée
+        // par le listener temps réel. Elle inclut les révisions, contrairement
+        // à l'ancien compteur de fiches.
+        if (!signaturesMatch(localSig, _remoteSignature)) {
+          divergent = true
+          console.warn(
+            `[sync] Divergence détectée via signature — local ${JSON.stringify(localSig)} ≠ serveur ${JSON.stringify(_remoteSignature)}`,
+          )
+        }
+      } else {
+        // Repli (aucune signature distante encore reçue) : agrégat count, 1 lecture.
+        const remoteCount = await getRemoteActiveCount(uid)
+        if (remoteCount !== null && remoteCount !== localSig.count) {
+          divergent = true
+          console.warn(`[sync] Divergence détectée (local ${localSig.count} ≠ serveur ${remoteCount}) → réconciliation forcée.`)
+        }
       }
     }
 
@@ -368,36 +447,31 @@ async function reconcileAllExpressions(uid, { authoritative = false } = {}) {
 
     const raw = firebaseDocToRaw(docSnap)
     if (!local) {
-      localOps.push(expressions.prepareCreate(exp => applyRawToExpression(exp, raw)))
+      localOps.push(markSynced(expressions.prepareCreate(exp => applyRawToExpression(exp, raw))))
       return
     }
 
-    const remoteRepetitions = Number(data.repetitions || 0)
-    const localRepetitions = Number(local.repetitions || 0)
+    const winner = resolveConflict(
+      {
+        reviewHistory: data.reviewHistory,
+        repetitions: data.repetitions,
+        nextReview: data.nextReview,
+        updatedAt: toMs(data.updatedAt, 0),
+      },
+      {
+        reviewHistory: local.reviewHistory,
+        repetitions: local.repetitions,
+        nextReview: local.nextReview,
+        updatedAt: toMs(local._raw?.updated_at, 0),
+      },
+    )
 
-    const remoteNextReview = data.nextReview ? new Date(data.nextReview).getTime() : 0
-    const localNextReview = local.nextReview ? new Date(normalizeDate(local.nextReview)).getTime() : 0
-
-    const remoteIsMoreAdvanced =
-      remoteRepetitions > localRepetitions ||
-      (remoteRepetitions === localRepetitions && remoteNextReview > localNextReview + 86400000)
-
-    const localIsMoreAdvanced =
-      localRepetitions > remoteRepetitions ||
-      (localRepetitions === remoteRepetitions && localNextReview > remoteNextReview + 86400000)
-
-    if (remoteIsMoreAdvanced) {
-      localOps.push(local.prepareUpdate(exp => applyRawToExpression(exp, raw)))
-    } else if (localIsMoreAdvanced) {
+    if (winner === 'remote') {
+      // markSynced : la valeur vient du serveur et gagne → on efface le drapeau
+      // « modifié localement » pour qu'elle ne soit pas repoussée telle quelle.
+      localOps.push(markSynced(local.prepareUpdate(exp => applyRawToExpression(exp, raw))))
+    } else if (winner === 'local') {
       remoteWrites.push({ id, data: { ...recordToFirestore(local), _deleted: false }, merge: true })
-    } else {
-      const remoteUpdated = toMs(data.updatedAt, 0)
-      const localUpdated = toMs(local._raw?.updated_at, 0)
-      if (remoteUpdated > localUpdated + 1000) {
-        localOps.push(local.prepareUpdate(exp => applyRawToExpression(exp, raw)))
-      } else if (localUpdated > remoteUpdated + 1000) {
-        remoteWrites.push({ id, data: { ...recordToFirestore(local), _deleted: false }, merge: true })
-      }
     }
   })
 
@@ -464,106 +538,3 @@ async function commitExpressionWrites(uid, writes) {
   }
 }
 
-function firebaseDocToRaw(docSnap) {
-  const data = docSnap.data() || {}
-  const updatedAt = toMs(data.updatedAt, Date.now())
-  return {
-    id: docSnap.id,
-    front: data.front || '',
-    back: data.back || '',
-    example: data.example || '',
-    category: data.category || 'Général',
-    type: data.type || 'qa',
-    image_url: data.imageUrl || null,
-    audio_url: data.audioUrl || null,
-    layers: JSON.stringify(safeArray(data.layers)),
-    level: Number(data.level || 0),
-    next_review: data.nextReview ? normalizeDate(data.nextReview) : null,
-    created_at: toMs(data.createdAt, updatedAt),
-    updated_at: updatedAt,
-    ease_factor: Number(data.easeFactor || 2.5),
-    interval: Number(data.interval || 1),
-    repetitions: Number(data.repetitions || 0),
-    review_history: JSON.stringify(safeArray(data.reviewHistory)),
-    // FIX : champs qui n'étaient jamais lus depuis Firestore → un autre appareil
-    // ne recevait jamais l'état "en pause" ni la progression "production active".
-    paused: !!data.paused,
-    mastery_stage: data.masteryStage || null,
-    productive_uses: JSON.stringify(safeArray(data.productiveUses)),
-    last_productive_use_at: data.lastProductiveUseAt ? toMs(data.lastProductiveUseAt) : null,
-  }
-}
-
-function applyRawToExpression(exp, raw) {
-  exp._raw.id = raw.id
-  exp.front = raw.front || ''
-  exp.back = raw.back || ''
-  exp.example = raw.example || ''
-  exp.category = raw.category || 'Général'
-  exp.type = raw.type || 'qa'
-  exp.imageUrl = raw.image_url || null
-  exp.audioUrl = raw.audio_url || null
-  exp.layers = safeArray(raw.layers)
-  exp.level = Number(raw.level || 0)
-  exp.nextReview = raw.next_review ? normalizeDate(raw.next_review) : null
-  exp.easeFactor = Number(raw.ease_factor || 2.5)
-  exp.interval = Number(raw.interval || 1)
-  exp.repetitions = Number(raw.repetitions || 0)
-  exp.reviewHistory = safeArray(raw.review_history)
-  exp.paused = !!raw.paused
-  exp.masteryStage = raw.mastery_stage || 'discovered'
-  exp.productiveUses = safeArray(raw.productive_uses)
-  exp.lastProductiveUseAt = raw.last_productive_use_at || null
-  exp._raw.created_at = toMs(raw.created_at)
-  exp._raw.updated_at = toMs(raw.updated_at)
-}
-
-function recordToFirestore(record) {
-  return {
-    front: record.front || '',
-    back: record.back || '',
-    example: record.example || '',
-    category: record.category || 'Général',
-    type: record.type || 'qa',
-    imageUrl: record.imageUrl || null,
-    audioUrl: record.audioUrl || null,
-    layers: safeArray(record.layers),
-    level: Number(record.level || 0),
-    nextReview: record.nextReview ? normalizeDate(record.nextReview) : null,
-    createdAt: toMs(record.createdAt ?? record._raw?.created_at),
-    updatedAt: toMs(record.updatedAt ?? record._raw?.updated_at),
-    easeFactor: Number(record.easeFactor || 2.5),
-    interval: Number(record.interval || 1),
-    repetitions: Number(record.repetitions || 0),
-    reviewHistory: safeArray(record.reviewHistory),
-    paused: !!record.paused,
-    masteryStage: record.masteryStage || 'discovered',
-    productiveUses: safeArray(record.productiveUses),
-    lastProductiveUseAt: record.lastProductiveUseAt || null,
-  }
-}
-
-function rawToCamelCase(record) {
-  return {
-    front: record.front || '',
-    back: record.back || '',
-    example: record.example || '',
-    category: record.category || 'Général',
-    type: record.type || 'qa',
-    imageUrl: record.image_url || null,
-    audioUrl: record.audio_url || null,
-    layers: safeArray(record.layers),
-    level: Number(record.level || 0),
-    nextReview: record.next_review ? normalizeDate(record.next_review) : null,
-    createdAt: toMs(record.created_at),
-    updatedAt: toMs(record.updated_at),
-    easeFactor: Number(record.ease_factor || 2.5),
-    interval: Number(record.interval || 1),
-    repetitions: Number(record.repetitions || 0),
-    reviewHistory: safeArray(record.review_history),
-    paused: !!record.paused,
-    masteryStage: record.mastery_stage || 'discovered',
-    productiveUses: safeArray(record.productive_uses),
-    lastProductiveUseAt: record.last_productive_use_at || null,
-  }
-}

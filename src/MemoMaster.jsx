@@ -9,7 +9,7 @@ import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthRe
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
-import { isCardMastered, countMasteredCards, getDueCards, isDueCard } from "./lib/cardStatus";
+import { isCardMastered, countMasteredCards, getDueCards } from "./lib/cardStatus";
 import { DAILY_PLAN_STORAGE_KEY, buildDailyPlan, markCardDone, normalizeDailyPlan } from "./lib/dailyPlan";
 import {
   pickProductionInvite,
@@ -1473,8 +1473,6 @@ export default function MemoMaster() {
           storedProjects,
           storedLivingMemory,
           viewedBadges,
-          fetchedDailyPlan,
-          fetchedNewCardIntake,
         ] = await Promise.all([
           loadInitialExpressionsFromWatermelon(),
           storage.get("categories_v3"),
@@ -1489,8 +1487,6 @@ export default function MemoMaster() {
           storage.get("projects_v1"),
           storage.get("livingMemory_v1"),
           storage.get("badges_viewed_count"),
-          storage.get("dailyPlan_v1"),
-          storage.get("newCardIntake_v1"),
         ]);
 
         // ✅ Toutes les données sont récupérées AVANT de toucher aux états
@@ -1505,8 +1501,6 @@ export default function MemoMaster() {
         setUnlockedBadges(badges || []);
         setVideos(storedVids || []);
         setCustomExams(storedCustomExams || []);
-        setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
-        setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
         setDevLogs(storedLogs || []);
         setRoadmap(storedRoadmap || roadmap);
         setLessonCache(storedLessonCache || {});
@@ -1558,7 +1552,7 @@ export default function MemoMaster() {
       (async () => {
         try {
           // ⚡ Rechargement après changement d'utilisateur — aussi en parallèle
-          const [exps, cats, sess, st, badges, storedProjects, viewedBadges, fetchedDailyPlan, fetchedNewCardIntake] = await Promise.all([
+          const [exps, cats, sess, st, badges, storedProjects, viewedBadges] = await Promise.all([
             loadInitialExpressionsFromWatermelon(),
             storage.get("categories_v3"),
             storage.get("sessions_v3"),
@@ -1566,8 +1560,6 @@ export default function MemoMaster() {
             storage.get("badges_v3"),
             storage.get("projects_v1"),
             storage.get("badges_viewed_count"),
-            storage.get("dailyPlan_v1"),
-            storage.get("newCardIntake_v1"),
           ]);
            const expsRepaired2 = repairCardDates(exps || []).repaired.map(ensureMasteryStage);
            setExpressions(expsRepaired2);
@@ -1579,8 +1571,6 @@ export default function MemoMaster() {
           setUnlockedBadges(badges || []);
           setLastViewedBadgesCount(viewedBadges || 0);
           setProjects(storedProjects || []);
-          setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
-          setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
           setTimeout(() => setLoaded(true), 100);
         } catch (e) {
           console.error("[onAuthReady] Rechargement échoué:", e);
@@ -1596,18 +1586,8 @@ export default function MemoMaster() {
       try {
         const exps = await loadInitialExpressionsFromWatermelon();
         const { repaired } = repairCardDates(exps || []);
-        setExpressionsState(repaired.map(ensureMasteryStage));
+        setExpressions(repaired.map(ensureMasteryStage));
         console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
-        
-        // Recharge aussi les états de session qui dictent le compteur de fiches dues
-        forceSyncNow();
-        const [fetchedDailyPlan, fetchedNewCardIntake] = await Promise.all([
-          storage.get("dailyPlan_v1"),
-          storage.get("newCardIntake_v1")
-        ]);
-        setDailyPlanState(normalizeDailyPlan(fetchedDailyPlan, today()));
-        setNewCardIntake(normalizeIntakeState(fetchedNewCardIntake, today()));
-        console.info('[sync] État du plan et des nouvelles fiches synchronisé');
       } catch (e) {
         console.warn('[sync] reload après cards_synced KO:', e);
       }
@@ -1733,8 +1713,6 @@ export default function MemoMaster() {
   useEffect(() => { if (loaded) debouncedSave("sessions_v3", sessions); }, [sessions, loaded]);
   useEffect(() => { if (loaded) debouncedSave("stats_v3", stats); }, [stats, loaded]);
   useEffect(() => { if (loaded) debouncedSave("badges_v3", unlockedBadges); }, [unlockedBadges, loaded]);
-  useEffect(() => { if (loaded) debouncedSave("dailyPlan_v1", dailyPlanState); }, [dailyPlanState, loaded]);
-  useEffect(() => { if (loaded) debouncedSave("newCardIntake_v1", newCardIntake); }, [newCardIntake, loaded]);
   useEffect(() => { if (loaded) debouncedSave("customExams_v1", customExams); }, [customExams, loaded]);
   useEffect(() => { if (loaded) debouncedSave("devLogs_v1", devLogs); }, [devLogs, loaded]);
   useEffect(() => { if (loaded) debouncedSave("roadmap_v1", roadmap); }, [roadmap, loaded]);
@@ -5338,7 +5316,7 @@ ${ATOMIC_CARD_RULES}`;
     let list = filterCat === "Toutes" ? expressions : expressions.filter((e) => _normCat(e.category) === _normCat(filterCat));
     if (filterLevel !== "Tous") {
       if (filterLevel === "Maîtrisées") list = list.filter((e) => e.level >= 7);
-      else if (filterLevel === "En retard") list = list.filter((e) => isDueCard(e, today()));
+      else if (filterLevel === "En retard") list = list.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused);
       else if (filterLevel === "Nouvelles") list = list.filter((e) => e.level === 0);
       else if (filterLevel === "En pause") list = list.filter((e) => e.paused);
     }
@@ -6686,7 +6664,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {/* Nav items (Scrollable) */}
           <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "visible", paddingBottom: 16, paddingRight: 6 }}>
             {(() => {
-              const dueCount = getDueCards(expressions, today()).length;
+              const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
               const masteredCount = expressions.filter(e => e.level >= 7).length;
               const totalCards = expressions.length;
               const masteredPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
@@ -6836,7 +6814,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         {/* ═══ MOBILE SPEED DIAL (replaces 5-button bottom nav) ═══ */}
         {isMobile && (() => {
-          const dueCount = getDueCards(expressions, today()).length;
+          const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
           return (
             <>
@@ -10069,7 +10047,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "badges" && (() => {
             // ── Données de progression pour les barres ──
             const mastered = expressions.filter(e => e.level >= 7).length;
-            const dueCount = getDueCards(expressions, today()).length;
+            const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
             // ── Système de rareté ──
             const RARITY = {
@@ -10850,7 +10828,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   }).map(cat => {
                     const isFav = catsFavorites.includes(cat.name);
                     const catExps = expressions.filter(e => e.category === cat.name);
-                    const dueCount = getDueCards(catExps, today()).length;
+                    const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
                     const mastered = catExps.filter(e => e.level >= 7).length;
                     const pausedCount = catExps.filter(e => e.paused).length;
                     const newUnpausedCount = catExps.filter(e => !e.paused && (e.level || 0) === 0).length;
