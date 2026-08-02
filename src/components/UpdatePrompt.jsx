@@ -3,20 +3,20 @@ import React, { useEffect, useState } from "react";
 
 export default function UpdatePrompt() {
   const [ready, setReady] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
-    // Écoute l'événement dispatché par main.jsx en mode 'prompt'
     const handler = () => setReady(true);
     window.addEventListener("sw-update-available", handler);
 
     let swReg = null;
     let installingWorkers = [];
-    
+
     const onUpdateFound = () => {
       if (!swReg) return;
       const nw = swReg.installing;
       if (!nw) return;
-      
+
       const onStateChange = () => {
         if (nw.state === "installed" && navigator.serviceWorker.controller) {
           setReady(true);
@@ -26,13 +26,11 @@ export default function UpdatePrompt() {
       installingWorkers.push({ worker: nw, listener: onStateChange });
     };
 
-    // Fallback : ancienne méthode via ServiceWorker API directe
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.getRegistration().then((reg) => {
         if (!reg) return;
         swReg = reg;
         reg.addEventListener("updatefound", onUpdateFound);
-        // Vérifie si un SW en attente existe déjà
         if (reg.waiting && navigator.serviceWorker.controller) {
           setReady(true);
         }
@@ -51,12 +49,31 @@ export default function UpdatePrompt() {
   }, []);
 
   const handleUpdate = () => {
-    // Utilise la méthode propre de vite-plugin-pwa si dispo
-    if (window.__SW_UPDATE__?.updateSW) {
-      window.__SW_UPDATE__.updateSW();
+    if (updating) return;
+    setUpdating(true);
+
+    let reloaded = false;
+    const doReload = () => {
+      if (reloaded) return;
+      reloaded = true;
+      setReady(false);
+      window.location.reload();
+    };
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.addEventListener("controllerchange", doReload, { once: true });
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        if (reg?.waiting) {
+          reg.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      }).catch(() => {});
     }
-    // Force le reload après un court délai pour laisser le SW s'activer
-    setTimeout(() => location.reload(), 300);
+
+    if (window.__SW_UPDATE__?.updateSW) {
+      try { window.__SW_UPDATE__.updateSW(true); } catch {}
+    }
+
+    setTimeout(doReload, 1000);
   };
 
   if (!ready) return null;
@@ -71,26 +88,29 @@ export default function UpdatePrompt() {
       animation: "slideIn 0.3s ease"
     }}>
       <span style={{ fontSize: 20 }}>🚀</span>
-      <span>Nouvelle version disponible !</span>
-      <button onClick={handleUpdate} style={{
+      <span>{updating ? "Mise à jour en cours..." : "Nouvelle version disponible !"}</span>
+      <button onClick={handleUpdate} disabled={updating} style={{
         background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
         border: 0, color: "#fff", padding: "7px 14px",
-        borderRadius: 8, cursor: "pointer", fontWeight: 700,
+        borderRadius: 8, cursor: updating ? "wait" : "pointer", fontWeight: 700,
         fontSize: 12, letterSpacing: 0.5,
+        opacity: updating ? 0.7 : 1,
         transition: "opacity 0.2s"
       }}
-        onMouseOver={e => e.target.style.opacity = "0.85"}
-        onMouseOut={e => e.target.style.opacity = "1"}
+        onMouseOver={e => { if (!updating) e.target.style.opacity = "0.85"; }}
+        onMouseOut={e => { if (!updating) e.target.style.opacity = "1"; }}
       >
-        Mettre à jour
+        {updating ? "Patientez..." : "Mettre à jour"}
       </button>
-      <button onClick={() => setReady(false)} style={{
-        background: "transparent", border: "1px solid rgba(255,255,255,.15)",
-        color: "#94a3b8", padding: "5px 10px",
-        borderRadius: 6, cursor: "pointer", fontSize: 11
-      }}>
-        Plus tard
-      </button>
+      {!updating && (
+        <button onClick={() => setReady(false)} style={{
+          background: "transparent", border: "1px solid rgba(255,255,255,.15)",
+          color: "#94a3b8", padding: "5px 10px",
+          borderRadius: 6, cursor: "pointer", fontSize: 11
+        }}>
+          Plus tard
+        </button>
+      )}
     </div>
   );
 }
