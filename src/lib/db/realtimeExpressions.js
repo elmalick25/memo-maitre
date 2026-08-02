@@ -24,7 +24,7 @@
 import { Q } from '@nozbe/watermelondb'
 import { collection, onSnapshot, query, where } from 'firebase/firestore'
 import { database } from './index'
-import { db as firestoreDb, isCircuitOpen, reportFirestoreError } from '../firebase'
+import { db as firestoreDb, reportFirestoreError } from '../firebase'
 import { resolveConflict } from './conflictResolution'
 import { applyRawToExpression, firebaseDocToRaw, markSynced, toMs } from './expressionMapper'
 
@@ -133,10 +133,10 @@ let currentUid = null
  */
 export function startRealtimeExpressions(uid, { onApplied } = {}) {
   if (!uid) return () => {}
-  if (isCircuitOpen()) {
-    console.info('[realtime] Disjoncteur quota actif — écoute temps réel désactivée.')
-    return () => {}
-  }
+  // Le disjoncteur quota ne coupe plus le temps réel : Firestore ne facture ici
+  // que les fiches RÉELLEMENT modifiées (3 révisions = 3 lectures). Couper ce
+  // canal était le pire des deux mondes : on économisait ~rien et l'appareil
+  // restait figé sur un compteur périmé.
   if (unsubscribe && currentUid === uid) return stopRealtimeExpressions
 
   stopRealtimeExpressions()
@@ -146,18 +146,25 @@ export function startRealtimeExpressions(uid, { onApplied } = {}) {
   const q = query(collection(firestoreDb, 'users', uid, 'expressions'), where('updatedAt', '>', since))
 
   console.info(`[realtime] Écoute des fiches modifiées depuis ${new Date(since).toLocaleString()}`)
+  retryAttempt = 0
 
   unsubscribe = onSnapshot(
     q,
     async (snapshot) => {
-      // Écritures locales pas encore confirmées : elles sont déjà appliquées
-      // en base, les rejouer ne ferait qu'ajouter du bruit.
-      if (snapshot.metadata.hasPendingWrites) return
-
+      // ⚠️ FIX MAJEUR (c'était une perte de données silencieuse) :
+      // avant, un `if (snapshot.metadata.hasPendingWrites) return` jetait
+      // l'instantané ENTIER dès que CET appareil avait une écriture en attente.
+      // Or Firestore marque tout l'instantané, y compris les fiches modifiées
+      // par l'AUTRE appareil : celles-ci étaient donc ignorées, et comme elles
+      // étaient désormais en cache local, `docChanges()` ne les représentait
+      // plus jamais. Le PC ne recevait littéralement jamais les 3 révisions du
+      // téléphone. On filtre maintenant DOCUMENT PAR DOCUMENT.
       const docs = []
       let maxUpdatedAt = 0
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'removed') return // sortie du filtre ≠ suppression
+        // Echo de notre propre écriture non confirmée : déjà appliquée en base.
+        if (change.doc.metadata.hasPendingWrites) return
         const data = change.doc.data() || {}
         docs.push({ id: change.doc.id, data })
         const ts = toMs(data.updatedAt, 0)
@@ -182,14 +189,55 @@ export function startRealtimeExpressions(uid, { onApplied } = {}) {
     },
     (err) => {
       reportFirestoreError(err, 'realtimeExpressions')
-      stopRealtimeExpressions()
+      // Avant : `stopRealtimeExpressions()` — une seule erreur réseau (tunnel,
+      // veille du PC, wifi qui saute) tuait le temps réel pour toute la
+      // session, et l'appareil restait figé sur son ancien compteur. On
+      // reprogramme maintenant une reconnexion avec un délai croissant.
+      scheduleRealtimeRetry(uid, { onApplied })
     },
   )
 
   return stopRealtimeExpressions
 }
 
+// ─── Reconnexion automatique (délai croissant, plafonné à 5 min) ─────────────
+let retryTimer = null
+let retryAttempt = 0
+
+function scheduleRealtimeRetry(uid, opts) {
+  if (retryTimer) return
+  const delay = Math.min(5 * 60 * 1000, 5000 * Math.pow(2, retryAttempt))
+  retryAttempt += 1
+  console.info(`[realtime] Reconnexion dans ${Math.round(delay / 1000)}s (tentative ${retryAttempt}).`)
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    unsubscribe = null
+    currentUid = null
+    startRealtimeExpressions(uid, opts)
+  }, delay)
+}
+
+/**
+ * Vérifie que l'écoute est bien vivante et la relance sinon.
+ * Appelée au retour de veille / au retour d'onglet : c'est ce qui garantit
+ * qu'un PC réveillé après plusieurs heures récupère l'état à jour.
+ */
+export function ensureRealtimeExpressions(uid, opts = {}) {
+  if (!uid) return
+  if (unsubscribe && currentUid === uid) return
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  retryAttempt = 0
+  startRealtimeExpressions(uid, opts)
+}
+
 export function stopRealtimeExpressions() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
   if (unsubscribe) {
     try { unsubscribe() } catch { /* ignore */ }
   }

@@ -11,6 +11,8 @@ import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
 import { isCardMastered, countMasteredCards, getDueCards } from "./lib/cardStatus";
 import { DAILY_PLAN_STORAGE_KEY, buildDailyPlan, markCardDone, normalizeDailyPlan } from "./lib/dailyPlan";
+import { mergeDayState, dayStatesEqual, dayStateFromLocal, dayStateToPlan, normalizeDayState } from "./lib/dayStateMerge";
+import { subscribeDayState, fetchDayState, publishDayState, flushDayStateNow } from "./lib/db/dayStateSync";
 import {
   pickProductionInvite,
   canPromptProduction,
@@ -1348,6 +1350,11 @@ export default function MemoMaster() {
         && prev.date === next.date
         && prev.target === next.target
         && prev.sealed === next.sealed
+        // `sealedAt` DOIT être comparé : sinon le plan gardait `sealedAt: null`,
+        // un nouvel horodatage était généré à chaque rendu, et la publication
+        // vers Firestore repartait en boucle (écritures inutiles + arbitrage
+        // instable entre appareils).
+        && prev.sealedAt === next.sealedAt
         && prev.ids.length === next.ids.length
         && prev.doneIds.length === next.doneIds.length
         && prev.ids.every((id, i) => id === next.ids[i])
@@ -1357,6 +1364,112 @@ export default function MemoMaster() {
       return next;
     });
   }, [dailyPlanResult]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 🔗 ÉTAT DU JOUR PARTAGÉ (temps réel, mobile ⇄ PC)
+  // ══════════════════════════════════════════════════════════════════════════
+  // LE bug « 34 sur le PC, 31 sur le téléphone » venait d'ici : le plan du jour
+  // (donc le compteur affiché) ne vivait QUE dans le localStorage de chaque
+  // appareil. Aucune synchro de fiches ne pouvait le corriger.
+  //
+  // Désormais le plan du jour + les fiches déjà révisées aujourd'hui + le quota
+  // de nouvelles fiches admises voyagent dans UN document Firestore écouté en
+  // temps réel (users/{uid}/day_state/{date}) :
+  //   • réviser 3 fiches sur le téléphone → le PC passe de 34 à 31 en ~1 s,
+  //     sans rechargement ;
+  //   • fusion par UNION → aucune révision perdue, même faite hors ligne des
+  //     deux côtés ;
+  //   • coût : 1 document lu par changement, écritures regroupées (800 ms).
+  const dayStateSyncedRef = useRef(null);
+  const dayStateReadyRef = useRef(false);
+
+  // Applique un état distant : fusion avec l'état local, puis mise à jour du
+  // plan ET du quota de fiches neuves (les deux doivent être identiques sur les
+  // deux appareils, sinon les plans divergeraient à nouveau).
+  const applyRemoteDayState = useCallback((remote) => {
+    if (!remote) return;
+    const normalized = normalizeDayState(remote, currentDate);
+    if (normalized.date !== currentDate) return;
+
+    setDailyPlanState((prev) => {
+      const local = dayStateFromLocal({ plan: normalizeDailyPlan(prev, currentDate), dateISO: currentDate });
+      const merged = mergeDayState(local, normalized);
+      dayStateSyncedRef.current = merged;
+      const nextPlan = dayStateToPlan(merged, currentDate);
+      const prevPlan = normalizeDailyPlan(prev, currentDate);
+      if (
+        prevPlan.target === nextPlan.target
+        && prevPlan.sealedAt === nextPlan.sealedAt
+        && prevPlan.ids.length === nextPlan.ids.length
+        && prevPlan.doneIds.length === nextPlan.doneIds.length
+        && prevPlan.ids.every((id, i) => id === nextPlan.ids[i])
+      ) return prev;
+      try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(nextPlan)); } catch { /* quota / SSR */ }
+      console.info(`[day-state] Plan du jour aligné sur les autres appareils — ${nextPlan.ids.length} fiches, ${nextPlan.doneIds.length} faites.`);
+      return nextPlan;
+    });
+
+    if (normalized.admittedIds.length > 0) {
+      setNewCardIntake((prev) => {
+        const base = normalizeIntakeState(prev, currentDate);
+        const known = new Set(base.admittedIds || []);
+        const missing = normalized.admittedIds.filter((id) => !known.has(id));
+        if (missing.length === 0) return prev;
+        return { ...base, admittedIds: [...(base.admittedIds || []), ...missing] };
+      });
+    }
+  }, [currentDate]);
+
+  // ── Abonnement temps réel + rattrapage au démarrage ──────────────────────
+  useEffect(() => {
+    const uid = getFbUser();
+    if (!uid) return;
+    let cancelled = false;
+    dayStateReadyRef.current = false;
+
+    (async () => {
+      const remote = await fetchDayState(uid, currentDate);
+      if (cancelled) return;
+      if (remote) applyRemoteDayState(remote);
+      // Tant que le rattrapage initial n'est pas fait, on ne publie rien :
+      // sinon un appareil en retard pourrait sceller un plan concurrent.
+      dayStateReadyRef.current = true;
+    })();
+
+    const unsubscribe = subscribeDayState(uid, currentDate, (remote) => {
+      if (cancelled) return;
+      dayStateReadyRef.current = true;
+      applyRemoteDayState(remote);
+    });
+
+    const flushOnHide = () => { if (document.visibilityState === "hidden") flushDayStateNow(); };
+    document.addEventListener("visibilitychange", flushOnHide);
+    window.addEventListener("pagehide", flushDayStateNow);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      document.removeEventListener("visibilitychange", flushOnHide);
+      window.removeEventListener("pagehide", flushDayStateNow);
+      flushDayStateNow();
+    };
+  }, [currentDate, applyRemoteDayState]);
+
+  // ── Publication de l'état local dès qu'il change ─────────────────────────
+  useEffect(() => {
+    const uid = getFbUser();
+    if (!uid || !dayStateReadyRef.current) return;
+    const local = dayStateFromLocal({
+      plan: dailyPlanResult.plan,
+      admittedIds: newCardIntake?.admittedIds || [],
+      dateISO: currentDate,
+    });
+    if (local.ids.length === 0 && local.doneIds.length === 0) return;
+    const merged = dayStateSyncedRef.current ? mergeDayState(dayStateSyncedRef.current, local) : local;
+    if (dayStateSyncedRef.current && dayStatesEqual(dayStateSyncedRef.current, merged)) return;
+    dayStateSyncedRef.current = merged;
+    publishDayState(uid, currentDate, merged);
+  }, [dailyPlanResult, newCardIntake, currentDate]);
 
   /** Marque une fiche comme traitée aujourd'hui (appelé à chaque notation). */
   const consumeDailyPlanCard = useCallback((cardId) => {

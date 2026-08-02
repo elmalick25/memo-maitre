@@ -3,7 +3,7 @@ import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
 import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
 import { syncWithFirebase, listenToSyncSignal, setRemoteSignature } from './lib/db/sync'
-import { startRealtimeExpressions, stopRealtimeExpressions } from './lib/db/realtimeExpressions'
+import { startRealtimeExpressions, stopRealtimeExpressions, ensureRealtimeExpressions } from './lib/db/realtimeExpressions'
 import { auth, provider, setFbUser } from './lib/firebase'
 import {
   signInWithPopup,
@@ -189,13 +189,22 @@ function App() {
       }, wait)
     }
 
+    // Réveil du PC / retour d'onglet / retour du réseau : on vérifie que
+    // l'écoute temps réel est toujours vivante. Sans ça, un PC laissé ouvert
+    // toute la nuit gardait une écoute morte et restait figé sur son ancien
+    // compteur jusqu'au rechargement complet de la page.
+    const reviveRealtime = () => {
+      const uid = auth.currentUser?.uid
+      if (uid && isAuthorizedUser(auth.currentUser)) ensureRealtimeExpressions(uid)
+    }
+
     const handleSync = () => forceSync('storage-update')
     window.addEventListener('firebase_sync_updated', handleSync)
 
-    const doSync = () => forceSync('auto')
-    const onVis = () => { if (document.visibilityState === 'visible') forceSync('visible') }
-    const onFocus = () => forceSync('focus')
-    const onPageShow = () => forceSync('pageshow')
+    const doSync = () => { reviveRealtime(); forceSync('auto') }
+    const onVis = () => { if (document.visibilityState === 'visible') { reviveRealtime(); forceSync('visible') } }
+    const onFocus = () => { reviveRealtime(); forceSync('focus') }
+    const onPageShow = () => { reviveRealtime(); forceSync('pageshow') }
     // NB : on retire volontairement le sync sur `pagehide` — il doublait chaque
     //      cycle focus/blur et n'apportait aucune donnée fraîche.
 

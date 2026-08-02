@@ -77,7 +77,13 @@ const withTimeout = (promise, ms = 8000) => {
 // ─── CIRCUIT BREAKER ── coupe Firestore 24h si quota dépassé ────────────────
 // ══════════════════════════════════════════════════════════════════════════
 const CIRCUIT_KEY = "memo_circuit_breaker_until";
-const CIRCUIT_BREAKER_DURATION_MS = 24 * 60 * 60 * 1000;
+// 2 h au lieu de 24 h. Le disjoncteur ne coupe plus que les opérations COÛTEUSES
+// (réconciliations complètes, lectures de toute la collection). Les écoutes
+// temps réel — 1 document, ou uniquement les fiches réellement modifiées —
+// restent actives : c'est ce qui garantit que le compteur reste identique sur
+// les deux appareils même après un pic de quota. Un disjoncteur de 24 h laissait
+// un appareil silencieusement désynchronisé toute la journée.
+const CIRCUIT_BREAKER_DURATION_MS = 2 * 60 * 60 * 1000;
 
 export const isCircuitOpen = () => {
   try {

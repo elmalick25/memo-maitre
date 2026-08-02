@@ -93,15 +93,18 @@ export async function pushExpressionsToFirebase() {
 
 export function listenToSyncSignal(uid, onSignal) {
   if (!uid) return () => {};
-  if (isCircuitOpen()) {
-    console.info('[sync] Circuit breaker actif — listenToSyncSignal désactivé pour cette session.');
-    return () => {};
-  }
+  // Le disjoncteur ne désactive PLUS cette écoute : elle coûte 1 document par
+  // changement. La couper laissait l'appareil aveugle aux modifications de
+  // l'autre appareil pendant des heures — exactement le symptôme signalé.
 
   return onSnapshot(
     doc(firestoreDb, 'users', uid, 'sync_signal', 'latest'),
     (snap) => {
-      if (snap.exists() && !snap.metadata.hasPendingWrites) {
+      // ⚠️ On ne filtre plus sur `hasPendingWrites` : Firestore marque tout
+      // l'instantané comme « en attente » dès que CET appareil a une écriture
+      // en cours, ce qui faisait jeter le signal envoyé par l'AUTRE appareil.
+      // Traiter deux fois notre propre signal est inoffensif (idempotent).
+      if (snap.exists()) {
         if (isCircuitOpen()) return;
         const data = snap.data() || {};
         // La signature distante est publiée par l'appareil qui vient d'écrire.

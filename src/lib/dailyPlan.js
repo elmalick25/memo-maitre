@@ -55,7 +55,11 @@ export const DAILY_PLAN_STORAGE_KEY = "memomaitre_dailyPlan_v1";
 
 /** Plan vide pour une date donnée. */
 export function makeDailyPlan(dateISO) {
-  return { date: dateISO, target: null, sealed: false, ids: [], doneIds: [], bonusIds: [] };
+  // `sealedAt` : horodatage du scellement. Il sert d'ARBITRE entre appareils —
+  // le plan scellé le plus tôt impose son ordre et son plafond aux autres
+  // (voir lib/dayStateMerge.js). Sans lui, chaque appareil gardait son propre
+  // plan et donc son propre compteur (34 ici, 31 là).
+  return { date: dateISO, target: null, sealed: false, sealedAt: null, ids: [], doneIds: [], bonusIds: [] };
 }
 
 const uniq = (arr) => Array.from(new Set(arr));
@@ -71,10 +75,12 @@ export function normalizeDailyPlan(raw, todayISO) {
   const ids = Array.isArray(raw.ids) ? uniq(raw.ids.filter((id) => id !== undefined && id !== null)) : [];
   const doneIds = Array.isArray(raw.doneIds) ? uniq(raw.doneIds.filter((id) => id !== undefined && id !== null)) : [];
   const target = raw.target === null || raw.target === undefined ? null : Number(raw.target);
+  const sealedAt = Number(raw.sealedAt);
   return {
     date: todayISO,
     target: Number.isFinite(target) ? target : null,
     sealed: raw.sealed === true,
+    sealedAt: Number.isFinite(sealedAt) && sealedAt > 0 ? sealedAt : null,
     ids,
     doneIds,
     // Révisions volontaires hors plan : comptées comme faites, mais elles ne
@@ -95,7 +101,7 @@ export function normalizeDailyPlan(raw, todayISO) {
  *            doneCount: number, plannedCount: number, target: number|null,
  *            pileSize: number, capped: boolean, completed: boolean}}
  */
-export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = [], compose = composeDailySession } = {}) {
+export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = [], compose = composeDailySession, now = Date.now } = {}) {
   const cards = Array.isArray(dueCards) ? dueCards : [];
   let base = normalizeDailyPlan(plan, todayISO);
 
@@ -184,6 +190,9 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
     date: todayISO,
     target: target === undefined ? null : target,
     sealed: true,
+    // Le scellement n'est horodaté qu'une fois, à la création du plan : il ne
+    // doit plus jamais bouger, sinon l'arbitrage entre appareils oscillerait.
+    sealedAt: base.sealedAt ?? (ids.length > 0 ? now() : null),
     ids,
     doneIds: base.doneIds.filter((id) => ids.includes(id)),
     bonusIds: base.bonusIds.filter((id) => ids.includes(id)),
