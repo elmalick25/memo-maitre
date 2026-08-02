@@ -4,25 +4,26 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useMemo, useState } from "react";
 import { lightenColor, darkenColor } from "../lib/colorUtils";
-import { isCardMastered } from "../lib/cardStatus";
-import { isCardDue } from "../lib/sessionSelector";
+import { today } from "../utils/dateUtils";
+import { isDueCard, isCardMastered } from "../lib/cardStatus";
 
-const KnowledgeGraph = ({ categories, expressions, categoryPreviews, theme, isDarkMode, onNodeClick }) => {
+const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMode, onNodeClick }) => {
   const [hovered, setHovered] = useState(null);
 
   const nodes = useMemo(() => {
+    const todayStr = today();
     return categories.map((cat) => {
       const catExps = expressions.filter(e => e.category === cat.name);
-      // `due` DOIT être exactement ce que le clic va lancer : on lit l'aperçu
-      // par module produit par sessionSelector.buildSession (même fonction,
-      // mêmes arguments que startReview). Avant ce correctif, on affichait la
-      // part du module dans la session GLOBALE alors que le clic lançait une
-      // session dédiée au module → le nœud annonçait moins (ou plus) de fiches
-      // que la session servie.
-      const preview = categoryPreviews?.[cat.name];
-      const due = preview ? preview.servedSize : catExps.filter(isCardDue).length;
-      const pileSize = preview ? preview.pileSize : due;
+      // COUCHE 9 : quand le plan du jour est fourni (sessionPool), le compteur
+      // du module est SA PART DU PLAN — plus la pile brute. La somme des
+      // modules est donc toujours égale au total affiché ailleurs.
+      // Fallback (aucun plan) : même critère « dû » que partout ailleurs
+      // (isDueCard), plus les `level >= 7` / `paused` incohérents d'avant.
+      const due = Array.isArray(sessionPool)
+        ? sessionPool.filter(e => e.category === cat.name).length
+        : catExps.filter(e => isDueCard(e, todayStr)).length;
       const mastered = catExps.filter(isCardMastered).length;
+
 
       // ── Progression DOUCE et ROBUSTE ───────────────────────────────────
       // 1) Composante "niveau" : moyenne des levels normalisés sur 7.
@@ -52,13 +53,11 @@ const KnowledgeGraph = ({ categories, expressions, categoryPreviews, theme, isDa
       return {
         id: cat.name, label: cat.name,
         color: isUrgent ? "#EF4444" : (cat.color || "#4D6BFE"),
-        radius, isMastered, needsReview, isUrgent, pct, due, pileSize,
+        radius, isMastered, needsReview, isUrgent, pct, due,
         total: catExps.length, mastered,
       };
     });
-    // `categoryPreviews` DOIT figurer dans les dépendances : sans lui, les
-    // compteurs restaient figés sur le premier rendu (bug silencieux).
-  }, [categories, expressions, categoryPreviews]);
+  }, [categories, expressions, sessionPool]); // sessionPool manquait : compteurs figés au 1er rendu
 
   // ── Canvas étendu pour orbites elliptiques (500x340) ────────────────
   const W = 500, H = 340;
@@ -236,7 +235,7 @@ const KnowledgeGraph = ({ categories, expressions, categoryPreviews, theme, isDa
             <div style={{ display: 'flex', gap: 10, fontSize: 10.5, color: theme.textMuted }}>
               <span><strong style={{ color: theme.text }}>{hNode.total}</strong> fiches</span>
               <span><strong style={{ color: '#22C55E' }}>{hNode.pct}%</strong> progression</span>
-              {hNode.due > 0 && <span><strong style={{ color: hNode.isUrgent ? '#EF4444' : '#00D2FF' }}>{hNode.due}</strong> au programme{hNode.pileSize > hNode.due ? ` / ${hNode.pileSize} dues` : ""}</span>}
+              {hNode.due > 0 && <span><strong style={{ color: hNode.isUrgent ? '#EF4444' : '#00D2FF' }}>{hNode.due}</strong> dues</span>}
             </div>
           </div>
         );

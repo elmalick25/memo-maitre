@@ -907,20 +907,13 @@ ${batch.map(i => `{"id":"${i.id}","title":"${i.title}","desc":"${(i.description|
     finally { setTranslating(false); }
   }, [tab, items, loading, translating, callClaude, translateItems]);
 
-  // Refs miroir : fetchAll doit garder une identité stable (l'effet de montage
-  // en dépend) tout en lisant les sources/flux À JOUR, pas ceux du 1er rendu.
-  const enabledSourcesRef = useRef(enabledSources);
-  const customFeedsRef = useRef(customFeeds);
-  useEffect(() => { enabledSourcesRef.current = enabledSources; }, [enabledSources]);
-  useEffect(() => { customFeedsRef.current = customFeeds; }, [customFeeds]);
-
   // ─ Fetching ─
   const fetchAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setProgress(0);
     setVisibleCount(15); // reset scroll virtuel
 
-    const activeFeeds = [...RSS_FEEDS, ...customFeedsRef.current].filter(f => enabledSourcesRef.current.has(f.name));
+    const activeFeeds = [...RSS_FEEDS, ...customFeeds].filter(f => enabledSources.has(f.name));
 
     const sources = [
       ["HN", fetchHN()],
@@ -968,7 +961,7 @@ ${batch.map(i => `{"id":"${i.id}","title":"${i.title}","desc":"${(i.description|
       const topItems = deduped.slice(0, 30);
       for (const item of topItems) {
         if (!navigator.onLine) break;
-        if ((summaryCache.current[item.id]?.paragraphs?.[0]?.length || 0) > 100) continue; 
+        if (summaryCache.current[item.id] && summaryCache.current[item.id].paragraphs[0].length > 100) continue; 
         
         try {
           const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" } });

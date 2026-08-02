@@ -1,34 +1,42 @@
 import js from '@eslint/js'
 import globals from 'globals'
+import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
 
-export default defineConfig([
-  globalIgnores(['dist']),
+export default [
+  { ignores: ['dist', 'node_modules'] },
   {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
+    files: ['**/*.{js,jsx,mjs}'],
     languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
-      parserOptions: {
-        ecmaVersion: 'latest',
-        ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-      },
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.node },
+      parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    plugins: { react, 'react-hooks': reactHooks },
+    settings: { react: { version: '18.3' } },
     rules: {
-      'no-unused-vars': ['error', {
-        varsIgnorePattern: '^[A-Z_]',
-        argsIgnorePattern: '^_',
-        caughtErrorsIgnorePattern: '^_',
-        destructuredArrayIgnorePattern: '^_',
-      }],
+      ...js.configs.recommended.rules,
+      ...reactHooks.configs.recommended.rules,
+      'no-unused-vars': 'off',
+      'no-empty': 'off',
+      'no-undef': 'error',
+      'react/jsx-key': 'warn',
+      'react/no-children-prop': 'warn',
+      'no-dupe-keys': 'error',
+      'no-dupe-class-members': 'error',
+      'no-dupe-args': 'error',
+      'no-unreachable': 'warn',
+      'no-cond-assign': 'error',
+      'no-self-assign': 'error',
+      'no-constant-condition': 'warn',
+      'no-fallthrough': 'warn',
+      'no-func-assign': 'error',
+      'no-import-assign': 'error',
+      'no-obj-calls': 'error',
+      'no-sparse-arrays': 'warn',
+      'use-isnan': 'error',
+      'valid-typeof': 'error',
     },
   },
-])
+]

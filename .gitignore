@@ -29,7 +29,7 @@ dist-ssr
 # Data & Executables
 pb_data/
 pocketbase.exe
-src.zip
+*.zip
 
 # Reports & Temp
 eslint_report.*
@@ -46,5 +46,6 @@ __pycache__/
 scratch/
 src_backup/
 src_extracted/
+src/public/
 *.cjs
 *.py

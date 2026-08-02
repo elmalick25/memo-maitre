@@ -1,0 +1,33 @@
+{
+  "name": "MemoMaitre - El Hadji Malick Sy",
+  "short_name": "M",
+  "description": "MémoMaître — Système de révision intelligent FSRS + IA.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0518",
+  "theme_color": "#4D6BFE",
+  "orientation": "portrait",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "lang": "fr"
+}

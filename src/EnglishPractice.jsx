@@ -12,13 +12,7 @@ import EnglishInTheWild from "./EnglishInTheWild";
 import AgentVoiceBar, { AGENT_VOICES, useElevenLabsAgent, MODE_CONFIGS } from "./AgentVoiceBar";
 import { registerAgentClientTool, setContextSnapshotBuilder } from "./lib/agentClientTools";
 import { summarizeForContinuity } from "./lib/agentSessionMemory";
-import * as ElevenLabsSDK from "@elevenlabs/react";
-
-// Le SDK @elevenlabs/react n'expose `ConversationProvider` que sur certaines
-// versions. Sur les autres, l'import nommé casse le build. On résout le
-// provider dynamiquement et on retombe sur un simple passthrough si absent.
-const ConversationProvider =
-  ElevenLabsSDK.ConversationProvider ?? (({ children }) => <>{children}</>);
+import { ConversationProvider } from "@elevenlabs/react";
 import { useAgentCardDetector } from "./useAgentCardDetector";
 import AgentCardToast from "./AgentCardToast";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
@@ -287,10 +281,6 @@ function safeParseJSON(raw) {
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT INTERNE — EnglishPracticeInner (doit être rendu dans ConversationProvider)
 // ══════════════════════════════════════════════════════════════════════════════
-// Liste canonique des sous-vues de l'espace anglais — source de vérité partagée
-// avec src/lib/appMap.js (navigation de l'assistant IA).
-export const PRACTICE_SUBVIEWS = ["chat", "daily", "debate", "roleplay", "dictation", "writing", "speaking", "ielts", "dashboard", "achievements", "brainmap", "accent", "exam", "notebook", "wild", "coach", "news", "cefr"];
-
 function EnglishPracticeInner({
   // ── Dépendances externes (fournies par MemoMaster) ──────────────────────────
   callClaude,           // async (system, user) => string
@@ -302,10 +292,6 @@ function EnglishPracticeInner({
   showToast,            // (msg, type?) => void
   today,                // () => string "YYYY-MM-DD"
   categories,           // tableau des modules MemoMaster (pour assigner la bonne catégorie)
-  // ── Navigation profonde (routeur MemoMaster / assistant IA) ────────────────
-  // navigate("practice/roleplay") arrive ici sous forme de `subView` et ouvre
-  // directement le bon onglet, sans clic manuel et sans écran vide.
-  subView,
   // ── Thème ───────────────────────────────────────────────────────────────────
   theme,
   isDarkMode,
@@ -1300,12 +1286,6 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   const practiceMediaRecorderRef = useRef(null);
   const practiceAudioChunksRef = useRef([]);
   const practiceMicTimeoutRef = useRef(null);
-  // FIX (fuite de timers) : les arrêts automatiques d'enregistrement (débat 8s,
-  // speaking 10s, accent 5s) n'étaient pas annulables → ils déclenchaient
-  // mediaRecorder.stop() puis des setState après le démontage du composant.
-  const debateStopTimeoutRef = useRef(null);
-  const speakingStopTimeoutRef = useRef(null);
-  const accentStopTimeoutRef = useRef(null);
   const practiceMicIntervalRef = useRef(null);
   const speakingAnalyserRef = useRef(null);
   const speakingAnimFrameRef = useRef(null);
@@ -1321,26 +1301,6 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   const debateRecorderRef = useRef(null);    // pour stopper l'enregistrement débat manuellement
   const roleplayRecorderRef = useRef(null);  // pour stopper l'enregistrement roleplay manuellement
   const userHasInteractedRef = useRef(false); // débloque l'autoplay TTS après 1ère interaction
-
-  // ── Cleanup au démontage : libère le micro et annule les timers ────────────
-  // Sans ça, quitter le module pendant un enregistrement laissait le
-  // MediaStream actif (micro allumé) et des timers appelaient setState après
-  // le démontage.
-  useEffect(() => () => {
-    activeStreamsRef.current.forEach(stream => {
-      try { stream.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
-    });
-    activeStreamsRef.current.clear();
-    [practiceMediaRecorderRef, debateRecorderRef, roleplayRecorderRef, accentRecorderRef].forEach(r => {
-      try { if (r.current?.state === "recording") r.current.stop(); } catch { /* ignore */ }
-    });
-    clearTimeout(practiceMicTimeoutRef.current);
-    clearInterval(practiceMicIntervalRef.current);
-    clearTimeout(xpPopupTimerRef.current);
-    clearTimeout(debateStopTimeoutRef.current);
-    clearTimeout(speakingStopTimeoutRef.current);
-    clearTimeout(accentStopTimeoutRef.current);
-  }, []);
 
   // ── Filet de sécurité : reset practiceLoading après 30 s ──────────────────
   // Protège contre un callClaude qui ne résoudrait jamais (réseau mort, timeout
@@ -1492,26 +1452,13 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
     storage.get("english_notebook_history").then(h => { if (h) setNotebookHistory(h); }).catch(() => { });
   }, []);
 
-  // Restore last active sub-view so navigating away and back keeps context.
-  // ⚠️ Une sous-vue demandée par la route (assistant IA, palette, deep link)
-  // est PRIORITAIRE sur la valeur persistée : sinon l'utilisateur demande
-  // "ouvre le roleplay" et retombe sur son dernier onglet.
+  // Restore last active sub-view so navigating away and back keeps context
   useEffect(() => {
-    if (subView && PRACTICE_SUBVIEWS.includes(subView)) return;
+    const VALID_VIEWS = ["chat", "daily", "debate", "roleplay", "dictation", "writing", "speaking", "ielts", "dashboard", "achievements", "brainmap", "accent", "exam", "notebook", "wild", "coach", "news", "cefr"];
     storage.get("english_subview").then(saved => {
-      if (saved && PRACTICE_SUBVIEWS.includes(saved)) setPracticeSubView(saved);
+      if (saved && VALID_VIEWS.includes(saved)) setPracticeSubView(saved);
     }).catch(() => { });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Applique la sous-vue de la route à chaque changement.
-  useEffect(() => {
-    if (subView && PRACTICE_SUBVIEWS.includes(subView)) {
-      setPracticeSubView(subView);
-      storage.set("english_subview", subView)?.catch?.(() => { });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subView]);
 
   // ══════════════════════════════════════════════════════════════════════════════
   // UTILITAIRES
@@ -1717,8 +1664,7 @@ IMPORTANT: 'wrong' doit être le fragment exact de la phrase de l'étudiant, pas
       // 2. le texte corrigé est réellement différent de l'original
       // 3. il y a au moins une faute listée
       const hasRealErrors =
-        parsed?.hasErrors === true &&
-        typeof parsed.corrected === "string" &&
+        parsed.hasErrors === true &&
         parsed.corrected.toLowerCase().trim() !== userText.toLowerCase().trim() &&
         Array.isArray(parsed.mistakes) && parsed.mistakes.length > 0;
 
@@ -2201,8 +2147,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       mediaRecorder.start();
       setDebateListening(true);
       showToast("🎤 Parle maintenant... (clique ⏹️ pour arrêter)");
-      clearTimeout(debateStopTimeoutRef.current);
-      debateStopTimeoutRef.current = setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
+      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
     } catch (e) {
       const msg = e?.name === "NotAllowedError" ? "Permission micro refusée." : e?.name === "NotFoundError" ? "Aucun micro détecté." : `Erreur : ${e?.message || e}`;
       showToast("🎤 " + msg, "error");
@@ -3162,8 +3107,7 @@ Réponds UNIQUEMENT avec ce JSON valide, sans markdown ni backticks:
 
       mediaRecorder.start();
       showToast("🎙️ Enregistrement en cours (10s)...");
-      clearTimeout(speakingStopTimeoutRef.current);
-      speakingStopTimeoutRef.current = setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 10000);
+      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 10000);
     } catch (e) {
       // Cleanup garanti même en cas d'erreur
       cancelAnimationFrame(speakingAnimFrameRef.current);
@@ -3561,8 +3505,7 @@ Réponds UNIQUEMENT en JSON (pas de markdown) :
       recorder.start();
       setAccentRecording(true);
       showToast("🎤 Parle maintenant… (5s max)");
-      clearTimeout(accentStopTimeoutRef.current);
-      accentStopTimeoutRef.current = setTimeout(() => { if (accentRecorderRef.current?.state === "recording") accentRecorderRef.current.stop(); }, 5000);
+      setTimeout(() => { if (accentRecorderRef.current?.state === "recording") accentRecorderRef.current.stop(); }, 5000);
     } catch (e) {
       const msg = e?.name === "NotAllowedError" ? "Permission micro refusée." : e?.name === "NotFoundError" ? "Aucun micro détecté." : `Erreur : ${e?.message || e}`;
       showToast("🎤 " + msg, "error");
@@ -3570,7 +3513,6 @@ Réponds UNIQUEMENT en JSON (pas de markdown) :
   };
 
   const stopAccentRecording = () => {
-    clearTimeout(accentStopTimeoutRef.current);
     if (accentRecorderRef.current?.state === "recording") accentRecorderRef.current.stop();
   };
 
@@ -4497,10 +4439,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       const barHeight = Math.max(4, amp * 120);
                       let tier = null;
                       if (practicePhonemeData?.words?.length) {
-                        const wordIdx = Math.min(
-                          practicePhonemeData.words.length - 1,
-                          Math.floor((i / practiceWaveformBars.length) * practicePhonemeData.words.length)
-                        );
+                        const wordIdx = Math.floor(i / practiceWaveformBars.length * practicePhonemeData.words.length);
                         const w = practicePhonemeData.words[wordIdx];
                         if (w) tier = w.score >= 80 ? "high" : w.score >= 50 ? "mid" : "low";
                       }

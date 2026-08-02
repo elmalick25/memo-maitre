@@ -982,10 +982,6 @@ export function PomodoroStudy({ theme, onPhaseChange, showToast }) {
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(PHASES[0].minutes * 60);
   const tickRef = useRef(null);
-  // L'intervalle ne doit pas être recréé à chaque changement de phase (cadence
-  // remise à zéro = tick jusqu'à ~2 s) : on lit la phase via une ref.
-  const phaseIdxRef = useRef(phaseIdx);
-  useEffect(() => { phaseIdxRef.current = phaseIdx; }, [phaseIdx]);
 
   useEffect(() => {
     if (!running) return;
@@ -1005,14 +1001,13 @@ export function PomodoroStudy({ theme, onPhaseChange, showToast }) {
             showToast?.(`→ ${nextPhase.label}`, "info");
             return next;
           });
-          return PHASES[Math.min(phaseIdxRef.current + 1, PHASES.length - 1)].minutes * 60;
+          return PHASES[Math.min(phaseIdx + 1, PHASES.length - 1)].minutes * 60;
         }
         return s - 1;
       });
     }, 1000);
     return () => clearInterval(tickRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [running, phaseIdx]);
 
   const reset = () => { setRunning(false); setPhaseIdx(0); setSecondsLeft(PHASES[0].minutes * 60); };
   const phase = PHASES[phaseIdx];

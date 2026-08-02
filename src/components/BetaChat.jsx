@@ -25,7 +25,7 @@ function formatTime(ts) {
 }
 
 export default function BetaChat() {
-  const user = auth?.currentUser || null;
+  const user = auth.currentUser;
   const isOwner = !!user && OWNER_UID && user.uid === OWNER_UID;
   const [open, setOpen] = useState(false);
   const [threads, setThreads] = useState([]);              // owner only

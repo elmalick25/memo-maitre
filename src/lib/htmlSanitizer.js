@@ -28,20 +28,15 @@ const DEFAULT_ALLOWED_ATTRS = new Set([
 ]);
 
 const URL_ATTRS = new Set(["href","src"]);
-// `data:image/svg+xml` est acceptable pour `src` (l'image est inerte) mais PAS
-// pour `href` : un clic provoque une navigation top-level vers le document SVG,
-// et les navigateurs y exécutent les <script> embarqués (vecteur XSS connu).
-const SAFE_SRC_URL_RE = /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml);|\/|#|\.|[^a-z]*$)/i;
-const SAFE_HREF_URL_RE = /^(?:https?:|mailto:|tel:|\/|#|\.|[^a-z]*$)/i;
+const SAFE_URL_RE = /^(?:https?:|mailto:|tel:|data:image\/(?:png|jpe?g|gif|webp|svg\+xml);|\/|#|\.|[^a-z]*$)/i;
 
-function isSafeUrl(value, attrName = "src") {
+function isSafeUrl(value) {
   if (!value) return true;
   const v = String(value).trim();
   // bloque javascript:, vbscript:, data:text/html
   if (/^\s*(javascript|vbscript|data:text\/html)/i.test(v)) return false;
-  return (attrName === "href" ? SAFE_HREF_URL_RE : SAFE_SRC_URL_RE).test(v);
+  return SAFE_URL_RE.test(v);
 }
-
 
 function stripDangerousStyle(style) {
   if (!style) return "";
@@ -80,8 +75,7 @@ function sanitizeNode(node, opts) {
         node.removeAttribute(attr.name);
         continue;
       }
-      if (URL_ATTRS.has(name) && !isSafeUrl(attr.value, name)) {
-
+      if (URL_ATTRS.has(name) && !isSafeUrl(attr.value)) {
         node.removeAttribute(attr.name);
         continue;
       }

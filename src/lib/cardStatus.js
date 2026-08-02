@@ -1,4 +1,5 @@
 // src/lib/cardStatus.js
+import { isDue } from '../utils/dateUtils.js';
 //
 // Couche 6 — Unification du statut « fiche maîtrisée ».
 //
@@ -73,4 +74,22 @@ export function isConsolidationCandidate(card) {
 /** Compte de fiches maîtrisées (helper d'affichage). */
 export function countMasteredCards(cards) {
   return (Array.isArray(cards) ? cards : []).filter(isCardMastered).length;
+}
+
+// ── Couche 9 : définition UNIQUE de « fiche due aujourd'hui » ─────────────
+// Avant : chaque vue refaisait son propre filtre inline
+// (`isDue(...) && (e.level||0) < 7 && !e.paused`), incohérent avec
+// `isCardActive` (qui tient compte de masteryStage et de l'intervalle FSRS).
+// Résultat : sidebar, liste, modules et constellation affichaient des nombres
+// différents pour la même réalité.
+export function isDueCard(card, currentDate) {
+  if (!card || typeof card !== 'object') return false;
+  if (card.paused) return false;
+  if (!isCardActive(card)) return false;
+  return isDue(card.nextReview, currentDate);
+}
+
+/** Pile réelle des fiches dues (source unique pour tous les compteurs). */
+export function getDueCards(cards, currentDate) {
+  return (Array.isArray(cards) ? cards : []).filter((c) => isDueCard(c, currentDate));
 }

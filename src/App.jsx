@@ -3,7 +3,7 @@ import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
 import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
 import { syncWithFirebase, listenToSyncSignal } from './lib/db/sync'
-import { auth, provider, setFbUser, isFirebaseConfigured } from './lib/firebase'
+import { auth, provider, setFbUser } from './lib/firebase'
 import {
   signInWithPopup,
   signInWithRedirect,
@@ -61,7 +61,6 @@ function shouldUseRedirect() {
 }
 
 async function startLogin() {
-  if (!auth || !provider) throw new Error('Firebase non configuré : connexion impossible.')
   if (shouldUseRedirect()) {
     await signInWithRedirect(auth, provider)
     return null
@@ -78,15 +77,6 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-
-    // Firebase absent/invalide → on n'appelle AUCUNE API auth (elles lèvent),
-    // on sort de l'écran de chargement et on affiche l'écran de configuration.
-    if (!auth) {
-      setAuthChecking(false)
-      setAccessDenied(true)
-      setLoginError("Configuration Firebase manquante : renseignez les variables VITE_FIREBASE_* pour activer la connexion et la synchronisation.")
-      return () => { cancelled = true }
-    }
 
     // ── 1) Récupère le résultat d'un éventuel signInWithRedirect précédent ──
     getRedirectResult(auth)
@@ -218,11 +208,11 @@ function App() {
   }, [])
 
   if (authChecking) {
-    return <div style={{ color: 'white', background: '#0a0a0a', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🔐 Vérification de la sécurité…</div>
+    return <div style={{ color: 'white', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🔐 Vérification de la sécurité…</div>
   }
 
   if (!dbReady && !accessDenied) {
-    return <div style={{ color: 'white', background: '#0a0a0a', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🚀 Préparation de la base locale…</div>
+    return <div style={{ color: 'white', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🚀 Préparation de la base locale…</div>
   }
 
   if (accessDenied) {
@@ -284,7 +274,6 @@ function App() {
         </div>
         <button
           onClick={handleLogin}
-          disabled={!isFirebaseConfigured}
           style={{
             padding: '12px 24px',
             fontSize: '16px',
@@ -292,8 +281,7 @@ function App() {
             color: '#000000',
             border: 'none',
             borderRadius: '8px',
-            cursor: isFirebaseConfigured ? 'pointer' : 'not-allowed',
-            opacity: isFirebaseConfigured ? 1 : 0.5,
+            cursor: 'pointer',
             fontWeight: 600,
             display: 'flex',
             alignItems: 'center',
@@ -315,7 +303,7 @@ function App() {
   return (
     <DatabaseProvider database={database}>
       <ErrorBoundary>
-        <Suspense fallback={<div style={{ color: 'white', background: '#0a0a0a', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🚀 Chargement de l'interface principale…</div>}>
+        <Suspense fallback={<div style={{ color: 'white', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🚀 Chargement de l'interface principale…</div>}>
           <MemoMaster />
         </Suspense>
         <OfflineBanner />

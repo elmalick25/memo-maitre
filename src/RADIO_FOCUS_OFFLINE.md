@@ -4,7 +4,7 @@
 
 | Étape | Statut | Fichier |
 | --- | --- | --- |
-| 1. 12 nouvelles pistes libres de droits | ✅ | `public/audio/focus/*.mp3` (déplacés depuis `src/public/`) (≈10,7 Mo) |
+| 1. 12 nouvelles pistes libres de droits | ✅ | `src/public/audio/focus/*.mp3` (≈10,7 Mo) |
 | 2. Catalogue déclaratif | ✅ | `src/lib/musicLibrary.js` |
 | 3. Cache IndexedDB dédié | ✅ | `src/lib/musicStore.js` |
 | 4. Runtime caching Service Worker | ⚠️ à coller dans `vite.config.js` (absent du zip fourni) | voir ci-dessous |
@@ -27,7 +27,7 @@
 
 ## Emplacement des fichiers audio
 
-Les MP3 sont dans `public/audio/focus/` (déplacés hors de `src/` pour être servis par Vite). Si votre
+Les MP3 sont dans `src/public/audio/focus/` (structure du zip fourni). Si votre
 `public/` est à la racine du projet, déplacez le dossier :
 
 ```bash

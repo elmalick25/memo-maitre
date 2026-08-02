@@ -5,18 +5,12 @@ import { mirrorToWatermelon, loadInitialExpressionsFromWatermelon } from './lib/
 import { syncWithFirebase, forceResetSync, repairSyncNow } from './lib/db/sync';
 
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthReady, isFirebaseConfigured } from "./lib/firebase";
+import { storage, fbStorage, getFbUser, onAuthReady, forceSyncNow, triggerAuthReady } from "./lib/firebase";
 import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUtils";
 import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
-import { isCardActive, isCardMastered, countMasteredCards } from "./lib/cardStatus";
-import {
-  isCardDue,
-  getDuePile,
-  getReviewPileSize,
-  buildSession,
-  buildCategoryPreviews,
-} from "./lib/sessionSelector";
+import { isCardMastered, countMasteredCards, getDueCards } from "./lib/cardStatus";
+import { DAILY_PLAN_STORAGE_KEY, buildDailyPlan, markCardDone, normalizeDailyPlan } from "./lib/dailyPlan";
 import {
   pickProductionInvite,
   canPromptProduction,
@@ -34,8 +28,8 @@ import {
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 import { fsrs, fsrsR, fsrsFromProduction } from "./lib/fsrs";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
-import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeDailySession, getDailySessionTarget, pickLeeches, nextLapseCount } from "./lib/memoryLab";
-import { isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, selectNewCardsForToday, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
+import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeDailySession, pickLeeches, nextLapseCount } from "./lib/memoryLab";
+import { isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
 import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
 import { getAudioObjectUrl } from "./lib/audioStore";
 import { FOCUS_PLAYLIST, OFFLINE_TRACKS, LIVE_STATIONS, CATEGORY_LABELS, totalPlaylistBytes, formatBytes } from "./lib/musicLibrary";
@@ -56,7 +50,6 @@ import { restructureSelectedCards } from "./lib/retroEngineeringRestructurer";
 
 import PhantomRecruiter from "./components/PhantomRecruiter";
 import TechOracle from "./components/TechOracle";
-import { resolveDestination } from "./lib/appMap";
 import { YearHeatmap, ResumeCarousel, getSmartSessionRecommendation, CommandPalette, useCommandPaletteShortcut, SmartPasteBox, generateCardsFromSmartPaste, findSimilarCards, Minimap, getCardHealth, useSavedViews, generateWeeklyDigest, PomodoroStudy, AskMyDocs, SocraticChat, RabbitHoleViewer, gradeSemanticVoice, generatePrerequisiteCard } from "./MemoMasterUpgrades";
 import GodTierContent from "./components/GodTierContent";
 import GodTierStats from "./components/GodTierStats";
@@ -357,15 +350,12 @@ export default function MemoMaster() {
   const setView = (v) => navigate(v);
   const addSubView = view === "add" && navState.subView ? navState.subView : "single";
   const setAddSubView = (sv) => navigate(`add/${sv}`);
-  const labSubView = view === "lab" && navState.subView ? navState.subView : "pdf";
+  const labSubView = view === "lab" && navState.subView ? navState.subView : "home";
   const setLabSubView = (sv) => navigate(`lab/${sv}`);
   const projectSubView = view === "projects" && navState.subView ? navState.subView : "hub";
   const setProjectSubView = (sv) => navigate(`projects/${sv}`);
   const examSubView = view === "exam" && navState.subView ? navState.subView : "home";
   const setExamSubView = (sv) => navigate(`exam/${sv}`);
-  // Sous-vue de l'espace anglais (chat, roleplay, wild, cefr…) : transmise à
-  // EnglishPractice pour que navigate("practice/roleplay") ouvre le bon onglet.
-  const practiceSubView = view === "practice" && navState.subView ? navState.subView : null;
 
   const [expressions, setExpressionsState] = useState([]);
   const setExpressions = useCallback((action) => {
@@ -407,11 +397,6 @@ export default function MemoMaster() {
       return normalizedNext;
     });
   }, []);
-  // Miroir synchrone des fiches : permet d'appeler checkBadges APRÈS
-  // setExpressions sans mettre d'effet de bord dans l'updater (React peut
-  // rejouer un updater → badges/toasts en double).
-  const expressionsRef = useRef([]);
-  useEffect(() => { expressionsRef.current = expressions; }, [expressions]);
   const [categories, setCategories] = useState(CATEGORIES_DEFAULT);
   const [sessions, setSessions] = useState([]);
   const [stats, setStats] = useState({ streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
@@ -1284,9 +1269,10 @@ export default function MemoMaster() {
     };
   }, [currentDate]);
 
-  // Source de vérité UNIQUE (sessionSelector.isCardDue) : critère de maîtrise
-  // unifié + fiches en pause exclues + fiches déjà servies aujourd'hui exclues.
-  const todayReviews = useMemo(() => getDuePile(expressions, currentDate), [expressions, currentDate]);
+  // Couche 6 : un SEUL critère de maîtrise (cardStatus.isCardMastered) —
+  // fini les `level >= 7` inline incohérents avec l'état FSRS.
+  // Couche 9 : `isDueCard` est désormais LE seul filtre "due" de toute l'app.
+  const todayReviews = useMemo(() => getDueCards(expressions, currentDate), [expressions, currentDate]);
   const masteredCount = useMemo(() => countMasteredCards(expressions), [expressions]);
 
   // ── Couche 3 : budget d'entrée des fiches jamais vues ───────────────────
@@ -1308,36 +1294,85 @@ export default function MemoMaster() {
 
   // Taille de la pile de RÉVISION (hors fiches jamais vues) : signal commun
   // aux couches 2 et 3.
-  const reviewPileSize = useMemo(() => getReviewPileSize(todayReviews), [todayReviews]);
+  const reviewPileSize = useMemo(() => todayReviews.filter((e) => !isNewCard(e)).length, [todayReviews]);
   const newCardBudget = useMemo(() => getNewCardBudget(reviewPileSize), [reviewPileSize]);
   const newCardsRemainingToday = remainingIntake(newCardIntake, newCardBudget);
 
-  // Aperçu de la session du jour — calculé par la MÊME fonction que le
-  // lancement réel (buildSession), budget d'entrée compris. C'est ce qui
-  // garantit que « 20 fiches annoncées » = « 20 fiches servies ».
-  const dailySession = useMemo(
-    () => buildSession(expressions, {
-      todayISO: currentDate,
-      intakeState: newCardIntake,
-      budget: newCardBudget,
-    }),
-    [expressions, currentDate, newCardIntake, newCardBudget],
+  // ══ COUCHE 9 : PLAN DU JOUR PERSISTANT (source de vérité unique) ═════════
+  // Avant : la session était recomposée à chaque rendu depuis la pile due, donc
+  // le compteur restait bloqué sur 35 quoi qu'on révise, le quota se rechargeait
+  // à l'infini, et chaque module comptait la pile brute (somme >> total affiché).
+  // Maintenant : un plan scellé le matin (mêmes fiches, même ordre, plafond figé),
+  // dont on retire les fiches faites. Persisté ⇒ survit à un refresh / une sortie.
+  const [dailyPlanState, setDailyPlanState] = useState(() => {
+    try {
+      const raw = typeof localStorage !== "undefined" ? localStorage.getItem(DAILY_PLAN_STORAGE_KEY) : null;
+      return normalizeDailyPlan(raw ? JSON.parse(raw) : null, today());
+    } catch { return normalizeDailyPlan(null, today()); }
+  });
+  useEffect(() => {
+    setDailyPlanState((prev) => normalizeDailyPlan(prev, currentDate));
+  }, [currentDate]);
+
+  // Le plan respecte le budget d'entrée des fiches jamais vues (couche 3) :
+  // sans ce filtre, un plan de 35 pouvait être rempli de 35 fiches neuves.
+  const dailyEligiblePool = useMemo(() => {
+    const { newCards, reviewCards } = splitNewAndReview(todayReviews);
+    const admitted = new Set(newCardIntake?.admittedIds || []);
+    const slots = Math.max(0, newCardBudget - admitted.size);
+    const already = newCards.filter((c) => admitted.has(c.id));
+    const fresh = newCards.filter((c) => !admitted.has(c.id)).slice(0, slots);
+    return [...reviewCards, ...already, ...fresh];
+  }, [todayReviews, newCardIntake, newCardBudget]);
+
+  const dailyPlanResult = useMemo(
+    () => buildDailyPlan({ plan: dailyPlanState, dueCards: dailyEligiblePool, todayISO: currentDate }),
+    [dailyPlanState, dailyEligiblePool, currentDate],
   );
-  const dailySessionPreview = dailySession.queue;
-  // Aperçu par module : identique à ce que le clic sur le module lancera.
-  const categorySessionPreviews = useMemo(
-    () => buildCategoryPreviews(expressions, categories, {
-      todayISO: currentDate,
-      intakeState: newCardIntake,
-      budget: newCardBudget,
-    }),
-    [expressions, categories, currentDate, newCardIntake, newCardBudget],
-  );
+
+  // Persistance + resynchronisation du plan (sans boucle de rendu : on ne
+  // réécrit le state que si le plan a réellement changé).
+  useEffect(() => {
+    const next = dailyPlanResult.plan;
+    setDailyPlanState((prev) => {
+      if (prev
+        && prev.date === next.date
+        && prev.target === next.target
+        && prev.sealed === next.sealed
+        && prev.ids.length === next.ids.length
+        && prev.doneIds.length === next.doneIds.length
+        && prev.ids.every((id, i) => id === next.ids[i])
+        && prev.doneIds.every((id, i) => id === next.doneIds[i])
+      ) return prev;
+      try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
+      return next;
+    });
+  }, [dailyPlanResult]);
+
+  /** Marque une fiche comme traitée aujourd'hui (appelé à chaque notation). */
+  const consumeDailyPlanCard = useCallback((cardId) => {
+    setDailyPlanState((prev) => {
+      const next = markCardDone(prev, cardId, today());
+      try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
+      return next;
+    });
+  }, []);
+
+  // Fiches RESTANTES du jour : l'unique nombre affiché partout (nav, sidebar,
+  // dashboard, constellation, modules, agent IA).
+  const dailySessionPreview = dailyPlanResult.remaining;
+  const sessionRemainingCount = dailyPlanResult.remainingCount;
+  const sessionDoneToday = dailyPlanResult.doneCount;
+  const sessionPlannedToday = dailyPlanResult.plannedCount;
+  const dailyTargetToday = dailyPlanResult.target;
+  const dailyPlanCompleted = dailyPlanResult.completed;
+  const duePileSize = todayReviews.length;
   // Couche 4 : leeches sévères qui ne sont PAS déjà dans la session du jour.
   const proactiveLeeches = useMemo(() => {
     const inSession = new Set(dailySessionPreview.map((c) => c.id));
     return pickLeeches(expressions, 6).filter((c) => !inSession.has(c.id)).slice(0, 3);
   }, [expressions, dailySessionPreview]);
+
 
 
   // ── Scroll-to-top à chaque changement de vue ──
@@ -1361,10 +1396,7 @@ export default function MemoMaster() {
 
   // Keyboard shortcuts 1-9 pour naviguer dans la sidebar
   useEffect(() => {
-    // L'ordre DOIT correspondre aux raccourcis affichés dans la sidebar
-    // (⌥1 Accueil … ⌥9 Stats). L'ancien tableau était désaligné : ⌥3 ouvrait
-    // Certifications au lieu d'Ajouter, ⌥4 Radar OS au lieu de Fiches, etc.
-    const NAV_IDS = ["dashboard", "projects", "add", "list", "categories", "practice", "veille", "opensource", "stats"];
+    const NAV_IDS = ["dashboard", "projects", "certifications", "opensource", "add", "list", "categories", "practice", "stats", "badges", "lab"];
     const handleKey = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       if (e.altKey && e.key >= "1" && e.key <= "9") {
@@ -1373,11 +1405,6 @@ export default function MemoMaster() {
           setView(NAV_IDS[idx]);
           e.preventDefault();
         }
-      }
-      // ⌥R — Routine (annoncé dans la sidebar mais jamais implémenté)
-      if (e.altKey && (e.key === "r" || e.key === "R" || e.code === "KeyR")) {
-        setView("routine");
-        e.preventDefault();
       }
       // ⌘K / Ctrl+K — ouvre la command palette sur la dernière carte
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -1597,11 +1624,7 @@ export default function MemoMaster() {
       examsDone: stats.examsDone || 0,
       badges: unlockedBadges.length,
     });
-    // FIX : les dépendances omettaient expressions/stats/badges → si les deux
-    // drapeaux passaient à true avant que ces données soient peuplées, la
-    // migration unique créditait 0 XP définitivement. migrateOnce est idempotent
-    // (garde `migratedFromLegacy`), donc l'ajouter aux deps est sans risque.
-  }, [loaded, xpLoaded, expressions.length, stats.streak, stats.examsDone, unlockedBadges.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loaded, xpLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Purge des badges morts (catégorie « Héritage » supprimée — chantier 3).
   useEffect(() => {
@@ -1713,7 +1736,7 @@ export default function MemoMaster() {
       produced: (breakdown.produced || 0) + (breakdown.mastered || 0),
       masteredReal: breakdown.mastered || 0,
       recalledNotProduced: breakdown.recalled || 0,
-      dueCount: exps.filter((e) => isCardDue(e)).length,
+      dueCount: getDueCards(exps, today()).length, // critère « dû » unique (couche 9)
       totalReviews: st?.totalReviews || 0,
       aiGenerated: st?.aiGenerated || 0,
       lateNightSessions: st?.lateNightSessions || 0,
@@ -1943,13 +1966,9 @@ export default function MemoMaster() {
     const newLevel = q === 0 ? 0 : q === 1 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
     const histEntry = { date: today(), q, newLevel, interval: updated.interval };
     const _newLapse = nextLapseCount(exp, q);
-    // `lastReviewedOn` : marque la fiche comme SERVIE aujourd'hui. Sans ce
-    // tampon, une fiche notée « Oublié » (interval 0 → nextReview = aujourd'hui)
-    // restait comptée comme due, donc les compteurs ne descendaient jamais
-    // pendant la session. Lu par sessionSelector.isCardDue.
-    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, lastReviewedOn: today(), reviewHistory: [...(e.reviewHistory || []), histEntry], lapseCount: _newLapse } : e));
+    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry], lapseCount: _newLapse } : e));
 
-    if (!isCardMastered(exp) && isCardMastered({ ...exp, ...updated, level: newLevel })) {
+    if (newLevel >= 7 && exp.level < 7) {
       fireConfetti();
       showToast("🎉 Fiche maîtrisée ! Confetti !", "success");
     }
@@ -1979,9 +1998,35 @@ export default function MemoMaster() {
       awardSource("CARD_MASTERED", { streak: statsRef.current?.streak || 0, silent: true });
     }
 
+    // ── COUCHE 9 : la fiche est consommée dans le plan du jour ────────────
+    // Même notée « Again » (elle reste due, mais elle a été TRAVAILLÉE
+    // aujourd'hui) : c'est ce qui fait réellement descendre le compteur.
+    consumeDailyPlanCard(exp.id);
+
     const done = reviewSessionDone + 1;
     setReviewSessionDone(done);
     updateStreakAfterSession(1);
+
+    // ── COUCHE 9 bis : étape de RÉAPPRENTISSAGE dans la session ───────────
+    // Une fiche ratée (« Again ») ne doit pas simplement disparaître jusqu'à
+    // demain : on la replace quelques cartes plus loin DANS la session en
+    // cours (comme les learning steps d'Anki). Elle ne recompte PAS dans le
+    // plan du jour (déjà consommée), donc le compteur continue de descendre.
+    if (q === 0 && !exp._relearn) {
+      const nq = [...reviewQueue];
+      nq.splice(Math.min(nq.length, reviewIndex + 4), 0, { ...exp, _relearn: true });
+      setReviewQueue(nq);
+      setReviewIndex(i => i + 1);
+      setRevealed(false);
+      setUserAnswer("");
+      setSocraticHint("");
+      setSocraticMode(false);
+      setRabbitHoleOpen(false);
+      setMnemonicText("");
+      setMnemonicSaved(false);
+      setCardStartTime(Date.now());
+      return;
+    }
 
     if (reviewIndex + 1 >= reviewQueue.length) {
       setExpressions(prevExps => {
@@ -2048,7 +2093,7 @@ export default function MemoMaster() {
       setMnemonicSaved(false);
       setCardStartTime(Date.now());
     }
-  }, [playRating, playCombo, playChest, trackQuest, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast]);
+  }, [playRating, playCombo, playChest, trackQuest, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast, consumeDailyPlanCard]);
 
   const handleAnswer = useCallback((q) => {
     const exp = reviewQueue[reviewIndex];
@@ -2100,12 +2145,12 @@ export default function MemoMaster() {
 
             if (width > height) {
               if (width > MAX_WIDTH) {
-                height = Math.round(height * (MAX_WIDTH / width));
+                height = Math.round((height *= MAX_WIDTH / width));
                 width = MAX_WIDTH;
               }
             } else {
               if (height > MAX_HEIGHT) {
-                width = Math.round(width * (MAX_HEIGHT / height));
+                width = Math.round((width *= MAX_HEIGHT / height));
                 height = MAX_HEIGHT;
               }
             }
@@ -2215,8 +2260,7 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
         easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
       }));
     if (newExps.length === 0) { showToast("Aucune fiche valide à sauvegarder.", "error"); return; }
-    setExpressions(prev => [...newExps, ...prev]);
-    checkBadges([...newExps, ...expressionsRef.current], statsRef.current, sessions, unlockedBadges);
+    setExpressions(prev => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
     showToast(`🎉 ${newExps.length} fiche(s) sauvegardée(s) !`, "success");
     setVisionScanCards([]);
@@ -2490,8 +2534,7 @@ RÈGLES STRICTES : le bloc de code DOIT être encadré par \`\`\`<langage> / \`\
       front: (card.front || "").trim(), back: (card.back || "").trim(), example: (card.example || "").trim(), category: addForm.category,
       level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
     })).filter(e => e.front && e.back);
-    setExpressions(prev => [...newExps, ...prev]);
-    checkBadges([...newExps, ...expressionsRef.current], statsRef.current, sessions, unlockedBadges);
+    setExpressions(prev => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
     notifyCardsCreated(newExps.length); // couche 7
     showToast(`🎉 ${newExps.length} fiches sauvegardées !`);
@@ -2551,8 +2594,7 @@ ${ATOMIC_CARD_RULES}`;
 
   const saveChatCard = (card) => {
     const newExp = { id: crypto.randomUUID(), front: card.front || "", back: card.back || "", example: card.example || "", category: addForm.category, level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null };
-    setExpressions(prev => [newExp, ...prev]);
-    checkBadges([newExp, ...expressionsRef.current], statsRef.current, sessions, unlockedBadges);
+    setExpressions(prev => { const updated = [newExp, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + 1 }));
     notifyCardsCreated(1); // couche 7
     showToast("✅ Fiche sauvegardée !");
@@ -2560,8 +2602,7 @@ ${ATOMIC_CARD_RULES}`;
   const saveAllChatCards = (cards) => {
     if (!cards || cards.length === 0) return;
     const newExps = cards.map((c, i) => ({ id: crypto.randomUUID(), front: c.front || "", back: c.back || "", example: c.example || "", category: addForm.category, level: 0, nextReview: today(), createdAt: today(), easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null }));
-    setExpressions(prev => [...newExps, ...prev]);
-    checkBadges([...newExps, ...expressionsRef.current], statsRef.current, sessions, unlockedBadges);
+    setExpressions(prev => { const updated = [...newExps, ...prev]; checkBadges(updated, statsRef.current, sessions, unlockedBadges); return updated; });
     setStats(prev => ({ ...prev, aiGenerated: prev.aiGenerated + newExps.length }));
     notifyCardsCreated(newExps.length); // couche 7
     showToast(`✅ ${newExps.length} fiches sauvegardées d'un coup !`);
@@ -3377,68 +3418,98 @@ ${ATOMIC_CARD_RULES}`;
     }, 550);
   };
 
-  const startReview = (catFilter = null, mode = "standard", fixedQueue = null) => {
+  const startReview = (catFilter = null, mode = "standard", fixedQueue = null, opts = {}) => {
     let queue;
     let cappedFrom = 0; // taille réelle de la pile si la session a été plafonnée
+    const bonus = opts.bonus === true; // révision volontaire AU-DELÀ du plan du jour
     if (fixedQueue && fixedQueue.length > 0) {
       // Session ciblée : on utilise exactement les fiches fournies (ex: fiches urgentes)
       queue = getSmartQueue([...fixedQueue]);
-    } else if (mode === "cram" && catFilter) {
-      // BACHOTAGE explicite : TOUTES les fiches du module, dues ou non.
-      // (Anciennement le mode "exam" du bouton « Réviser » d'un module : il
-      // servait tout le module alors que la carte affichait « N en retard »,
-      // d'où l'impression d'un compteur faux. Le bachotage a désormais son
-      // propre bouton et son propre libellé.)
-      queue = getSmartQueue(expressions.filter((e) => e.category === catFilter && !e.paused));
+    } else if (mode === "exam" && catFilter) {
+      // Révision pour examen : TOUTES les fiches du module (pas seulement celles dues) pour du bachotage
+      queue = getSmartQueue(expressions.filter((e) => e.category === catFilter));
+    } else if (bonus) {
+      // ── Mode BONUS (couche 9) : au-delà du plafond, choisi explicitement ──
+      // On sert les fiches dues qui ne sont NI dans le plan du jour NI déjà
+      // faites aujourd'hui, plafonnées à un demi-quota pour rester saines.
+      const planIds = new Set(dailyPlanResult.plan.ids);
+      const pool = (catFilter ? todayReviews.filter((e) => e.category === catFilter) : todayReviews)
+        .filter((e) => !planIds.has(e.id));
+      const extraTarget = dailyTargetToday ? Math.max(5, Math.round(dailyTargetToday / 2)) : pool.length;
+      queue = getSmartQueue(composeDailySession(pool, { todayISO: today(), target: extraTarget }));
     } else {
-      // Focus examen automatique : 3 jours avant un examen, on priorise les
-      // modules concernés — mais on reste sur les fiches RÉELLEMENT dues et
-      // sur la même composition/plafonnement que partout ailleurs, sinon le
-      // compteur affiché ne correspond plus à la session servie.
+      // Focus examen automatique : 3 jours avant un examen, on ne révise que les fiches des examens imminents
       const examCats = categories
         .filter((c) => c.examDate)
         .filter((c) => { const d = Math.ceil((new Date(c.examDate) - new Date()) / 86400000); return d >= 0 && d <= 3; })
         .map((c) => c.name);
-      const focusCats = !catFilter && examCats.length > 0 ? examCats : null;
-      const pool = focusCats
-        ? expressions.filter((e) => focusCats.includes(e.category))
-        : expressions;
-
-      // Une SEULE fonction produit la file — la même que celle qui alimente
-      // les compteurs (dailySession / categorySessionPreviews).
-      const session = buildSession(pool, {
-        todayISO: currentDate,
-        category: catFilter || null,
-        intakeState: newCardIntake,
-        budget: newCardBudget,
-      });
-      if (session.intakeState && session.intakeState !== newCardIntake) {
-        setNewCardIntake(session.intakeState);
-      }
-      if (session.capped) cappedFrom = session.pileSize;
-
-      if (mode === "interleaving" || mode === "flow") {
-        // Réordonnancement round-robin par catégorie, appliqué UNIQUEMENT
-        // sur l'ensemble déjà plafonné, pas sur la pile brute.
-        const byCat = {};
-        session.queue.forEach(e => {
-          if (!byCat[e.category]) byCat[e.category] = [];
-          byCat[e.category].push(e);
-        });
-        queue = [];
-        const lengths = Object.values(byCat).map(a => a.length);
-        const maxLen = lengths.length ? Math.max(...lengths) : 0;
-        for (let i = 0; i < maxLen; i++) {
-          for (const cat in byCat) {
-            if (byCat[cat][i]) queue.push(byCat[cat][i]);
-          }
-        }
+      if (!catFilter && examCats.length > 0) {
+        queue = getSmartQueue(expressions.filter((e) => examCats.includes(e.category)));
       } else {
-        queue = getSmartQueue(session.queue);
+        // ══ COUCHE 9 : on SERT LE PLAN DU JOUR, on ne le recompose pas ══════
+        // Avant : chaque lancement rappelait composeDailySession sur la pile
+        // restante → un nouveau lot de 35 à chaque entrée, quota jamais
+        // consommé, compteurs incohérents entre l'accueil et la session.
+        // Maintenant : la file est exactement le RESTANT du plan (déjà
+        // priorisé leech > retard > dues > consolidation, et déjà plafonné).
+        const planRemaining = catFilter
+          ? dailySessionPreview.filter((e) => e.category === catFilter)
+          : dailySessionPreview;
+
+        // Le plafond du jour porte sur l'ENSEMBLE des modules : filtrer par
+        // module ne donne donc jamais plus que la part de ce module dans le
+        // quota — c'est ce qui rend la constellation cohérente.
+        queue = [...planRemaining];
+
+        // Les fiches jamais vues réellement servies consomment leur slot
+        // d'admission (couche 3) — une seule fois par jour.
+        const servedNew = queue.filter(isNewCard);
+        if (servedNew.length > 0) {
+          setNewCardIntake((prev) => {
+            let next = prev;
+            for (const c of servedNew) next = consumeIntakeSlot(next, c.id, today());
+            return next;
+          });
+        }
+
+        if (dailyPlanResult.capped) {
+          cappedFrom = dailyPlanResult.pileSize;
+        }
+
+        if (mode === "interleaving" || mode === "flow") {
+          // Réordonnancement round-robin par catégorie, appliqué UNIQUEMENT
+          // sur l'ensemble déjà plafonné, pas sur la pile brute.
+          const byCat = {};
+          queue.forEach(e => {
+            if (!byCat[e.category]) byCat[e.category] = [];
+            byCat[e.category].push(e);
+          });
+          const cats = Object.keys(byCat);
+          if (cats.length > 0) {
+            const maxLen = Math.max(...cats.map(c => byCat[c].length));
+            const rr = [];
+            for (let i = 0; i < maxLen; i++) {
+              for (const cat of cats) {
+                if (byCat[cat][i]) rr.push(byCat[cat][i]);
+              }
+            }
+            queue = rr;
+          }
+        } else {
+          queue = getSmartQueue(queue);
+        }
       }
     }
 
-    if (queue.length === 0) { showToast("Aucune fiche à réviser !", "info"); return; }
+    if (queue.length === 0) {
+      // COUCHE 9 : message honnête — « objectif atteint » ≠ « rien à réviser ».
+      if (!fixedQueue && !bonus && dailyPlanCompleted && duePileSize > 0) {
+        showToast(`✅ Objectif du jour atteint (${sessionDoneToday} fiches). ${duePileSize} fiches reviendront demain — repose ta mémoire !`, "success");
+      } else {
+        showToast("Aucune fiche à réviser !", "info");
+      }
+      return;
+    }
 
     // ── COUCHE 7 : instrumentation — on enregistre la charge RÉELLE du jour
     // (pile due vs. session servie) pour pouvoir régler les constantes des
@@ -3458,7 +3529,7 @@ ${ATOMIC_CARD_RULES}`;
     setSessionTimer(0);
     setView("review");
     if (cappedFrom > queue.length) {
-      showToast(`🎯 Session allégée : ${queue.length} fiches sur ${cappedFrom} dues (les autres reviendront demain)`, "info");
+      showToast(`🎯 Plan du jour : ${queue.length} fiches restantes sur ${cappedFrom} dues (le reste revient demain)`, "info");
     }
 
     if (mode === "vocal") {
@@ -4032,11 +4103,11 @@ ${ATOMIC_CARD_RULES}`;
       level: 0, nextReview: today(), createdAt: today(),
       easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null
     };
-    setExpressions(prev => [newCard, ...prev.filter(c => !selectedCards.includes(c.id))]);
-    checkBadges(
-      [newCard, ...expressionsRef.current.filter(c => !selectedCards.includes(c.id))],
-      statsRef.current, sessions, unlockedBadges
-    );
+    setExpressions(prev => {
+      const updated = [newCard, ...prev.filter(c => !selectedCards.includes(c.id))];
+      checkBadges(updated, statsRef.current, sessions, unlockedBadges);
+      return updated;
+    });
     setSelectedCards([]);
     showToast("🔀 Cartes fusionnées !");
   };
@@ -4582,10 +4653,10 @@ ${ATOMIC_CARD_RULES}`;
   const computeModuleComparison = () => {
     const comp = categories.map(cat => {
       const catExps = expressions.filter(e => e.category === cat.name);
-      const mastered = catExps.filter(isCardMastered).length;
+      const mastered = catExps.filter(e => e.level >= 7).length;
       const total = catExps.length;
       const avgLevel = total ? (catExps.reduce((s, e) => s + e.level, 0) / total).toFixed(1) : 0;
-      const due = catExps.filter(isCardDue).length;
+      const due = getDueCards(catExps, today()).length; // critère « dû » unique (couche 9)
       return { name: cat.name, total, mastered, avgLevel, due, color: cat.color };
     });
     setStatsModuleComparison(comp);
@@ -4628,7 +4699,7 @@ ${ATOMIC_CARD_RULES}`;
     try {
       const summary = {
         totalCards: expressions.length,
-        mastered: expressions.filter(isCardMastered).length,
+        mastered: expressions.filter(e => e.level >= 7).length,
         streak: stats.streak,
         totalReviews: stats.totalReviews,
         hardestModule: [...statsModuleComparison].sort((a, b) => a.avgLevel - b.avgLevel)[0]?.name,
@@ -4841,10 +4912,10 @@ ${ATOMIC_CARD_RULES}`;
     const catsStatsMap = {};
     categories.forEach(cat => {
       const catExps = expressions.filter(e => e.category === cat.name);
-      const mastered = catExps.filter(isCardMastered).length;
+      const mastered = catExps.filter(e => e.level >= 7).length;
       const total = catExps.length;
       const avgDiff = total ? (catExps.reduce((s, e) => s + (e.difficulty || (5 - (e.easeFactor || 2.5)) * 2), 0) / total).toFixed(1) : 0;
-      const due = catExps.filter(isCardDue).length;
+      const due = getDueCards(catExps, today()).length; // critère « dû » unique (couche 9)
       const lastReview = catExps.reduce((latest, e) => {
         const last = (e.reviewHistory || []).slice(-1)[0]?.date;
         return last > latest ? last : latest;
@@ -4918,7 +4989,7 @@ ${ATOMIC_CARD_RULES}`;
     const alerts = [];
     categories.forEach(cat => {
       const catExps = expressions.filter(e => e.category === cat.name);
-      const due = catExps.filter(isCardDue).length;
+      const due = getDueCards(catExps, today()).length; // critère « dû » unique (couche 9)
       if (due > 10) alerts.push({ module: cat.name, message: `${due} fiches en retard urgent !`, type: "danger" });
       else if (due > 5) alerts.push({ module: cat.name, message: `${due} fiches à revoir rapidement`, type: "warning" });
       if (cat.examDate) {
@@ -5049,13 +5120,8 @@ ${ATOMIC_CARD_RULES}`;
   // plus anciennes en premier — pour qu'elles reviennent progressivement
   // dans la révision normale sans action manuelle.
   const [pauseDripQuota, setPauseDripQuota] = useState(() => {
-    // FIX : localStorage.getItem peut lever (Safari navigation privée, stockage
-    // bloqué par politique) → l'exception dans l'initialiseur useState faisait
-    // tomber tout le composant dans l'ErrorBoundary. Même garde que partout ailleurs.
-    try {
-      const saved = parseInt(localStorage.getItem("memomaitre_pauseDripQuota"), 10);
-      return Number.isFinite(saved) && saved > 0 ? saved : 8;
-    } catch { return 8; }
+    const saved = parseInt(localStorage.getItem("memomaitre_pauseDripQuota"), 10);
+    return Number.isFinite(saved) && saved > 0 ? saved : 8;
   });
   useEffect(() => {
     try { localStorage.setItem("memomaitre_pauseDripQuota", String(pauseDripQuota)); } catch { }
@@ -5066,17 +5132,16 @@ ${ATOMIC_CARD_RULES}`;
     let lastDrip = null;
     try { lastDrip = localStorage.getItem("memomaitre_lastPauseDripDate"); } catch { }
     if (lastDrip === todayStr) return;
-    // Le calcul et le toast restent HORS de l'updater (un updater rejoué
-    // afficherait le toast deux fois).
-    const paused = expressionsRef.current.filter(e => e.paused);
-    if (!paused.length) return;
-    const sorted = [...paused].sort((a, b) => (a.pausedAt || 0) - (b.pausedAt || 0));
-    const toReleaseIds = new Set(sorted.slice(0, pauseDripQuota).map(e => e.id));
-    if (!toReleaseIds.size) return;
-    setExpressions(prev => prev.map(e => toReleaseIds.has(e.id) ? { ...e, paused: false, pausedAt: null } : e));
-    showToast(`🔓 ${toReleaseIds.size} fiche(s) en pause libérée(s) automatiquement (dosage quotidien) — direction révision.`);
+    setExpressions(prev => {
+      const paused = prev.filter(e => e.paused);
+      if (!paused.length) return prev;
+      const sorted = [...paused].sort((a, b) => (a.pausedAt || 0) - (b.pausedAt || 0));
+      const toReleaseIds = new Set(sorted.slice(0, pauseDripQuota).map(e => e.id));
+      if (!toReleaseIds.size) return prev;
+      showToast(`🔓 ${toReleaseIds.size} fiche(s) en pause libérée(s) automatiquement (dosage quotidien) — direction révision.`);
+      return prev.map(e => toReleaseIds.has(e.id) ? { ...e, paused: false, pausedAt: null } : e);
+    });
     try { localStorage.setItem("memomaitre_lastPauseDripDate", todayStr); } catch { }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pauseDripQuota]);
 
   useEffect(() => {
@@ -5184,7 +5249,7 @@ ${ATOMIC_CARD_RULES}`;
       setExamActive(false);
       const score = Math.round((newAnswers.filter(a => a.q >= 3).length / newAnswers.length) * 100);
       setStats((prev) => ({ ...prev, examsDone: prev.examsDone + 1 }));
-      checkBadges(expressions, { ...statsRef.current, examsDone: statsRef.current.examsDone + 1 }, sessions, unlockedBadges);
+      checkBadges(expressions, { ...stats, examsDone: stats.examsDone + 1 }, sessions, unlockedBadges);
       const wrongs = newAnswers.filter(a => a.q < 3).map(a => a.card);
       setWrongAnswersForConfusion(wrongs);
       // Precision: faux positifs = répondu vite mais faux
@@ -5250,8 +5315,8 @@ ${ATOMIC_CARD_RULES}`;
     const _normCat = (s) => (s || "").toString().trim().toLowerCase();
     let list = filterCat === "Toutes" ? expressions : expressions.filter((e) => _normCat(e.category) === _normCat(filterCat));
     if (filterLevel !== "Tous") {
-      if (filterLevel === "Maîtrisées") list = list.filter(isCardMastered);
-      else if (filterLevel === "En retard") list = list.filter((e) => isCardDue(e, currentDate));
+      if (filterLevel === "Maîtrisées") list = list.filter((e) => e.level >= 7);
+      else if (filterLevel === "En retard") list = list.filter((e) => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused);
       else if (filterLevel === "Nouvelles") list = list.filter((e) => e.level === 0);
       else if (filterLevel === "En pause") list = list.filter((e) => e.paused);
     }
@@ -5306,7 +5371,7 @@ ${ATOMIC_CARD_RULES}`;
   const criticalCards = todayReviews.filter(e => (e.difficulty !== undefined && e.difficulty >= 8) || (e.difficulty === undefined && e.easeFactor <= 1.8));
   const weakestCat = categories.length > 0 ? categories.map(cat => {
     const catExps = expressions.filter(e => e.category === cat.name);
-    const mastered = catExps.filter(isCardMastered).length;
+    const mastered = catExps.filter(e => e.level >= 7).length;
     return { name: cat.name, pct: catExps.length ? (mastered / catExps.length) * 100 : 0 };
   }).sort((a, b) => a.pct - b.pct)[0]?.name || categories[0]?.name : "";
 
@@ -5512,8 +5577,7 @@ ${langInstr}`,
       const raw = await callClaude(system, `Module: ${docCategory}\n\nCours:\n${textSlice}`);
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
-      // FIX : safeParseJSON renvoie null si la réponse LLM est irréparable.
-      const cards = Array.isArray(parsed?.cards) ? parsed.cards : [];
+      const cards = Array.isArray(parsed.cards) ? parsed.cards : [];
       setPdfBatchPreview(cards);
       // Score de couverture
       if (pdfAnalysis?.themes?.length) {
@@ -6032,15 +6096,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
   // Contexte live injecté dans le system prompt à chaque message.
   const buildAgentContext = useCallback(() => {
     const totalCards = expressions.length;
-    // Le nombre annoncé à l'assistant = la session réellement servie (0 si rien
-    // n'est au programme), jamais un repli sur la pile brute qui gonflait le chiffre.
-    const dueCount = dailySessionPreview.length;
+    const dueCount = sessionRemainingCount;
     const pool = dailySessionPreview;
     const arch = getArchetype(powerLevel);
     return {
       view,
-      subView: navState.subView || null,
-      allModules: categories.map((c) => c.name),
       totalCards,
       dueCount,
       masteryPct: totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0,
@@ -6059,32 +6119,16 @@ ${history ? `Historique récent:\n${history}` : ""}`,
       zen: zenFocusMode,
       lofi: lofiPlaying,
     };
-  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, navState.subView, isDarkMode, zenFocusMode, lofiPlaying]);
+  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying]);
 
   // Les commandes du CommandPalette exposées comme "tools" exécutables.
-  // ⚠️ Toute destination passe par resolveDestination() : l'assistant ne peut
-  // plus envoyer l'utilisateur sur une vue inexistante (écran blanc). Un chemin
-  // approximatif ("le pomodoro", "lab/import", "wild") est ramené au chemin réel.
   const runAgentTool = useCallback((tool, args = {}) => {
     const closeMobile = () => setAgentSheetOpen(false);
-    const goTo = (raw) => {
-      const dest = resolveDestination(raw);
-      navigate(dest.path);
-      closeMobile();
-      return dest;
-    };
     switch (tool) {
       case "navigate": {
-        const raw = args.path || args.view || args.destination || "dashboard";
-        const sub = args.sub || args.subView || args.tab;
-        const dest = goTo(sub && !String(raw).includes("/") ? `${raw}/${sub}` : raw);
-        return `Ouverture de « ${dest.label} »`;
-      }
-      case "search_cards": {
-        const q = String(args.query || args.q || "").trim();
-        setSearchQuery(q);
-        navigate("list"); closeMobile();
-        return q ? `Recherche « ${q} » dans tes fiches` : "Liste des fiches ouverte";
+        const v = String(args.view || "dashboard");
+        setView(v); closeMobile();
+        return `Ouverture de « ${v} »`;
       }
       case "start_review":
         startReview(args.module || null, "standard"); closeMobile();
@@ -6099,21 +6143,13 @@ ${history ? `Historique récent:\n${history}` : ""}`,
         setZenFocusMode((z) => !z);
         return "Mode Zen basculé";
       case "start_pomodoro":
-        goTo("lab/pomodoro");
+        navigate("lab/pomodoro"); closeMobile();
         return "Pomodoro 25 min ouvert";
       case "open_command_palette":
         setCmdOpen(true); closeMobile();
         return "Palette de commandes ouverte";
-      default: {
-        // Tool inconnu : plutôt que d'échouer en silence, on tente une
-        // interprétation en navigation si les arguments ressemblent à une route.
-        const raw = args.path || args.view || args.destination;
-        if (raw) {
-          const dest = goTo(raw);
-          return `Ouverture de « ${dest.label} »`;
-        }
+      default:
         return null;
-      }
     }
   }, [navigate]);
 
@@ -6559,7 +6595,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           >
             🔄 Sync
           </button>
-          {todayReviews.length > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900, backdropFilter: "blur(4px)" }} title={`Session du jour : ${dailySessionPreview.length || todayReviews.length} fiches sur un total de ${todayReviews.length}`}>⚡ {dailySessionPreview.length || todayReviews.length}</span>}
+          {sessionRemainingCount > 0 && <span style={{ background: "rgba(255,255,255,0.25)", color: "white", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 900, backdropFilter: "blur(4px)" }} title={`Plan du jour : ${sessionRemainingCount} fiche(s) restante(s) sur ${sessionPlannedToday} prévues — ${duePileSize} dues au total`}>⚡ {sessionRemainingCount}</span>}
           {projectConflicts.filter(c => c.severity === "critique").length > 0 && <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 900, boxShadow: "0 0 12px rgba(239,68,68,0.5)" }}>🚨</span>}
         </div>
       </nav>
@@ -6628,14 +6664,14 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {/* Nav items (Scrollable) */}
           <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "visible", paddingBottom: 16, paddingRight: 6 }}>
             {(() => {
-              const dueCount = expressions.filter(e => isCardDue(e, currentDate)).length;
-              const masteredCount = expressions.filter(isCardMastered).length;
+              const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+              const masteredCount = expressions.filter(e => e.level >= 7).length;
               const totalCards = expressions.length;
               const masteredPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
               const NAV_GROUPS = [
                 {
                   items: [
-                    { id: "dashboard", icon: "⚡", label: "Accueil", badge: (dailySessionPreview.length || todayReviews.length) > 0 ? (dailySessionPreview.length || todayReviews.length) : null, badgeColor: "#6B82F5", shortcut: "1", hint: `${dailySessionPreview.length || todayReviews.length} fiches au programme` },
+                    { id: "dashboard", icon: "⚡", label: "Accueil", badge: sessionRemainingCount > 0 ? sessionRemainingCount : null, badgeColor: "#6B82F5", shortcut: "1", hint: `${sessionRemainingCount} fiche(s) restante(s) sur ${sessionPlannedToday} au programme du jour` },
                     { id: "routine", icon: "🌟", label: "Routine", shortcut: "R", hint: "Ma routine du jour" },
                     { id: "projects", icon: "🗂️", label: "Projets", badge: projects.filter(p => p.status !== "terminé").length || null, badgeColor: "#4D6BFE", shortcut: "2", hint: `${projects.filter(p => p.status !== "terminé").length} projets actifs` },
                     { id: "add", icon: "✦", label: editingId ? "Éditer" : "Ajouter", shortcut: "3", hint: "Créer une nouvelle fiche" },
@@ -6686,7 +6722,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             setView(n.id);
                             if (n.id === "projects") setProjectSubView("hub");
                           }}
-                          title={sidebarCollapsed ? `${n.label}${n.shortcut ? ` (⌥${n.shortcut})` : ""}` : undefined}
+                          title={sidebarCollapsed ? `${n.label}${n.shortcut ? ` (⌘${n.shortcut})` : ""}` : undefined}
                           style={{
                             width: "100%", padding: sidebarCollapsed ? "12px 0" : "12px 14px",
                             display: "flex", alignItems: "center", justifyContent: sidebarCollapsed ? "center" : "flex-start", gap: 12, border: "none",
@@ -6701,7 +6737,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                             <span style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{n.label}</span>
                           )}
                           {!sidebarCollapsed && n.shortcut && (
-                            <span style={{ fontSize: 10, color: isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(77,107,254,0.4)", fontFamily: "'JetBrains Mono',monospace", marginLeft: "auto", flexShrink: 0, background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.05)", padding: "2px 6px", borderRadius: 4 }}>⌥{n.shortcut}</span>
+                            <span style={{ fontSize: 10, color: isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(77,107,254,0.4)", fontFamily: "'JetBrains Mono',monospace", marginLeft: "auto", flexShrink: 0, background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.05)", padding: "2px 6px", borderRadius: 4 }}>⌘{n.shortcut}</span>
                           )}
                           {n.badge && (
                             <span className={n.badgeColor === "#EF4444" ? "nexus-badge-red" : "nexus-badge-blue"} style={{
@@ -6758,7 +6794,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 9, color: isDarkMode ? "rgba(255,255,255,0.35)" : theme.textMuted }}>
                   <span>{masteredCount} maîtrisées</span>
-                  <span>{todayReviews.length} en retard</span>
+                  <span>{duePileSize} dues au total</span>
                 </div>
               </div>
             )}
@@ -6778,7 +6814,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 
         {/* ═══ MOBILE SPEED DIAL (replaces 5-button bottom nav) ═══ */}
         {isMobile && (() => {
-          const dueCount = expressions.filter(e => isCardDue(e, currentDate)).length;
+          const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
           return (
             <>
@@ -6786,7 +6822,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 view={view}
                 isDarkMode={isDarkMode}
                 badges={{
-                  dashboard: (dailySessionPreview.length || todayReviews.length) > 0 ? (dailySessionPreview.length || todayReviews.length) : 0,
+                  dashboard: sessionRemainingCount,
                   list: dueCount > 0 ? dueCount : 0,
                 }}
                 onNavigate={(id) => {
@@ -6921,7 +6957,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
                     <span>{masteredCount} maîtrisées</span>
-                    <span>{todayReviews.length} en retard</span>
+                    <span>{duePileSize} dues au total</span>
                   </div>
                 </div>
               )}
@@ -6949,8 +6985,9 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {(view === "dashboard" || view === "home") && (() => {
             // ── Données locales dashboard ──────────────────────────────────────────
             const totalCards = expressions.length;
-            const sessionTargetCount = dailySessionPreview.length;
-            const dueCount = sessionTargetCount > 0 ? sessionTargetCount : todayReviews.length;
+            const sessionTargetCount = sessionRemainingCount;
+            const dueCount = sessionRemainingCount;
+            const sessionPool = dailySessionPreview;
             const mastPct = totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0;
             const estMinutes = Math.ceil(dueCount * 0.5);
             const formColor = dashFormIndex >= 70 ? "#4ADE80" : dashFormIndex >= 40 ? "#FACC15" : "#F87171";
@@ -6959,12 +6996,10 @@ ${history ? `Historique récent:\n${history}` : ""}`,
             // ── MOBILE : Home V2 simplifiée (la version desktop reste intacte ci-dessous) ──
             const isMobileHome = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
             if (isMobileHome) {
-              // Chaque module affiche ce que SA session servira réellement
-              // (aperçu par module), pas sa part de la session globale.
               const dueModules = categories
                 .map(c => ({
                   name: c.name,
-                  count: categorySessionPreviews[c.name]?.servedSize ?? 0
+                  count: sessionPool.filter(e => e.category === c.name).length
                 }))
                 .filter(c => c.count > 0);
 
@@ -7388,7 +7423,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                           <span style={{ fontWeight: 800, color: theme.text, fontSize: 15 }}>Constellation des Connaissances</span>
                         </div>
                         <KnowledgeGraph
-                          categories={categories} expressions={expressions} categoryPreviews={categorySessionPreviews}
+                          categories={categories} expressions={expressions} sessionPool={sessionPool}
                           theme={theme} isDarkMode={isDarkMode}
                           onNodeClick={(categoryName) => startReview(categoryName, "standard")}
                         />
@@ -7519,11 +7554,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 sessionBestCombo={sessionBestCombo}
                 bestComboEver={bestComboEver}
                 avgXPPerReview={sessionSummary?.totalCards ? Math.max(3, Math.round((xpState.daily?.slice(-1)[0]?.xp || 0) / Math.max(1, sessionSummary.totalCards))) : 10}
-                remainingCards={todayReviews.length}
+                remainingCards={sessionRemainingCount}
                 theme={theme}
                 compact={isMobile}
                 badges={badgeProgressForHooks}
-                onContinue={(n) => { setShowSessionSummary(false); startReview(null, "standard", todayReviews.slice(0, n)); }}
+                onContinue={(n) => { setShowSessionSummary(false); startReview(null, "standard", dailySessionPreview.length > 0 ? dailySessionPreview.slice(0, n) : null, { bonus: dailySessionPreview.length === 0 }); }}
               />
               <button onClick={() => { setView("dashboard"); setShowSessionSummary(false); }} className="btn-glow hov" style={{ marginTop: 24, padding: "14px 28px", background: "#3451D1", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>Retour au tableau de bord</button>
             </div>
@@ -9839,7 +9874,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "practice" && (
             <ErrorBoundary scope="EnglishPractice">
               <EnglishPractice
-                subView={practiceSubView}
                 callClaude={callClaude}
                 getNextGroqKey={getNextGroqKey}
                 storage={storage}
@@ -9951,7 +9985,6 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           {view === "lab" && (
             <ErrorBoundary scope="Lab">
               <Lab
-                subView={labSubView}
                 theme={theme}
                 isDarkMode={isDarkMode}
                 stats={stats}
@@ -9997,7 +10030,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
               showToast={showToast}
               callClaude={callClaude}
               setExpressions={setExpressions}
-              masteredCount={expressions.filter(isCardMastered).length}
+              masteredCount={expressions.filter(e => e.level >= 7).length}
               powerLevel={powerLevel}
               statsDailyProgress={statsDailyProgress}
               statsModuleComparison={statsModuleComparison}
@@ -10013,8 +10046,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
 ══════════════════════════════════════════════════════════════════ */}
           {view === "badges" && (() => {
             // ── Données de progression pour les barres ──
-            const mastered = expressions.filter(isCardMastered).length;
-            const dueCount = expressions.filter(e => isCardDue(e, currentDate)).length;
+            const mastered = expressions.filter(e => e.level >= 7).length;
+            const dueCount = expressions.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
 
             // ── Système de rareté ──
             const RARITY = {
@@ -10795,13 +10828,8 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                   }).map(cat => {
                     const isFav = catsFavorites.includes(cat.name);
                     const catExps = expressions.filter(e => e.category === cat.name);
-                    // Compteurs issus de la source de vérité unique : `dueCount`
-                    // est la dette réelle du module, `sessionCount` ce qu'une
-                    // session sur ce module servira réellement (= ce que le
-                    // bouton lance, et ce que la constellation affiche).
-                    const dueCount = catExps.filter(e => isCardDue(e, currentDate)).length;
-                    const sessionCount = categorySessionPreviews[cat.name]?.servedSize ?? dueCount;
-                    const mastered = catExps.filter(isCardMastered).length;
+                    const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+                    const mastered = catExps.filter(e => e.level >= 7).length;
                     const pausedCount = catExps.filter(e => e.paused).length;
                     const newUnpausedCount = catExps.filter(e => !e.paused && (e.level || 0) === 0).length;
                     // Progression = moyenne d'avancement de chaque fiche (niveau/7), pas seulement les fiches 100% maîtrisées
@@ -10835,12 +10863,11 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme.textMuted, flexWrap: "wrap", gap: 4 }}>
                           <span>{catExps.length} fiches</span>
                           <span>{mastered} maîtrisées</span>
-                          <span style={{ color: dueCount > 0 ? "#EF4444" : theme.textMuted }}>{dueCount} dues{sessionCount !== dueCount ? ` (${sessionCount} ce tour)` : ""}</span>
+                          <span style={{ color: dueCount > 0 ? "#EF4444" : theme.textMuted }}>{dueCount} en retard</span>
                           {pausedCount > 0 && <span style={{ color: "#F59E0B" }}>⏸ {pausedCount} en pause</span>}
                         </div>
                         <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                          <button onClick={() => { startReview(cat.name, "standard"); }} disabled={sessionCount === 0} className="hov" title={`Réviser les fiches dues de ce module (${sessionCount} fiche${sessionCount > 1 ? "s" : ""} au programme)`} style={{ padding: "3px 8px", fontSize: 11, background: sessionCount === 0 ? theme.inputBg : "#4D6BFE", color: sessionCount === 0 ? theme.textMuted : "white", border: "none", borderRadius: 6, fontWeight: 600, cursor: sessionCount === 0 ? "default" : "pointer" }}>🎯 Réviser ({sessionCount})</button>
-                          <button onClick={() => { startReview(cat.name, "cram"); }} disabled={catExps.length === 0} className="hov" title="Bachotage : toutes les fiches du module, dues ou non" style={{ padding: "3px 8px", fontSize: 11, background: "transparent", color: theme.textMuted, border: `1px solid ${theme.border}`, borderRadius: 6, fontWeight: 600, cursor: catExps.length === 0 ? "default" : "pointer" }}>🔥 Bachotage ({catExps.filter(e => !e.paused).length})</button>
+                          <button onClick={() => { startReview(cat.name, "exam"); }} className="hov" title="Réviser pour examen (toutes les fiches du module)" style={{ padding: "3px 8px", fontSize: 11, background: "#4D6BFE", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>🎯 Réviser</button>
                           {pausedCount === 0 ? (
                             <button
                               onClick={() => pauseNewCards(cat.name)}
@@ -10951,7 +10978,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 24, animation: "fadeUp 0.4s ease" }}>
                   {categories.map(cat => {
                     const catExps = expressions.filter(e => e.category === cat.name);
-                    const mastered = catExps.filter(isCardMastered).length;
+                    const mastered = catExps.filter(e => e.level >= 7).length;
                     const fsrsScore = catExps.length > 0 ? Math.round((mastered / catExps.length) * 100) : 0;
 
                     const catExams = examHistory.filter(h => h.category === cat.name);
@@ -11093,7 +11120,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
       }}>
         <div style={{ display: "flex", gap: 20, alignItems: "center", height: "100%" }}>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 10 }}>{!isFirebaseConfigured ? "🔴" : (typeof navigator !== "undefined" && navigator.onLine ? "🟢" : "🟡")}</span> Firebase: {!isFirebaseConfigured ? "Non configuré" : (typeof navigator !== "undefined" && navigator.onLine ? "Sync" : "Offline")}
+            <span style={{ fontSize: 10 }}>{typeof navigator !== "undefined" && navigator.onLine ? "🟢" : "🟡"}</span> Firebase: {typeof navigator !== "undefined" && navigator.onLine ? "Sync" : "Offline"}
           </span>
           <span className="hov" style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }} onClick={() => showToast("Sélecteur de modèle LLM à venir", "info")} title="Changer le modèle d'IA">
             <span style={{ fontSize: 12 }}>🧠</span> LLM: Groq (Llama-3.3)
@@ -11291,7 +11318,7 @@ ${history ? `Historique récent:\n${history}` : ""}`,
           { icon: "🔍", label: "Rechercher dans les fiches", shortcut: "F", action: () => setView("list") },
           { icon: "📊", label: "Ouvrir les stats", action: () => setView("stats") },
           { icon: "🧪", label: "Ouvrir le Lab", action: () => setView("lab") },
-          { icon: "📥", label: "Importer un PDF", action: () => navigate("lab/pdf") },
+          { icon: "📥", label: "Importer un PDF", action: () => navigate("lab/import") },
           { icon: "🌙", label: "Basculer thème sombre/clair", action: () => setIsDarkMode(d => !d) },
           { icon: "🎧", label: "Activer/Désactiver Lofi", action: () => setLofiPlaying(p => !p) },
           { icon: "🍅", label: "Lancer une session 25 min", action: () => navigate("lab/pomodoro") },
