@@ -24,9 +24,12 @@ test("plus aucun repli sur la pile brute dans les compteurs", () => {
     "même repli, version ternaire");
 });
 
+const reviewHook = readFileSync("src/hooks/useReviewSession.js", "utf8");
+
 test("la session sert le plan au lieu de le recomposer", () => {
-  assert.match(memo, /const planRemaining = catFilter/);
-  assert.ok(!/composeDailySession\(queue, \{ todayISO: today\(\) \}\)/.test(memo),
+  const combined = memo + "\n" + reviewHook;
+  assert.match(combined, /const planRemaining = catFilter/);
+  assert.ok(!/composeDailySession\(queue, \{ todayISO: today\(\) \}\)/.test(combined),
     "la file ne doit plus être recomposée à chaque entrée en révision");
 });
 

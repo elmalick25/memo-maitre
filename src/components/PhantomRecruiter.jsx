@@ -108,7 +108,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
       <div style={{ padding: 40, maxWidth: 800, margin: '0 auto', color: isDarkMode ? 'var(--mm-bg-elev)' : '#0F172A' }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', marginBottom: 20, fontWeight: 700 }}>← Retour au Dashboard</button>
         <h1 style={{ fontSize: 32, fontWeight: 900, margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Briefcase size={32} color="#3B82F6" /> Configurer ton Recruteur Fantôme
+          <Briefcase size={32} color="#8B5CF6" /> Configurer ton Recruteur Fantôme
         </h1>
         <p style={{ color: '#64748B', fontSize: 16, marginBottom: 32 }}>Défini ta cible. L'IA scannera le marché pour toi et te préparera des candidatures prêtes à envoyer.</p>
         
@@ -134,7 +134,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
             </div>
           </div>
           
-          <button onClick={saveConfig} style={{ width: '100%', padding: 16, background: '#3B82F6', color: 'white', border: 'none', borderRadius: 16, fontWeight: 800, fontSize: 16, cursor: 'pointer' }}>
+          <button onClick={saveConfig} style={{ width: '100%', padding: 16, background: '#8B5CF6', color: 'white', border: 'none', borderRadius: 16, fontWeight: 800, fontSize: 16, cursor: 'pointer' }}>
             Activer mon Chasseur de Têtes IA
           </button>
         </div>
@@ -148,7 +148,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
         <div>
           <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', marginBottom: 16, fontWeight: 700 }}>← Retour au Dashboard</button>
           <h1 style={{ fontSize: 32, fontWeight: 900, margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Briefcase size={32} color="#3B82F6" /> Le Dossier du Jour
+            <Briefcase size={32} color="#8B5CF6" /> Le Dossier du Jour
           </h1>
           <p style={{ color: '#64748B', fontSize: 15, margin: 0 }}>Cible : <strong>{config.title}</strong> • {config.location} • {config.salary}</p>
         </div>
@@ -156,7 +156,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
           <button onClick={() => setIsConfiguring(true)} style={{ padding: '10px 16px', background: isDarkMode ? '#1E293B' : 'var(--mm-border)', border: 'none', borderRadius: 12, color: isDarkMode ? 'white' : 'black', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
             <Settings size={16} /> Configurer
           </button>
-          <button onClick={runScan} disabled={loading} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #3B82F6, #2563EB)', border: 'none', borderRadius: 12, color: 'white', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={runScan} disabled={loading} style={{ padding: '10px 20px', background: 'linear-gradient(135deg, #8B5CF6, #7C3AED)', border: 'none', borderRadius: 12, color: 'white', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
             {loading ? <div style={{ width: 16, height: 16, border: '2px solid white', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} /> : <Search size={16} />}
             {loading ? 'Recherche...' : 'Lancer le Scan'}
           </button>
@@ -165,7 +165,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
 
       {loading && (
         <div style={{ padding: 60, textAlign: 'center', background: isDarkMode ? 'rgba(255,255,255,0.03)' : 'var(--mm-bg-elev)', borderRadius: 24, border: isDarkMode ? '1px solid rgba(255,255,255,0.1)' : '1px solid var(--mm-border)' }}>
-          <div style={{ width: 48, height: 48, background: '#3B82F6', borderRadius: 24, margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'pulseDot 1.5s infinite' }}>
+          <div style={{ width: 48, height: 48, background: '#8B5CF6', borderRadius: 24, margin: '0 auto 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'pulseDot 1.5s infinite' }}>
             <Briefcase size={24} color="white" />
           </div>
           <h2 style={{ margin: '0 0 8px 0', fontSize: 20 }}>Le Recruteur Fantôme travaille...</h2>
@@ -186,14 +186,14 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
           {offers.map((offer, idx) => {
             const isExpanded = expandedOffer === offer.id;
             return (
-              <div key={idx} style={{ background: isDarkMode ? '#1E293B' : 'white', borderRadius: 20, overflow: 'hidden', border: isDarkMode ? '1px solid var(--mm-fg)' : '1px solid var(--mm-border)', boxShadow: '0 4px 20px rgba(77,107,254,0.05)' }}>
+              <div key={idx} style={{ background: isDarkMode ? '#1E293B' : 'white', borderRadius: 20, overflow: 'hidden', border: isDarkMode ? '1px solid var(--mm-fg)' : '1px solid var(--mm-border)', boxShadow: '0 4px 20px rgba(139,92,246,0.05)' }}>
                 {/* En-tête de l'offre (cliquable) */}
                 <div onClick={() => setExpandedOffer(isExpanded ? null : offer.id)} style={{ padding: 24, cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: isExpanded ? (isDarkMode ? '#0F172A' : 'var(--mm-bg-elev)') : 'transparent' }}>
                   <div>
                     <h3 style={{ margin: '0 0 6px 0', fontSize: 20, fontWeight: 800 }}>
                       {offer.job_title}
                       {offer.url && (
-                        <a href={offer.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ marginLeft: 12, fontSize: 12, background: '#3B82F620', color: '#3B82F6', padding: '4px 8px', borderRadius: 8, textDecoration: 'none', verticalAlign: 'middle' }}>Voir l'offre</a>
+                        <a href={offer.url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ marginLeft: 12, fontSize: 12, background: '#8B5CF620', color: '#8B5CF6', padding: '4px 8px', borderRadius: 8, textDecoration: 'none', verticalAlign: 'middle' }}>Voir l'offre</a>
                       )}
                     </h3>
                     <div style={{ display: 'flex', gap: 16, color: '#64748B', fontSize: 14, fontWeight: 600 }}>
@@ -202,7 +202,7 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#10B981' }}><DollarSign size={16} /> {offer.salary_estimate}</span>
                     </div>
                   </div>
-                  <div style={{ background: '#3B82F620', color: '#3B82F6', padding: '8px 16px', borderRadius: 12, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ background: '#8B5CF620', color: '#8B5CF6', padding: '8px 16px', borderRadius: 12, fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                     Dossier Prêt {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                   </div>
                 </div>
@@ -215,12 +215,12 @@ Aucun texte avant ou après le JSON. Sois précis et redoutable.`;
                       {/* Lettre de Motivation */}
                       <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                          <h4 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#3B82F6', textTransform: 'uppercase', letterSpacing: 1 }}>📝 Lettre de Motivation</h4>
+                          <h4 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#8B5CF6', textTransform: 'uppercase', letterSpacing: 1 }}>📝 Lettre de Motivation</h4>
                           <button onClick={() => handleCopy(offer.cover_letter)} style={{ background: 'none', border: 'none', color: copied ? '#10B981' : '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, transition: 'color 0.2s' }}>
                             {copied ? <CheckCircle size={14} /> : <Copy size={14} />} {copied ? "Copié !" : "Copier"}
                           </button>
                         </div>
-                        <div style={{ background: isDarkMode ? 'rgba(77,107,254,0.2)' : 'var(--mm-bg-elev)', padding: 20, borderRadius: 16, fontSize: 14, lineHeight: 1.7, color: isDarkMode ? 'var(--mm-border-strong)' : 'var(--mm-fg)', whiteSpace: 'pre-wrap', border: isDarkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(77,107,254,0.05)' }}>
+                        <div style={{ background: isDarkMode ? 'rgba(139,92,246,0.2)' : 'var(--mm-bg-elev)', padding: 20, borderRadius: 16, fontSize: 14, lineHeight: 1.7, color: isDarkMode ? 'var(--mm-border-strong)' : 'var(--mm-fg)', whiteSpace: 'pre-wrap', border: isDarkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid rgba(139,92,246,0.05)' }}>
                           {offer.cover_letter}
                         </div>
                       </div>

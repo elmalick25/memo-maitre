@@ -108,7 +108,7 @@ Retourne UNIQUEMENT un JSON valide avec cette structure stricte :
               Écoute un texte à différentes vitesses et teste ta compréhension.
             </p>
           </div>
-          <div style={{ background: "rgba(77, 107, 254,0.1)", color: theme.primary, padding: "8px 16px", borderRadius: 16, fontWeight: 800 }}>
+          <div style={{ background: "rgba(139, 92, 246,0.1)", color: theme.primary, padding: "8px 16px", borderRadius: 16, fontWeight: 800 }}>
              Record : x{maxSpeed}
           </div>
         </div>
@@ -135,7 +135,7 @@ Retourne UNIQUEMENT un JSON valide avec cette structure stricte :
                {speeds.map(s => (
                  <button key={s} onClick={() => setSpeed(s)} style={{
                    padding: "8px 16px", borderRadius: 100, border: "none", cursor: "pointer", fontWeight: 800,
-                   background: speed === s ? theme.primary : "rgba(77,107,254,0.05)",
+                   background: speed === s ? theme.primary : "rgba(139, 92, 246,0.05)",
                    color: speed === s ? "white" : theme.textMuted
                  }}>x{s}</button>
                ))}
@@ -169,8 +169,8 @@ Retourne UNIQUEMENT un JSON valide avec cette structure stricte :
                        return (
                          <label key={oIndex} style={{ 
                            display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", 
-                           borderRadius: 12, border: `2px solid ${isSelected ? theme.primary : isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)"}`,
-                           background: isSelected ? "rgba(77, 107, 254,0.05)" : "transparent",
+                           borderRadius: 12, border: `2px solid ${isSelected ? theme.primary : isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)"}`,
+                           background: isSelected ? "rgba(139, 92, 246,0.05)" : "transparent",
                            cursor: score ? "default" : "pointer"
                          }}>
                            <input type="radio" name={`q${i}`} checked={isSelected} 

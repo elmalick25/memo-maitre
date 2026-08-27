@@ -13,7 +13,7 @@ import React from "react";
 const TONE_COLORS = {
   celebration: "#10B981",
   nearmiss: "#F59E0B",
-  opportunity: "#4D6BFE",
+  opportunity: "#8B5CF6",
   neutral: "#64748B",
 };
 

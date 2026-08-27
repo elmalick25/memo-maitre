@@ -193,7 +193,7 @@ Ne mets ni titre, ni introduction, renvoie UNIQUEMENT le texte du paragraphe, br
               width: 80, height: 80, borderRadius: "50%", border: "none",
               background: isRecording ? "#EF4444" : theme.primary, color: "white",
               fontSize: 28, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: `0 10px 30px ${isRecording ? "rgba(239,68,68,0.4)" : "rgba(77, 107, 254,0.3)"}`,
+              boxShadow: `0 10px 30px ${isRecording ? "rgba(239,68,68,0.4)" : "rgba(139, 92, 246,0.3)"}`,
               animation: isRecording ? "pulseAstral 1s infinite" : "none"
             }}>
               {isRecording ? "🛑" : "🎙️"}
@@ -210,7 +210,7 @@ Ne mets ni titre, ni introduction, renvoie UNIQUEMENT le texte du paragraphe, br
           )}
 
           {result && !isRecording && (
-            <div style={{ background: "linear-gradient(135deg, rgba(77, 107, 254,0.1), rgba(77, 107, 254,0.1))", borderRadius: 24, padding: 32, border: `1px solid ${theme.primary}40`, display: "flex", gap: 24, flexWrap: "wrap", justifyContent: "space-around" }}>
+            <div style={{ background: "linear-gradient(135deg, rgba(139, 92, 246,0.1), rgba(139, 92, 246,0.1))", borderRadius: 24, padding: 32, border: `1px solid ${theme.primary}40`, display: "flex", gap: 24, flexWrap: "wrap", justifyContent: "space-around" }}>
                
                <div style={{ textAlign: "center" }}>
                  <div style={{ fontSize: 12, textTransform: "uppercase", fontWeight: 800, color: theme.primary, marginBottom: 8 }}>Vitesse WPM</div>

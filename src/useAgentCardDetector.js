@@ -99,21 +99,26 @@ Schéma :
   ]
 }
 
-RÈGLES DE FORMAT du champ "back" (impératif) :
-1. "Traduction : <traduction française littérale>"
-2. Ligne vide
-3. "✅ QUAND L'UTILISER :" + explication en 1-2 phrases FR
-4. "🎬 SENS DANS CE CONTEXTE :" + nuance/registre en 1 phrase FR
-5. "💬 EXEMPLES :" + EXACTEMENT 3 exemples :
-     • <phrase EN>
-       🗣 <phonétique française "maison" — JAMAIS d'IPA — que des sons FR>
-       ↳ <traduction FR>
-6. "🔄 ALTERNATIVES / SYNONYMES :" + liste plate séparée par des virgules
-7. "📌 PIÈGE :" — OBLIGATOIRE si source="user_error" (dit l'erreur typique
-   que l'utilisateur vient de faire), facultatif sinon.
+RÈGLES DE FORMAT du champ "back" (impératif, EXACTEMENT CE FORMAT MARKDOWN) :
+Traduction : <traduction française littérale>
 
-Phonétique : LISIBLE par un francophone qui ne connaît PAS l'IPA
-("the" → "ze", "think" → "sinke", "very" → "véry", "first" → "feurst").`;
+### ⚙️ 1. Décomposition & Transition Métaphorique
+* **<Mot clé> :** Sens physique : *<sens brut>* ➔ **Glissement sémantique :** <explication>
+* **Le Modèle Mental :** <l'image mécanique globale en 1 phrase>
+
+### 🔍 2. Comparatif (Pourquoi A et pas B ?)
+* **Option A (<front>) :** <ce que le native visualise>
+* **Option B (<Alternative/Faux-ami>) :** <pourquoi le sens dévie>
+
+### ⚠️ 3. Anti-Pattern (Le piège)
+* **Erreur :** <erreur commise> ➔ **Problème :** <sens perçu par un anglophone>
+
+### 💻 4. Exemples (Format court)
+* **Exemple 1 :** \`<phrase EN 1>\` ↳ *<traduction FR 1>*
+* **Exemple 2 :** \`<phrase EN 2>\` ↳ *<traduction FR 2>*
+* **Exemple 3 :** \`<phrase EN 3>\` ↳ *<traduction FR 3>*
+
+Phonétique ("ipa") : LISIBLE par un francophone qui ne connaît PAS l'IPA ("the" → "ze").`;
 
 // Compteurs de session (utiles pour debug rapide dans la console)
 let __analyzedCount = 0;

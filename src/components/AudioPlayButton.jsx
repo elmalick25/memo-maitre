@@ -52,16 +52,16 @@ export default function AudioPlayButton({
     : error
     ? "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)"
     : isDarkMode
-    ? "linear-gradient(135deg, rgba(77,107,254,0.22) 0%, rgba(123,147,255,0.12) 100%)"
-    : "linear-gradient(135deg, rgba(77,107,254,0.14) 0%, rgba(77,107,254,0.06) 100%)";
+    ? "linear-gradient(135deg, rgba(139, 92, 246,0.22) 0%, rgba(192, 132, 252,0.12) 100%)"
+    : "linear-gradient(135deg, rgba(139, 92, 246,0.14) 0%, rgba(139, 92, 246,0.06) 100%)";
 
   const borderColor = isPlaying
     ? "rgba(16, 185, 129, 0.4)"
     : isDarkMode
-    ? "rgba(123, 147, 255, 0.35)"
-    : "rgba(77, 107, 254, 0.3)";
+    ? "rgba(192, 132, 252, 0.35)"
+    : "rgba(139, 92, 246, 0.3)";
 
-  const color = isPlaying || error ? "#FFFFFF" : isDarkMode ? "#B9C8FF" : "#4D6BFE";
+  const color = isPlaying || error ? "#FFFFFF" : isDarkMode ? "#DDD6FE" : "#8B5CF6";
 
   return (
     <button

@@ -25,7 +25,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
   // Si le parent ne fournit pas l'état partagé, on monte le hook localement :
   // le composant reste autonome sans jamais dupliquer la logique.
   const fallback = useDailyRoutine();
-  const { checked, toggleStep, routineStreak, framing } = routine || fallback;
+  const { checked, toggleStep, routineStreak, framing, resetDay } = routine || fallback;
   const [collapsed, setCollapsed] = useState(false);
   const [expandedPeriod, setExpandedPeriod] = useState(null);
 
@@ -55,11 +55,11 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
         ? "linear-gradient(160deg, #0B1121 0%, #171E32 100%)"
         : "linear-gradient(160deg, #FFFFFF 0%, #F8FAFC 100%)",
       borderRadius: 32,
-      border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(77,107,254,0.15)"}`,
+      border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(139, 92, 246,0.15)"}`,
       overflow: "hidden",
       boxShadow: isDarkMode 
         ? "0 32px 64px -12px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.05)"
-        : "0 32px 64px -12px rgba(77,107,254,0.12), inset 0 1px 1px rgba(255,255,255,1)",
+        : "0 32px 64px -12px rgba(139,92,246,0.12), inset 0 1px 1px rgba(255,255,255,1)",
       transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
       position: "relative",
     }}>
@@ -68,7 +68,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
         position: "absolute", top: 0, left: 0, right: 0, height: 6,
         background: isComplete
           ? "linear-gradient(90deg, #10B981, #34D399, #10B981)"
-          : `linear-gradient(90deg, #4D6BFE, #7C3AED, #F43F5E, #4D6BFE)`,
+          : `linear-gradient(90deg, #8B5CF6, #7C3AED, #F43F5E, #8B5CF6)`,
         backgroundSize: "300% 100%",
         animation: isComplete ? "none" : "gradientPulseFlow 4s linear infinite",
         boxShadow: isComplete ? "0 0 12px rgba(16,185,129,0.6)" : "0 0 16px rgba(124,58,237,0.5)",
@@ -81,8 +81,8 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
             type="button"
             onClick={(e) => { e.stopPropagation(); onBack(); }}
             style={{
-              background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.08)",
-              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(77,107,254,0.2)"}`,
+              background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139,92,246,0.08)",
+              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(139,92,246,0.2)"}`,
               color: theme.text || "#0F172A",
               fontSize: 13, fontWeight: 800,
               padding: "7px 16px", borderRadius: 12,
@@ -102,10 +102,10 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{
               width: 54, height: 54, borderRadius: 18,
-              background: isComplete ? "linear-gradient(135deg, #10B981, #059669)" : "linear-gradient(135deg, #4D6BFE, #7C3AED)",
+              background: isComplete ? "linear-gradient(135deg, #10B981, #059669)" : "linear-gradient(135deg, #8B5CF6, #7C3AED)",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 26, flexShrink: 0,
-              boxShadow: isComplete ? "0 12px 24px rgba(16,185,129,0.3)" : "0 12px 24px rgba(77,107,254,0.3)",
+              boxShadow: isComplete ? "0 12px 24px rgba(16,185,129,0.3)" : "0 12px 24px rgba(139,92,246,0.3)",
               color: "white"
             }}>
               {isComplete ? "🎉" : "🗓️"}
@@ -142,7 +142,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
           <div style={{ textAlign: "right" }}>
             <div style={{
               fontSize: 32, fontWeight: 900,
-              background: isComplete ? "linear-gradient(135deg, #10B981, #059669)" : "linear-gradient(135deg, #4D6BFE, #7C3AED)",
+              background: isComplete ? "linear-gradient(135deg, #10B981, #059669)" : "linear-gradient(135deg, #8B5CF6, #7C3AED)",
               WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
               lineHeight: 1, letterSpacing: -1
             }}>{pct}%</div>
@@ -155,14 +155,14 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
         {/* Premium Progress Bar */}
         <div style={{
           marginTop: 24, height: 10,
-          background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(77,107,254,0.06)",
+          background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(139,92,246,0.06)",
           borderRadius: 12, overflow: "hidden", position: "relative"
         }}>
           <div style={{
             position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`,
             background: isComplete
               ? "linear-gradient(90deg, #10B981, #34D399)"
-              : "linear-gradient(90deg, #4D6BFE, #7C3AED)",
+              : "linear-gradient(90deg, #8B5CF6, #7C3AED)",
             borderRadius: 12,
             transition: "width 0.8s cubic-bezier(0.34,1.56,0.64,1)",
             boxShadow: "0 0 10px rgba(124,58,237,0.5)"
@@ -423,8 +423,7 @@ export default function DailyRoutineTracker({ theme, isDarkMode, onAction, routi
               <button
                 onClick={() => {
                   if (window.confirm("Réinitialiser toutes les étapes pour recommencer ?")) {
-                    setChecked({});
-                    saveRoutineState({ date: todayStr(), checked: {} });
+                    resetDay?.();
                   }
                 }}
                 style={{

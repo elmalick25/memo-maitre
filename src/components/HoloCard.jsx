@@ -60,7 +60,7 @@ const HoloCard = ({ children, className, style, theme, glowColor, urgent, onClic
         boxShadow: urgent
           ? `0 0 20px ${glowColor || '#EF4444'}80`
           : (holoCfg.ring && !lite
-              ? `${outerStyle.boxShadow ? outerStyle.boxShadow + ", " : ""}0 0 0 1px color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#4D6BFE')} ${holoCfg.ring}, transparent)`
+              ? `${outerStyle.boxShadow ? outerStyle.boxShadow + ", " : ""}0 0 0 1px color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#8B5CF6')} ${holoCfg.ring}, transparent)`
               : (outerStyle.boxShadow || "none")),
         animation: urgent && !lite ? "pulseUrgent 2s infinite" : "none",
         borderRadius,
@@ -71,7 +71,7 @@ const HoloCard = ({ children, className, style, theme, glowColor, urgent, onClic
       }}>
       <div style={{
         position: "absolute", inset: 0,
-        background: `radial-gradient(circle ${holoCfg.radius}px at ${coord.x}px ${coord.y}px, color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#4D6BFE')} ${holoCfg.alpha}%, transparent), transparent 100%)`,
+        background: `radial-gradient(circle ${holoCfg.radius}px at ${coord.x}px ${coord.y}px, color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#8B5CF6')} ${holoCfg.alpha}%, transparent), transparent 100%)`,
         opacity: hover ? 1 : 0, transition: "opacity 0.4s ease", pointerEvents: "none", zIndex: 0
       }} />
       <div style={innerStyle}>{children}</div>

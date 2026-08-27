@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/tests/*.test.mjs"
+    "test": "node --test src/tests/*.test.mjs",
+    "test:watch": "node --test --watch src/tests/*.test.mjs",
+    "test:integrity": "node --test src/tests/architectureIntegrity.test.mjs"
   },
   "dependencies": {
     "@elevenlabs/react": "^0.7.0",

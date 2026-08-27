@@ -104,32 +104,32 @@ Aucun texte avant ou après le JSON.`;
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40 }}>
         <div>
           <h1 style={{ fontSize: 32, fontWeight: 900, margin: '0 0 8px 0', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Eye size={32} color="#4D6BFE" /> Tech Oracle
+            <Eye size={32} color="#8B5CF6" /> Tech Oracle
           </h1>
           <p style={{ color: '#64748B', fontSize: 16, margin: 0 }}>Anticipe ta valeur sur le marché. Prépare 2028.</p>
         </div>
         
         {!prediction && !loading && (
-          <button onClick={runPrediction} style={{ background: 'linear-gradient(135deg, #4D6BFE, #1E3A8A)', color: 'white', padding: '12px 24px', borderRadius: 16, border: 'none', fontWeight: 800, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 10px 25px rgba(77, 107, 254, 0.3)' }}>
+          <button onClick={runPrediction} style={{ background: 'linear-gradient(135deg, #8B5CF6, #6D28D9)', color: 'white', padding: '12px 24px', borderRadius: 16, border: 'none', fontWeight: 800, fontSize: 15, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 10px 25px rgba(139, 92, 246, 0.3)' }}>
             <Activity size={18} /> Lancer la Prédiction
           </button>
         )}
         {prediction && !loading && (
-          <button onClick={runPrediction} disabled={loading} style={{ background: isDarkMode ? 'rgba(77,107,254,0.12)' : 'rgba(77,107,254,0.1)', color: '#4D6BFE', padding: '10px 20px', borderRadius: 14, border: 'none', fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button onClick={runPrediction} disabled={loading} style={{ background: isDarkMode ? 'rgba(139,92,246,0.12)' : 'rgba(139,92,246,0.1)', color: '#8B5CF6', padding: '10px 20px', borderRadius: 14, border: 'none', fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
             <RefreshCw size={16} /> Relancer
           </button>
         )}
       </div>
 
       {loading && (
-        <div style={{ padding: 80, textAlign: 'center', background: isDarkMode ? 'rgba(77, 107, 254, 0.05)' : '#F5F3FF', borderRadius: 24, border: isDarkMode ? '1px solid rgba(77, 107, 254, 0.2)' : '1px solid #EDE9FE' }}>
+        <div style={{ padding: 80, textAlign: 'center', background: isDarkMode ? 'rgba(139, 92, 246, 0.05)' : '#F5F3FF', borderRadius: 24, border: isDarkMode ? '1px solid rgba(139, 92, 246, 0.2)' : '1px solid #EDE9FE' }}>
           <div style={{ width: 80, height: 80, margin: '0 auto 24px', position: 'relative' }}>
-            <div style={{ position: 'absolute', inset: 0, border: '2px dashed #4D6BFE', borderRadius: '50%', animation: 'spin 4s linear infinite' }} />
-            <div style={{ position: 'absolute', inset: 10, border: '2px solid rgba(77, 107, 254, 0.3)', borderRadius: '50%', animation: 'spin 2s linear infinite reverse' }} />
-            <Eye size={32} color="#4D6BFE" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', animation: 'pulseDot 1.5s infinite' }} />
+            <div style={{ position: 'absolute', inset: 0, border: '2px dashed #8B5CF6', borderRadius: '50%', animation: 'spin 4s linear infinite' }} />
+            <div style={{ position: 'absolute', inset: 10, border: '2px solid rgba(139, 92, 246, 0.3)', borderRadius: '50%', animation: 'spin 2s linear infinite reverse' }} />
+            <Eye size={32} color="#8B5CF6" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', animation: 'pulseDot 1.5s infinite' }} />
           </div>
           <h2 style={{ fontSize: 20, margin: '0 0 8px 0' }}>Analyse des Signaux Faibles en cours...</h2>
-          <p style={{ color: '#4D6BFE' }}>Scan des dépôts GitHub, offres d'emploi et investissements VC.</p>
+          <p style={{ color: '#8B5CF6' }}>Scan des dépôts GitHub, offres d'emploi et investissements VC.</p>
         </div>
       )}
 
@@ -160,14 +160,14 @@ Aucun texte avant ou après le JSON.`;
               « {prediction.status_message} »
             </p>
             
-            <div style={{ marginTop: 24, background: isDarkMode ? 'rgba(77,107,254,0.2)' : 'var(--mm-bg-elev)', padding: 20, borderRadius: 16 }}>
+            <div style={{ marginTop: 24, background: isDarkMode ? 'rgba(139,92,246,0.2)' : 'var(--mm-bg-elev)', padding: 20, borderRadius: 16 }}>
               <h4 style={{ margin: '0 0 12px 0', fontSize: 14, textTransform: 'uppercase', letterSpacing: 1, color: '#64748B', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <AlertTriangle size={16} /> Signaux Faibles Détectés
               </h4>
               <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {prediction.weak_signals.map((sig, i) => (
                   <li key={i} style={{ display: 'flex', gap: 12, fontSize: 14 }}>
-                    <span style={{ color: '#4D6BFE' }}>•</span> {sig}
+                    <span style={{ color: '#8B5CF6' }}>•</span> {sig}
                   </li>
                 ))}
               </ul>
@@ -182,11 +182,11 @@ Aucun texte avant ou après le JSON.`;
           
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
             {prediction.future_skills.map((skill, idx) => (
-              <div key={idx} style={{ background: isDarkMode ? '#1E293B' : 'white', borderRadius: 20, padding: 24, border: isDarkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid var(--mm-border)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(77,107,254,0.05)' }}>
+              <div key={idx} style={{ background: isDarkMode ? '#1E293B' : 'white', borderRadius: 20, padding: 24, border: isDarkMode ? '1px solid rgba(255,255,255,0.05)' : '1px solid var(--mm-border)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 10px 30px rgba(139,92,246,0.05)' }}>
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
                     <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: isDarkMode ? 'white' : '#0F172A' }}>{skill.name}</h3>
-                    <span style={{ background: skill.impact === 'High' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.1)', color: skill.impact === 'High' ? '#10B981' : '#3B82F6', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 800, textTransform: 'uppercase' }}>
+                    <span style={{ background: skill.impact === 'High' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(139, 92, 246, 0.1)', color: skill.impact === 'High' ? '#10B981' : '#8B5CF6', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 800, textTransform: 'uppercase' }}>
                       Impact {skill.impact}
                     </span>
                   </div>
@@ -198,7 +198,7 @@ Aucun texte avant ou après le JSON.`;
                 <button 
                   onClick={() => handleAdoptSkill(skill.name)}
                   style={{ width: '100%', background: isDarkMode ? 'rgba(255,255,255,0.05)' : 'var(--mm-bg-elev)', border: 'none', padding: '12px', borderRadius: 12, color: isDarkMode ? 'white' : '#0F172A', fontWeight: 800, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'all 0.2s' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#4D6BFE'; e.currentTarget.style.color = 'white'; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#8B5CF6'; e.currentTarget.style.color = 'white'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = isDarkMode ? 'rgba(255,255,255,0.05)' : 'var(--mm-bg-elev)'; e.currentTarget.style.color = isDarkMode ? 'white' : '#0F172A'; }}
                 >
                   <Zap size={16} /> L'apprendre maintenant

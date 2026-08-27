@@ -59,6 +59,9 @@ export function hapticPattern(name, arg) {
 
 export function hapticsEnabled() {
   if (typeof window === "undefined" || !window.navigator?.vibrate) return false;
+  if (typeof navigator !== "undefined" && navigator.userActivation && !navigator.userActivation.hasBeenActive) {
+    return false;
+  }
   try {
     if (window.localStorage.getItem(HAPTICS_PREF_KEY) === "off") return false;
   } catch { /* storage bloqué */ }

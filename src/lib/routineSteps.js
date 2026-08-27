@@ -56,7 +56,7 @@ export const ROUTINE_STEPS = [
     id: "pause_revision",
     period: "midi",
     periodLabel: "⚡ Pauses",
-    periodColor: "#4D6BFE",
+    periodColor: "#8B5CF6",
     icon: "⚡",
     label: "Révision en pause",
     sub: "5-10 min de révision pendant les pauses de la journée",
@@ -144,7 +144,7 @@ export const ROUTINE_STEPS = [
     id: "apres_fiches_cours",
     period: "nuit_debut",
     periodLabel: "📚 Après (cours)",
-    periodColor: "#0891B2",
+    periodColor: "#9333EA",
     icon: "📚",
     label: "Fiches des cours du jour",
     sub: "Créer les fiches sur les matières étudiées aujourd'hui",
@@ -156,7 +156,7 @@ export const ROUTINE_STEPS = [
     id: "apres_revision_cours",
     period: "nuit_debut",
     periodLabel: "📚 Après (cours)",
-    periodColor: "#0891B2",
+    periodColor: "#9333EA",
     icon: "🎯",
     label: "Révision des fiches de cours",
     sub: "Réviser immédiatement les fiches créées depuis les cours du jour",
@@ -195,9 +195,9 @@ export const ROUTINE_STEPS = [
 export function getPeriodMeta(period) {
   const map = {
     matin: { label: "☀️ Matin", short: "Ce matin", color: "#F59E0B", bg: "rgba(245,158,11,0.08)" },
-    midi: { label: "⚡ Pauses journée", short: "Pauses de la journée", color: "#4D6BFE", bg: "rgba(77,107,254,0.08)" },
+    midi: { label: "⚡ Pauses journée", short: "Pauses de la journée", color: "#8B5CF6", bg: "rgba(139,92,246,0.08)" },
     soir: { label: "🌆 Soir — 18h (Anglais)", short: "Ce soir — 18h · Anglais", color: "#7C3AED", bg: "rgba(124,58,237,0.08)" },
-    nuit_debut: { label: "📚 Fiches des cours du jour", short: "Après les cours", color: "#0891B2", bg: "rgba(8,145,178,0.08)" },
+    nuit_debut: { label: "📚 Fiches des cours du jour", short: "Après les cours", color: "#9333EA", bg: "rgba(8,145,178,0.08)" },
     nuit: { label: "🌙 Nuit — Avant de dormir", short: "Avant de dormir", color: "#6D28D9", bg: "rgba(109,40,217,0.08)" },
   };
   return map[period] || { label: period, short: period, color: "#888", bg: "rgba(0,0,0,0.05)" };

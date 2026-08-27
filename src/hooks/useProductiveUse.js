@@ -23,9 +23,9 @@ import { useCallback, useState } from "react";
 import {
   recordProductiveUse,
   getExpressionsNeedingProduction,
-} from "../lib/masteryStages";
-import { fsrsFromProduction } from "../lib/fsrs";
-import { today } from "../utils/dateUtils";
+} from "../lib/masteryStages.js";
+import { fsrsFromProduction } from "../lib/fsrs.js";
+import { today } from "../utils/dateUtils.js";
 
 export const englishCategoryFilter = (ex) => {
   const cat = ex?.category || "";

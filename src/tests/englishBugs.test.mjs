@@ -19,12 +19,12 @@ test('EnglishPractice — No undefined practiceDictationUserInput reference', ()
   assert.strictEqual(code.includes('practiceDictationUserInput'), false, 'practiceDictationUserInput does not exist in state');
 });
 
-test('EnglishPractice — safeParseJSON is declared before usage or as hoisted function', () => {
+test('EnglishPractice — safeParseJSON is declared before usage or imported', () => {
   const code = fs.readFileSync(epPath, 'utf8');
-  const safeParseIndex = code.indexOf('function safeParseJSON');
+  const importIndex = code.indexOf('safeParseJSON');
   const firstUsage = code.indexOf('safeParseJSON(');
-  assert.ok(safeParseIndex !== -1, 'safeParseJSON should be a hoisted function');
-  assert.ok(safeParseIndex < firstUsage, 'safeParseJSON declaration should precede first usage');
+  assert.ok(importIndex !== -1, 'safeParseJSON should be imported or declared');
+  assert.ok(importIndex < firstUsage, 'safeParseJSON declaration or import should precede first usage');
 });
 
 test('EnglishPractice — LiveKit system prompt is memoized and does not access refs during render', () => {

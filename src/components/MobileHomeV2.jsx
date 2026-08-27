@@ -62,11 +62,28 @@ export default function MobileHomeV2({
   // ── CHANTIER 28 — l'alerte routine, identique à celle du desktop ──
   routine = null,
   onOpenRoutine,
+  onOpenVeille,
+  onOpenPractice,
 }) {
   const [isSelectingModule, setIsSelectingModule] = useState(false);
   const [ritual, setRitual] = useState(false);
   const [hookIndex, setHookIndex] = useState(0);
   const ritualDone = useRef(false);
+
+  // ── Accueil mobile SANS scroll : tant qu'on est sur la home (et pas sur le
+  //    sélecteur de module, qui lui doit défiler), on verrouille le défilement
+  //    du document. Le contenu est calibré pour tenir dans un écran.
+  useEffect(() => {
+    if (isSelectingModule) return undefined;
+    const html = document.documentElement;
+    html.classList.add("mm-home-noscroll");
+    document.body.classList.add("mm-home-noscroll");
+    return () => {
+      html.classList.remove("mm-home-noscroll");
+      document.body.classList.remove("mm-home-noscroll");
+    };
+  }, [isSelectingModule]);
+
 
   // ── CHANTIER 18 — un SEUL near-miss affiché, le plus proche (hooks[0] est
   //    déjà trié par priorité/proximité), recalculé à chaque ouverture. ──
@@ -119,7 +136,7 @@ export default function MobileHomeV2({
     { id: "report", icon: "📊", label: "Rapport", sub: "Cette semaine", onClick: () => onOpenStats?.("report") },
     { id: "list", icon: "🗂️", label: "Mes fiches", sub: "Toutes les cartes" },
   ];
-  const finalShortcuts = shortcuts && shortcuts.length ? shortcuts : defaultShortcuts;
+  const finalShortcuts = Array.isArray(shortcuts) ? shortcuts : defaultShortcuts;
 
   if (isSelectingModule) {
     return (
@@ -128,22 +145,22 @@ export default function MobileHomeV2({
           <button 
             onClick={() => setIsSelectingModule(false)} 
             style={{ 
-              background: "var(--mm-bg-card, #fff)", border: "1px solid var(--border)", 
+              background: "var(--mm-bg-card, #fff)", border: "1px solid var(--mm-border, rgba(148,163,184,0.25))", 
               borderRadius: "50%", width: 44, height: 44, display: "flex", alignItems: "center", 
-              justifyContent: "center", color: "var(--text)", cursor: "pointer",
+              justifyContent: "center", color: "var(--mm-fg, #0f172a)", cursor: "pointer",
               boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
             }}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
           </button>
-          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--text)" }}>Que réviser ?</h2>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--mm-fg, #0f172a)" }}>Que réviser ?</h2>
         </div>
 
         <button
           type="button"
           onClick={() => onStartSession?.(null)}
           style={{ 
-            background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+            background: "linear-gradient(135deg, #7c3aed 0%, #7c3aed 100%)",
             padding: "24px", borderRadius: 24, border: "none", color: "white",
             display: "flex", alignItems: "center", gap: 20, cursor: "pointer",
             boxShadow: "0 12px 32px rgba(124,58,237,0.35)", width: "100%", marginBottom: 24,
@@ -159,9 +176,9 @@ export default function MobileHomeV2({
           </div>
         </button>
 
-        <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--text)", marginBottom: 16, marginLeft: 4 }}>Modules en retard</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--mm-fg, #0f172a)", marginBottom: 16, marginLeft: 4 }}>Modules en retard</h3>
         {dueModules.length === 0 ? (
-          <p style={{ color: "var(--muted, #64748b)", fontSize: 14, marginLeft: 4 }}>
+          <p style={{ color: "var(--mm-fg-muted, #64748b)", fontSize: 14, marginLeft: 4 }}>
             Aucun module en retard pour l'instant.
           </p>
         ) : (
@@ -173,14 +190,14 @@ export default function MobileHomeV2({
                 onClick={() => onStartSession?.(mod.name)}
                 style={{
                   display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "space-between",
-                  padding: "16px", background: "var(--bg)", borderRadius: 20,
-                  border: "1px solid var(--border)", color: "var(--text)", cursor: "pointer", textAlign: "left",
+                  padding: "16px", background: "var(--mm-bg-card, #fff)", borderRadius: 20,
+                  border: "1px solid var(--mm-border, rgba(148,163,184,0.25))", color: "var(--mm-fg, #0f172a)", cursor: "pointer", textAlign: "left",
                   minHeight: "110px", boxShadow: "0 4px 12px rgba(0,0,0,0.04)",
                   transition: "transform 0.2s"
                 }}
               >
                 <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.3, marginBottom: 16, wordBreak: "break-word" }}>{mod.name}</div>
-                <div style={{ background: "rgba(77, 107, 254, 0.1)", color: "#4D6BFE", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
+                <div style={{ background: "var(--mm-primary-soft, rgba(139,92,246,0.14))", color: "var(--mm-primary, #8B5CF6)", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
                   {mod.count} fiche{mod.count > 1 ? "s" : ""}
                 </div>
               </button>
@@ -192,7 +209,7 @@ export default function MobileHomeV2({
   }
 
   return (
-    <div className="mhv2">
+    <div className="mhv2 mhv2-fit">
       {/* ── HERO — Redesign "wow effect" (aurora + glass + ring) ── */}
       <div className="mhv2-hero" role="banner">
         <div className="mhv2-hero-aurora" aria-hidden="true" />
@@ -316,14 +333,14 @@ export default function MobileHomeV2({
         </div>
       </button>
 
-      {/* ── 3 tuiles compactes ── */}
+      {/* ── 4 tuiles compactes ── */}
       <div className="mhv2-tiles">
         <button type="button" className="mhv2-tile" onClick={() => onOpenStats?.("forme")}>
-          <div className="mhv2-tile-value">{stats.forme ?? 0}<span style={{ fontSize: "0.8rem" }}>%</span></div>
+          <div className="mhv2-tile-value">{stats.forme ?? 0}<span className="mhv2-tile-unit">%</span></div>
           <div className="mhv2-tile-label">Forme</div>
         </button>
         <button type="button" className="mhv2-tile" onClick={() => onOpenStats?.("mastery")}>
-          <div className="mhv2-tile-value">{stats.mastery ?? 0}<span style={{ fontSize: "0.8rem" }}>%</span></div>
+          <div className="mhv2-tile-value">{stats.mastery ?? 0}<span className="mhv2-tile-unit">%</span></div>
           <div className="mhv2-tile-label">Maîtrise</div>
         </button>
         <button
@@ -331,7 +348,7 @@ export default function MobileHomeV2({
           className="mhv2-tile mhv2-tile-chat"
           onClick={() => { haptic("tap"); window.dispatchEvent(new CustomEvent("open_beta_chat")); }}
         >
-          <div className="mhv2-tile-value mhv2-tile-value-icon">💬</div>
+          <div className="mhv2-tile-icon-box">💬</div>
           <div className="mhv2-tile-label">Discussion</div>
         </button>
         <button
@@ -339,29 +356,43 @@ export default function MobileHomeV2({
           className="mhv2-tile mhv2-tile-agent"
           onClick={() => { haptic("tap"); window.dispatchEvent(new CustomEvent("open_agent_panel")); }}
         >
-          <div className="mhv2-tile-value mhv2-tile-value-icon">🤖</div>
+          <div className="mhv2-tile-icon-box">🤖</div>
           <div className="mhv2-tile-label">Assistant IA</div>
         </button>
-
       </div>
 
-      {/* ── Raccourcis ── */}
+      {/* ── Section Raccourcis (Veille tech & English) ── */}
       <div className="mhv2-section-title">Raccourcis</div>
       <div className="mhv2-shortcuts">
-        {finalShortcuts.map(s => (
-          <button
-            key={s.id}
-            type="button"
-            className="mhv2-shortcut"
-            onClick={s.onClick}
-          >
-            <span className="mhv2-shortcut-icon">{s.icon}</span>
-            <span className="mhv2-shortcut-text">
-              <span className="mhv2-shortcut-label">{s.label}</span>
-              {s.sub && <span className="mhv2-shortcut-sub">{s.sub}</span>}
-            </span>
-          </button>
-        ))}
+        <button
+          type="button"
+          className="mhv2-shortcut"
+          onClick={() => {
+            haptic("tap");
+            onOpenVeille?.();
+          }}
+        >
+          <span className="mhv2-shortcut-icon">📰</span>
+          <span className="mhv2-shortcut-text">
+            <span className="mhv2-shortcut-label">Veille tech</span>
+            <span className="mhv2-shortcut-sub">News & IA</span>
+          </span>
+        </button>
+
+        <button
+          type="button"
+          className="mhv2-shortcut"
+          onClick={() => {
+            haptic("tap");
+            onOpenPractice?.();
+          }}
+        >
+          <span className="mhv2-shortcut-icon">🗣️</span>
+          <span className="mhv2-shortcut-text">
+            <span className="mhv2-shortcut-label">English</span>
+            <span className="mhv2-shortcut-sub">Pratique & Audio</span>
+          </span>
+        </button>
       </div>
 
       {/* ── Contenu additionnel (ex: DailyRoutineTracker) ── */}

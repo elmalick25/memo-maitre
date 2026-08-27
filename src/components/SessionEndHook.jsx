@@ -22,7 +22,7 @@ export default function SessionEndHook({
   remainingCards = 0,
   onContinue,
   theme = {},
-  accent = "#4D6BFE",
+  accent = "#8B5CF6",
   extraCards = 5,
   compact = false, // CHANTIER 20 — mode mobile : CTA en zone du pouce
 }) {
@@ -96,9 +96,9 @@ export default function SessionEndHook({
             style={{
               width: "100%", padding: compact ? "18px 20px" : "14px 20px",
               minHeight: compact ? 58 : undefined,
-              boxShadow: compact ? "0 12px 30px rgba(52,81,209,0.45)" : undefined,
+              boxShadow: compact ? "0 12px 30px rgba(124,58,237,0.45)" : undefined,
               border: "none", borderRadius: 14,
-              background: `linear-gradient(135deg, ${accent}, #3451D1)`, color: "white",
+              background: `linear-gradient(135deg, ${accent}, #7C3AED)`, color: "white",
               fontWeight: 900, fontSize: 15, cursor: "pointer",
             }}
           >

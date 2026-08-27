@@ -1,11 +1,11 @@
 {
-  "name": "MemoMaitre - El Hadji Malick Sy",
-  "short_name": "M",
+  "name": "MémoMaître — Système FSRS & IA",
+  "short_name": "MémoMaître",
   "description": "MémoMaître — Système de révision intelligent FSRS + IA.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0518",
-  "theme_color": "#4D6BFE",
+  "background_color": "#070a1e",
+  "theme_color": "#7C3AED",
   "orientation": "portrait",
   "scope": "/",
   "icons": [

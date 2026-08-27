@@ -6,6 +6,10 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { safeStorage } from '../lib/safeStorage';
 import { storage } from "../lib/firebase";
 import { isGeminiLikelyUnavailable } from "../lib/geminiClient";
+import { isBoilerplateOrConsentText, sanitizeArticleText, fetchReadableArticle } from "../lib/articleExtractor";
+import ScholarshipHubView from "./ScholarshipHubView";
+import ReaderModeModal from "./ReaderModeModal";
+import CustomFeedManagerModal from "./CustomFeedManagerModal";
 
 const CACHE_KEY = "tech_intel_cache_v3";
 const CACHE_TTL_MS = 30 * 60 * 1000;
@@ -215,15 +219,16 @@ const YOUTUBE_CHANNELS = [
 ];
 
 const TABS = [
-  { id: "fr",      label: "🇫🇷 Actus FR",   desc: "Presse francophone" },
-  { id: "top",     label: "🔥 Tendances",   desc: "Articles les plus pertinents" },
-  { id: "ai",      label: "🤖 IA & LLM",   desc: "Intelligence artificielle" },
-  { id: "dev",     label: "💻 Dev",         desc: "Développement & outils" },
-  { id: "cyber",   label: "🔐 Cybersec",   desc: "Sécurité informatique" },
-  { id: "github",  label: "⭐ GitHub",      desc: "Repos tendance" },
-  { id: "youtube", label: "🎥 Vidéos",     desc: "Chaînes tech" },
-  { id: "saved",   label: "🔖 Favoris",     desc: "Articles sauvegardés" },
-  { id: "digest",  label: "📰 Digest IA",  desc: "Résumé quotidien" },
+  { id: "fr",          label: "🇫🇷 Actus FR",       desc: "Presse francophone" },
+  { id: "scholarships", label: "🎓 Bourses Master", desc: "Opportunités mondiales vérifiées (Eiffel, Erasmus, DAAD...)" },
+  { id: "top",         label: "🔥 Tendances",       desc: "Articles les plus pertinents" },
+  { id: "ai",          label: "🤖 IA & LLM",       desc: "Intelligence artificielle" },
+  { id: "dev",         label: "💻 Dev",             desc: "Développement & outils" },
+  { id: "cyber",       label: "🔐 Cybersec",       desc: "Sécurité informatique" },
+  { id: "github",      label: "⭐ GitHub",          desc: "Repos tendance" },
+  { id: "youtube",     label: "🎥 Vidéos",         desc: "Chaînes tech" },
+  { id: "saved",       label: "🔖 Favoris",         desc: "Articles sauvegardés" },
+  { id: "digest",      label: "📰 Digest IA",      desc: "Résumé quotidien" },
 ];
 
 const FILTERS = {
@@ -318,8 +323,12 @@ function cleanJinaText(text) {
     "Voir aussi",
     "Vous avez lu gratuitement",
     "Soutenez le club",
+    "Soutenez Numerama",
     "Source :",
-    "Source:"
+    "Source:",
+    "Sur le même sujet",
+    "À lire aussi",
+    "Pour aller plus loin",
   ];
   
   let cutoffIndex = cleaned.length;
@@ -331,7 +340,80 @@ function cleanJinaText(text) {
   }
   
   cleaned = cleaned.substring(0, cutoffIndex);
-  return cleaned.trim().replace(/\n{3,}/g, '\n\n');
+  return sanitizeArticleText(cleaned);
+}
+
+// ─── Extraction intégrale du texte d'un article ─────────────────────────────
+async function extractFullArticleText(item) {
+  let contentStr = "";
+  if (item.fullContent && item.fullContent.length > 100) {
+    contentStr = sanitizeArticleText(item.fullContent);
+  }
+  if (!contentStr || contentStr.length < 100) {
+    try {
+      const { text } = await fetchReadableArticle(item.url, { timeoutMs: 9000 });
+      if (text && text.length > 100) {
+        contentStr = sanitizeArticleText(text);
+      }
+    } catch {}
+  }
+  if (!contentStr || contentStr.length < 100) {
+    try {
+      const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" } });
+      if (res.ok) {
+        const pageContent = await res.text();
+        contentStr = cleanJinaText(pageContent);
+      }
+    } catch {}
+  }
+  if (!contentStr || contentStr.length < 60) {
+    contentStr = item.descriptionFr || item.description || "";
+  }
+  return contentStr;
+}
+
+// ─── Génération d'un compte-rendu exhaustif (In-app Complete Story) ──────────
+async function generateCompleteStory(item, callClaude) {
+  const contentStr = await extractFullArticleText(item);
+  let paragraphs = [];
+  
+  if (callClaude && (contentStr.length > 180 || item.description)) {
+    try {
+      const prompt = `Voici une actualité tech intitulée : "${item.titleFr || item.title}".
+Rédige un compte-rendu complet, riche, captivant et très informatif en français (2 à 3 paragraphes détaillés).
+Le lecteur doit TOUT savoir et TOUT comprendre de cette actualité directement dans l'application sans avoir besoin d'aller sur le site d'origine.
+Développe les faits clés, les chiffres, le contexte et les enjeux majeurs.
+IMPORTANT : Rédige uniquement 2 à 3 paragraphes fluides bien séparés par un saut de ligne. Pas de puces, pas de titre Markdown, pas de texte de pub ou cookies.
+
+Contenu brut de l'article :
+${contentStr.substring(0, 15000)}`;
+
+      const raw = await callClaude("Tu es un journaliste tech d'élite.", prompt, { maxTokens: 1000 });
+      const rawText = typeof raw === 'string' ? raw : (raw?.text || '');
+      if (rawText.trim() && !isBoilerplateOrConsentText(rawText)) {
+        paragraphs = rawText.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+      }
+    } catch (e) {
+      console.warn("AI complete story failed", e);
+    }
+  }
+
+  if (!paragraphs.length) {
+    // Fallback : découpage en paragraphes propres
+    paragraphs = contentStr.split(/\n\n+/).filter(p => p.trim().length > 40 && !isBoilerplateOrConsentText(p)).slice(0, 3);
+  }
+  if (!paragraphs.length && (item.descriptionFr || item.description)) {
+    paragraphs = [item.descriptionFr || item.description];
+  }
+
+  return {
+    headline: item.titleFr || item.title,
+    paragraphs,
+    key_takeaways: [],
+    why_it_matters: "",
+    level: "",
+    read_time: Math.max(1, Math.ceil(paragraphs.join(" ").split(/\s+/).length / 200)),
+  };
 }
 
 // ─── Cache LRU pour les résumés (max 80 entrées, TTL 7 jours) ───────────────
@@ -503,13 +585,16 @@ async function fetchRSS(feed) {
         else if (text && !url) url = text;
       }
       const desc = stripHtml(it.querySelector("description, summary, content")?.textContent || "").slice(0, 1500);
+      const encodedRaw = it.getElementsByTagName("content:encoded")[0]?.textContent ||
+        it.getElementsByTagNameNS("http://purl.org/rss/1.0/modules/content/", "encoded")[0]?.textContent || "";
+      const fullContent = encodedRaw ? sanitizeArticleText(stripHtml(encodedRaw)) : "";
       const pub = it.querySelector("pubDate, published, updated")?.textContent;
       const ts = pub ? new Date(pub).getTime() : Date.now();
       return {
         // ✅ ID stable basé sur l'URL canonique
         id: stableId(`rss_${feed.source}`, url || title),
         source: feed.source, sourceName: feed.name,
-        title, url, description: desc, ts,
+        title, url, description: desc, fullContent, ts,
         score: scoreArticle(`${title} ${desc}`),
         lang: feed.lang || "fr",
         priority: feed.priority || 2,
@@ -672,8 +757,8 @@ function InlineSummary({ cachedSummary, isLoadingThis, item, isDarkMode, bionicR
         </p>
       ))}
       {cachedSummary.why_it_matters && (
-        <div style={{ marginTop: 12, background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 12, padding: "12px 14px" }}>
-          <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.2, textTransform: "uppercase", color: "#818cf8", marginBottom: 6 }}>Pourquoi c'est important</div>
+        <div style={{ marginTop: 12, background: "rgba(139, 92, 246,0.07)", border: "1px solid rgba(139, 92, 246,0.2)", borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.2, textTransform: "uppercase", color: "#a78bfa", marginBottom: 6 }}>Pourquoi c'est important</div>
           <p style={{ fontSize: 13, color: isDarkMode ? "#cbd5e1" : "#334155", lineHeight: 1.6, margin: 0 }}>{cachedSummary.why_it_matters}</p>
         </div>
       )}
@@ -736,9 +821,13 @@ function GitHubCard({ item, isDarkMode }) {
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 export default function TechIntelView({
-  callClaude, theme = {}, isDarkMode, setExpressions, showToast, onCreateCard, onPickArticle, localToday,
+  callClaude, theme = {}, isDarkMode, setExpressions, showToast, onCreateCard, onPickArticle, localToday, initialTab = "fr",
 }) {
-  const [tab, setTab] = useState("fr");
+  const [tab, setTab] = useState(() => initialTab || "fr");
+
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
   const [autoTranslate, setAutoTranslate] = useState(true); // Toujours actif — l'utilisateur ne voit jamais d'actus en anglais
   const [items, setItems] = useState(() => memoryCache_techIntel?.items || []);
   const [digest, setDigest] = useState(null);
@@ -749,6 +838,7 @@ export default function TechIntelView({
   const [selected, setSelected] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState(null);
+  const [readerArticle, setReaderArticle] = useState(null);
   const [now, setNow] = useState(Date.now());
   const [translating, setTranslating] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -777,6 +867,7 @@ export default function TechIntelView({
   const [isTabsOpen, setIsTabsOpen] = useState(false);
   const [sortMode, setSortMode] = useState('relevance'); // 'relevance' | 'recent' | 'popular'
   const [dateFilter, setDateFilter] = useState('all');   // 'all' | 'today' | 'week'
+  const [summaryVersion, setSummaryVersion] = useState(0);
   const [bionicReading, setBionicReading] = useState(false);
   const [podcastMode, setPodcastMode] = useState(false);
   const podcastModeRef = useRef(podcastMode);
@@ -807,7 +898,17 @@ export default function TechIntelView({
   // ✅ Phase 1.2+1.3 — Deux caches séparés avec LRU
   const summaryCache = useRef(null);
   if (!summaryCache.current) {
-    try { summaryCache.current = JSON.parse(safeStorage.get(SUMMARY_LS_KEY) || '{}'); }
+    try {
+      const raw = JSON.parse(safeStorage.get(SUMMARY_LS_KEY) || '{}');
+      const cleanCache = {};
+      for (const [k, v] of Object.entries(raw)) {
+        const fullText = [v?.headline, ...(v?.paragraphs || []), v?.why_it_matters].filter(Boolean).join(" ");
+        if (!isBoilerplateOrConsentText(fullText)) {
+          cleanCache[k] = v;
+        }
+      }
+      summaryCache.current = cleanCache;
+    }
     catch { summaryCache.current = {}; }
   }
   const analysisCache = useRef(null);
@@ -888,9 +989,10 @@ ${batch.map(i => `{"id":"${i.id}","title":"${i.title}","desc":"${(i.description|
     const currentFiltered = (() => {
       if (tab === "top")     return items.filter(i => i.score >= 1).slice(0, 50);
       if (tab === "fr")      return items.filter(i => i.lang === "fr");
-      if (tab === "github")  return items.filter(i => i.kind === "github");
-      if (tab === "youtube") return items.filter(i => i.kind === "youtube");
-      if (tab === "digest")  return [];
+      if (tab === "github")       return items.filter(i => i.kind === "github");
+      if (tab === "youtube")      return items.filter(i => i.kind === "youtube");
+      if (tab === "digest")       return [];
+      if (tab === "scholarships") return [];
       const rx = FILTERS[tab];
       return items.filter(i => rx?.test(`${i.title} ${i.description || ""}`));
     })();
@@ -956,49 +1058,25 @@ ${batch.map(i => `{"id":"${i.id}","title":"${i.title}","desc":"${(i.description|
     setErrors(failed);
     setLoading(false);
 
-    // ✅ GOD MODE : Préchauffage des articles en arrière-plan
+    // ✅ Extraction & synthèse exhaustive des articles en arrière-plan
     setTimeout(async () => {
-      const topItems = deduped.slice(0, 30);
+      const topItems = deduped.slice(0, 20);
       for (const item of topItems) {
         if (!navigator.onLine) break;
-        if (summaryCache.current[item.id] && summaryCache.current[item.id].paragraphs[0].length > 100) continue; 
+        if (summaryCache.current[item.id]?.paragraphs?.length > 0) continue; 
         
         try {
-          const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" } });
-          if (res.ok) {
-            const pageContent = await res.text();
-            if (pageContent && pageContent.length > 50) {
-              const contentStr = cleanJinaText(pageContent);
-              
-              let finalParagraphs = contentStr.split('\n\n').filter(p => p.trim().length > 50).slice(0, 3);
-              
-              if (callClaude && contentStr.length > 500) {
-                try {
-                  const prompt = `Résume cet article de manière exhaustive et très instructive en français. Fais au minimum 5 phrases complètes pour bien détailler les faits et enjeux techniques. Ne retourne QUE le texte du résumé (sans formatage Markdown).\n\nTexte: ${contentStr.substring(0, 15000)}`;
-                  const raw = await callClaude("Tu es un journaliste tech d'élite.", prompt, { maxTokens: 1000 });
-                  const rawText = typeof raw === 'string' ? raw : (raw?.text || '');
-                  if (rawText.trim()) {
-                    finalParagraphs = [rawText.trim()];
-                  }
-                } catch (e) { console.warn("AI prefetch failed", e); }
-              }
-
-              const json = {
-                headline: item.titleFr || item.title,
-                paragraphs: finalParagraphs,
-                key_takeaways: [], why_it_matters: "", level: "",
-                read_time: Math.max(1, Math.ceil(finalParagraphs.join(" ").split(/\s+/).length / 200))
-              };
-              setSummaryEntry(summaryCache.current, item.id, json);
-              setNow(Date.now()); // ⬅️ Force le composant à s'actualiser en temps réel !
-            }
+          const story = await generateCompleteStory(item, callClaude);
+          if (story?.paragraphs?.length > 0) {
+            setSummaryEntry(summaryCache.current, item.id, story);
+            setSummaryVersion(v => v + 1);
           }
         } catch { }
       }
       persistCache(SUMMARY_LS_KEY, summaryCache.current);
-    }, 1000);
+    }, 800);
 
-  }, []);
+  }, [callClaude, customFeeds, enabledSources]);
 
   const fetchDigest = useCallback(async (currentItems = []) => {
     if (!callClaude || !navigator.onLine) return;
@@ -1126,30 +1204,12 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       if (i > 0) await new Promise(r => setTimeout(r, 2000));
       
       try {
-        let pageContent = "";
-        try {
-          const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" } });
-          if (res.ok) pageContent = await res.text();
-        } catch { }
-        const contentStr = cleanJinaText(pageContent) || item.descriptionFr || item.description || "Contenu non disponible.";
-        let finalParagraphs = [];
-        if (contentStr.length > 500) {
-          const prompt = `Voici un article. Résume-le en UN SEUL paragraphe très riche, fluide et extrêmement instructif en français (environ 5 à 8 phrases). Ne retourne QUE le texte du paragraphe, sans aucune fioriture ni formatage Markdown. Cible les faits marquants.\n\nTexte: ${contentStr.substring(0, 15000)}`;
-          const raw = await callClaude("Tu es un journaliste tech d'élite.", prompt, { maxTokens: 1000 });
-          const rawText = typeof raw === 'string' ? raw : (raw?.text || '');
-          if (rawText.trim()) finalParagraphs = [rawText.trim()];
-          else finalParagraphs = contentStr.split('\n\n').filter(p => p.trim().length > 50).slice(0, 2);
-        } else {
-          finalParagraphs = contentStr.split('\n\n').filter(p => p.trim().length > 50).slice(0, 2);
+        const story = await generateCompleteStory(item, callClaude);
+        if (story?.paragraphs?.length > 0) {
+          setSummaryEntry(summaryCache.current, item.id, story);
+          persistCache(SUMMARY_LS_KEY, summaryCache.current);
+          setSummaryVersion(v => v + 1);
         }
-        
-        const json = {
-          headline: item.titleFr || item.title,
-          paragraphs: finalParagraphs,
-          read_time: Math.max(1, Math.ceil(finalParagraphs.join(" ").split(/\s+/).length / 200))
-        };
-        setSummaryEntry(summaryCache.current, item.id, json);
-        persistCache(SUMMARY_LS_KEY, summaryCache.current);
       } catch (e) { console.warn("Prefetch error:", e); }
       
       setPrefetchProgress({ done: i + 1, total: toProcess.length });
@@ -1235,24 +1295,6 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
 
   const listItems = filtered;
 
-  // ─ Actions ─
-  const deleteArticle = useCallback((item) => {
-    setDeletedIds(prev => {
-      const next = new Set(prev);
-      next.add(item.id);
-      return next;
-    });
-  }, []);
-
-  const toggleSave = useCallback((item) => {
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(item.id)) { next.delete(item.id); showToast?.("Retiré des favoris", "info"); }
-      else { next.add(item.id); showToast?.("Ajouté aux favoris 🔖", "success"); }
-      return next;
-    });
-  }, [showToast]);
-
   const readArticle = useCallback(async (item) => {
     if (!item) return;
     if (summaryCache.current[item.id]) {
@@ -1271,47 +1313,11 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     }
     setReading(true);
     try {
-      let pageContent = "";
-      try {
-        const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" } });
-        if (res.ok) pageContent = await res.text();
-      } catch { }
-      
-      const contentStr = cleanJinaText(pageContent) || item.descriptionFr || item.description || "Contenu complet non disponible.";
-      
-      let finalParagraphs = [];
-      // Si le texte est long et qu'on a l'IA, on demande un résumé en UN riche paragraphe (God Mode)
-      if (callClaude && contentStr.length > 500) {
-        try {
-          const prompt = `Voici un article. Résume-le en UN SEUL paragraphe très riche, fluide et extrêmement instructif en français (environ 5 à 8 phrases). Ne retourne QUE le texte du paragraphe, sans aucune fioriture ni formatage Markdown. Cible les faits marquants.\n\nTexte: ${contentStr.substring(0, 15000)}`;
-          const raw = await callClaude("Tu es un journaliste tech d'élite.", prompt, { maxTokens: 1000 });
-          const rawText = typeof raw === 'string' ? raw : (raw?.text || '');
-          if (rawText.trim()) {
-            finalParagraphs = [rawText.trim()];
-          } else {
-            throw new Error("Empty AI response");
-          }
-        } catch (e) {
-          // Fallback : on prend juste les 2 premiers vrais paragraphes
-          finalParagraphs = contentStr.split('\n\n').filter(p => p.trim().length > 50).slice(0, 2);
-        }
-      } else {
-        // Fallback sans IA ou texte court
-        finalParagraphs = contentStr.split('\n\n').filter(p => p.trim().length > 50).slice(0, 2);
-      }
-
-      const json = {
-        headline: item.titleFr || item.title,
-        paragraphs: finalParagraphs,
-        key_takeaways: [],
-        why_it_matters: "",
-        level: "",
-        read_time: Math.max(1, Math.ceil(finalParagraphs.join(" ").split(/\s+/).length / 200))
-      };
-      
-      setSummaryEntry(summaryCache.current, item.id, json);
+      const story = await generateCompleteStory(item, callClaude);
+      setSummaryEntry(summaryCache.current, item.id, story);
       persistCache(SUMMARY_LS_KEY, summaryCache.current);
-      setReadSummary(json);
+      setReadSummary(story);
+      setSummaryVersion(v => v + 1);
       
       setReadIds(prev => {
         if (prev.has(item.id)) return prev;
@@ -1322,7 +1328,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       });
     } catch { showToast?.("Chargement impossible", "error"); }
     finally { setReading(false); }
-  }, [showToast]);
+  }, [showToast, callClaude]);
 
   useEffect(() => {
     const item = listItems[activeIndex];
@@ -1355,22 +1361,99 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     finally { setAnalyzing(false); }
   }, [callClaude, showToast]);
 
+  const createCardFromItem = useCallback((item) => {
+    if (!item) return;
+    const summaryData = summaryCache.current?.[item.id];
+    const keyTakeaway = summaryData?.key_takeaways?.[0] || summaryData?.why_it_matters || item.descriptionFr || item.description || "";
+    
+    let category = "💻 Dev & Tech";
+    const text = `${item.title} ${item.description || ""}`.toLowerCase();
+    if (/ai|llm|gpt|claude|gemini|llama|intelligence artificielle/i.test(text)) category = "🤖 IA & Data";
+    else if (/cyber|security|vulnerab|cve|exploit|hack/i.test(text)) category = "🔐 Cybersec";
+    else if (/cloud|aws|azure|k8s|kubernetes|docker/i.test(text)) category = "☁️ Cloud & DevOps";
+    else if (item.lang === "en" || item.source === "HN") category = "🇬🇧 Tech English";
+
+    const card = {
+      id: `tech_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      front: `[Actu] ${item.titleFr || item.title}`,
+      back: keyTakeaway ? `${keyTakeaway}\n\n↳ Source : ${item.sourceName || item.source}` : `${item.titleFr || item.title}\n\n↳ Source : ${item.sourceName || item.source}`,
+      example: item.url || "",
+      category,
+      level: 0,
+      repetitions: 0,
+      interval: 1,
+      stability: null,
+      difficulty: null,
+      easeFactor: 2.5,
+      nextReview: localToday || new Date().toISOString().slice(0, 10),
+      createdAt: new Date().toISOString(),
+      _source: item.source,
+      _url: item.url,
+    };
+
+    if (onCreateCard) {
+      onCreateCard(card);
+    } else if (setExpressions) {
+      setExpressions(prev => [card, ...(prev || [])]);
+    }
+    showToast?.("⚡ Fiche ajoutée à vos révisions FSRS !", "success");
+  }, [localToday, onCreateCard, setExpressions, showToast]);
+
   const createCardFromAnalysis = useCallback(() => {
-    if (!analysis?.card_front) return;
+    if (!analysis?.card_front && !selected) return;
+    const item = selected;
+    let category = "💻 Dev & Tech";
+    const text = `${item?.title || ""} ${item?.description || ""}`.toLowerCase();
+    if (/ai|llm|gpt|claude|gemini|llama|intelligence artificielle/i.test(text)) category = "🤖 IA & Data";
+    else if (/cyber|security|vulnerab|cve|exploit|hack/i.test(text)) category = "🔐 Cybersec";
+    else if (/cloud|aws|azure|k8s|kubernetes|docker/i.test(text)) category = "☁️ Cloud & DevOps";
+
     const card = {
       id: `tech_${Date.now()}`,
-      front: analysis.card_front,
-      back: analysis.card_back || analysis.summary,
-      category: "⚡ Tech Intel",
-      easeFactor: 2.5, interval: 0, repetitions: 0,
-      nextReview: new Date().toISOString(),
+      front: analysis?.card_front || `[Actu] ${item?.titleFr || item?.title || "Concept Tech"}`,
+      back: analysis?.card_back || analysis?.summary || item?.descriptionFr || item?.description || "",
+      example: item?.url || "",
+      category,
+      level: 0,
+      repetitions: 0,
+      interval: 1,
+      stability: null,
+      difficulty: null,
+      easeFactor: 2.5,
+      nextReview: localToday || new Date().toISOString().slice(0, 10),
       createdAt: new Date().toISOString(),
     };
     if (onCreateCard) onCreateCard(card);
     else if (setExpressions) setExpressions(prev => [card, ...(prev || [])]);
-    showToast?.("Fiche créée ✓", "success");
-    setSelected(null); setAnalysis(null);
-  }, [analysis, onCreateCard, setExpressions, showToast]);
+    showToast?.("⚡ Fiche créée et ajoutée à FSRS !", "success");
+    setSelected(null);
+    setAnalysis(null);
+  }, [analysis, selected, localToday, onCreateCard, setExpressions, showToast]);
+
+  const deleteArticle = useCallback((item) => {
+    if (!item?.id) return;
+    setDeletedIds(prev => {
+      const next = new Set(prev);
+      next.add(item.id);
+      return next;
+    });
+    showToast?.("Article masqué", "info");
+  }, [showToast]);
+
+  const toggleSave = useCallback((item) => {
+    if (!item?.id) return;
+    setSavedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(item.id)) {
+        next.delete(item.id);
+        showToast?.("Retiré des favoris", "info");
+      } else {
+        next.add(item.id);
+        showToast?.("Ajouté aux favoris 🔖", "success");
+      }
+      return next;
+    });
+  }, [showToast]);
 
   const speak = useCallback((item) => {
     try {
@@ -1466,11 +1549,11 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           display:inline-flex;align-items:center;gap:5px;
         }
         .tiv-tab:hover{background:rgba(139,92,246,.08);color:var(--mm-fg);border-color:var(--mm-border-strong)}
-        .tiv-tab-active{background:var(--mm-grad-primary,linear-gradient(135deg,#8b5cf6,#6366f1))!important;color:#fff!important;border-color:transparent!important;box-shadow:0 4px 14px rgba(139,92,246,.35)}
+        .tiv-tab-active{background:var(--mm-grad-primary,linear-gradient(135deg,#8b5cf6,#8b5cf6))!important;color:#fff!important;border-color:transparent!important;box-shadow:0 4px 14px rgba(139,92,246,.35)}
         .tiv-tab-badge{background:rgba(239,68,68,.15);color:#f87171;font-size:9px;font-weight:900;padding:1px 5px;border-radius:8px;border:1px solid rgba(239,68,68,.2)}
         
         .tiv-btn-refresh{
-          background:var(--mm-grad-primary,linear-gradient(135deg,#8b5cf6,#6366f1));
+          background:var(--mm-grad-primary,linear-gradient(135deg,#8b5cf6,#8b5cf6));
           color:#fff;border:none;border-radius:20px;padding:7px 16px;
           cursor:pointer;font-size:12px;font-weight:700;
           box-shadow:0 4px 14px rgba(139,92,246,.35);
@@ -1505,7 +1588,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
             <div style={{
               width: 40, height: 40, borderRadius: 13, flexShrink: 0,
-              background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
+              background: "linear-gradient(135deg,#8b5cf6,#8b5cf6)",
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 19, boxShadow: "0 6px 16px rgba(139,92,246,0.35)",
             }}>📡</div>
@@ -1532,123 +1615,252 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             </div>
           </div>
 
-          {/* Refresh Action */}
-          <button onClick={() => fetchAll(false)} disabled={loading} style={{
-            background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
-            color: "#fff", border: "none", borderRadius: 14, padding: "8px 14px",
-            fontSize: 12, fontWeight: 700, cursor: "pointer",
-            display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
-            boxShadow: "0 4px 14px rgba(139,92,246,0.35)", transition: "all 0.2s"
-          }}>
-            <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
-            <span>Regénérer</span>
-          </button>
+          {/* Header Action Buttons */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <button
+              onClick={() => setShowSourcesModal(true)}
+              title="Gérer les flux et ajouter des sources"
+              style={{
+                background: isDarkMode ? "rgba(255,255,255,0.08)" : "#F1F5F9",
+                color: isDarkMode ? "#CBD5E1" : "#475569",
+                border: "1px solid var(--mm-border, rgba(139,92,246,0.2))",
+                borderRadius: 14,
+                padding: "8px 12px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+            >
+              ⚙️ Sources
+            </button>
+
+            <button onClick={() => fetchAll(false)} disabled={loading} style={{
+              background: "linear-gradient(135deg,#8b5cf6,#8b5cf6)",
+              color: "#fff", border: "none", borderRadius: 14, padding: "8px 14px",
+              fontSize: 12, fontWeight: 700, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: 6,
+              boxShadow: "0 4px 14px rgba(139,92,246,0.35)", transition: "all 0.2s"
+            }}>
+              <span style={{ display: "inline-block", animation: loading ? "tiv-spin 1s linear infinite" : "none" }}>↻</span>
+              <span>Regénérer</span>
+            </button>
+          </div>
         </div>
 
         {/* Loading Progress Bar */}
         {loading && (
           <div style={{ height: 3, background: "rgba(139,92,246,0.15)", borderRadius: 3, marginBottom: 12, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg,#8b5cf6,#6366f1)", transition: "width .3s", borderRadius: 3 }} />
+            <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg,#8b5cf6,#8b5cf6)", transition: "width .3s", borderRadius: 3 }} />
           </div>
         )}
 
-        {/* Category Selector Dropdown ("Contenu caché par filtre") */}
-        <div style={{ position: "relative", marginBottom: 10 }}>
-          <button 
-            onClick={() => setIsTabsOpen(!isTabsOpen)} 
+        {/* ── SINGLE ELEGANT GOD TIER FILTER BUTTON ── */}
+        <div style={{ position: "relative", zIndex: 60, marginTop: 4 }}>
+          <button
+            onClick={() => setIsTabsOpen(!isTabsOpen)}
             style={{
-              display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center",
-              padding: "10px 16px", borderRadius: 16,
-              background: "linear-gradient(135deg,#8b5cf6,#6366f1)",
-              color: "#ffffff", border: "none",
-              boxShadow: "0 4px 16px rgba(139,92,246,0.35)",
-              fontWeight: 800, fontSize: 13, cursor: "pointer",
-              transition: "all 0.2s cubic-bezier(.16,1,.3,1)"
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "12px 18px",
+              borderRadius: "18px",
+              background: isDarkMode
+                ? "linear-gradient(135deg, rgba(30, 27, 75, 0.75) 0%, rgba(19, 17, 39, 0.85) 100%)"
+                : "linear-gradient(135deg, #FAF5FF 0%, #FFFFFF 100%)",
+              backdropFilter: "blur(16px)",
+              border: isDarkMode
+                ? "1px solid rgba(167, 139, 250, 0.35)"
+                : "1px solid #DDD6FE",
+              color: isDarkMode ? "#FFFFFF" : "#1E1B4B",
+              cursor: "pointer",
+              boxShadow: isDarkMode
+                ? "0 8px 24px rgba(0, 0, 0, 0.3)"
+                : "0 6px 20px rgba(139, 92, 246, 0.08)",
+              transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span>{TABS.find(t => t.id === tab)?.label || "Catégories"}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: "linear-gradient(135deg, #8B5CF6, #6D28D9)",
+                color: "#FFF", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, fontWeight: "900",
+                boxShadow: "0 2px 8px rgba(139, 92, 246, 0.4)",
+              }}>
+                ⚡
+              </span>
+
+              <span style={{ fontSize: 13, fontWeight: "800", color: isDarkMode ? "#F8FAFC" : "#1E1B4B" }}>
+                {TABS.find((t) => t.id === tab)?.label || "Sélectionner une catégorie"}
+              </span>
+
+              {tab === "scholarships" && (
+                <span
+                  style={{
+                    background: "linear-gradient(135deg, #10B981, #059669)",
+                    color: "#FFFFFF",
+                    fontSize: "9px",
+                    fontWeight: "900",
+                    padding: "2px 6px",
+                    borderRadius: "6px",
+                  }}
+                >
+                  100% OFFICIEL
+                </span>
+              )}
+
               {tab === "fr" && frCount > 0 && (
-                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
+                <span
+                  style={{
+                    background: "rgba(139, 92, 246, 0.2)",
+                    color: "#8B5CF6",
+                    fontSize: "10px",
+                    fontWeight: "900",
+                    padding: "1px 6px",
+                    borderRadius: "8px",
+                  }}
+                >
                   {frCount > 99 ? "99+" : frCount}
                 </span>
               )}
-              {tab === "top" && freshCount > 0 && (
-                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
-                  {freshCount}
-                </span>
-              )}
+
               {tab === "saved" && savedCount > 0 && (
-                <span style={{ background: "rgba(255,255,255,0.25)", color: "#fff", fontSize: 10, fontWeight: 900, padding: "1px 7px", borderRadius: 10 }}>
+                <span
+                  style={{
+                    background: "rgba(245, 158, 11, 0.2)",
+                    color: "#D97706",
+                    fontSize: "10px",
+                    fontWeight: "900",
+                    padding: "1px 6px",
+                    borderRadius: "8px",
+                  }}
+                >
                   {savedCount}
                 </span>
               )}
             </div>
-            <span style={{ transform: isTabsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s", fontSize: 11 }}>▼</span>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#8B5CF6", fontSize: 12, fontWeight: "800" }}>
+              <span>{isTabsOpen ? "Fermer" : "Changer"}</span>
+              <span style={{ transform: isTabsOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▼</span>
+            </div>
           </button>
 
-          {/* Expanded Category Dropdown Menu */}
+          {/* ── DROPDOWN POPOVER DES CATÉGORIES ── */}
           {isTabsOpen && (
-            <div style={{
-              position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 50,
-              background: isDarkMode ? "#0f1123" : "#ffffff", border: "1px solid var(--mm-border-strong, rgba(139,92,246,0.4))",
-              borderRadius: 18, padding: 8, boxShadow: "0 12px 36px rgba(0,0,0,0.25)",
-              display: "flex", flexDirection: "column", gap: 4,
-              maxHeight: "320px", overflowY: "auto",
-              animation: "tiv-fade .2s cubic-bezier(.16,1,.3,1)"
-            }}>
-              {TABS.map(t => {
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 8px)",
+                left: 0,
+                right: 0,
+                background: isDarkMode ? "#13112E" : "#FFFFFF",
+                backdropFilter: "blur(24px)",
+                border: isDarkMode ? "1px solid rgba(167, 139, 250, 0.4)" : "1px solid #DDD6FE",
+                borderRadius: "22px",
+                padding: "12px",
+                boxShadow: isDarkMode
+                  ? "0 20px 50px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.1)"
+                  : "0 16px 40px rgba(139, 92, 246, 0.15), inset 0 1px 0 #FFFFFF",
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                gap: "8px",
+                maxHeight: "360px",
+                overflowY: "auto",
+                animation: "tiv-fade 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+              }}
+            >
+              {TABS.map((t) => {
                 const isActive = tab === t.id;
+                const isScholarship = t.id === "scholarships";
+
                 return (
-                  <button 
-                    key={t.id} 
-                    onClick={() => { setTab(t.id); setIsTabsOpen(false); }} 
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      setTab(t.id);
+                      setIsTabsOpen(false);
+                    }}
                     style={{
-                      background: isActive ? "rgba(139,92,246,0.18)" : "transparent",
-                      color: isActive ? "var(--mm-fg, #8b5cf6)" : "var(--mm-fg-muted)",
-                      border: "none", borderRadius: 12, padding: "10px 14px",
-                      textAlign: "left", fontSize: 13, fontWeight: isActive ? 800 : 600, cursor: "pointer",
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      transition: "all .15s"
+                      background: isActive
+                        ? "linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%)"
+                        : isDarkMode
+                        ? "rgba(30, 27, 75, 0.3)"
+                        : "#FAF5FF",
+                      color: isActive
+                        ? "#FFFFFF"
+                        : isDarkMode
+                        ? "#E2E8F0"
+                        : "#4C1D95",
+                      border: isActive
+                        ? "1px solid rgba(255, 255, 255, 0.25)"
+                        : isDarkMode
+                        ? "1px solid rgba(167, 139, 250, 0.15)"
+                        : "1px solid #EDE9FE",
+                      borderRadius: "14px",
+                      padding: "10px 14px",
+                      textAlign: "left",
+                      fontSize: "12.5px",
+                      fontWeight: isActive ? "800" : "600",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      boxShadow: isActive ? "0 4px 14px rgba(139, 92, 246, 0.35)" : "none",
+                      transition: "all 0.15s ease",
                     }}
                   >
                     <span>{t.label}</span>
-                    {t.id === "fr" && frCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{frCount > 99 ? "99+" : frCount}</span>}
-                    {t.id === "top" && freshCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{freshCount}</span>}
-                    {t.id === "saved" && savedCount > 0 && <span style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>{savedCount}</span>}
+
+                    {isScholarship && (
+                      <span
+                        style={{
+                          background: isActive ? "#FFFFFF" : "linear-gradient(135deg, #10B981, #059669)",
+                          color: isActive ? "#6D28D9" : "#FFFFFF",
+                          fontSize: "9px",
+                          fontWeight: "900",
+                          padding: "2px 6px",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        OFFICIEL
+                      </span>
+                    )}
+
+                    {t.id === "fr" && frCount > 0 && (
+                      <span style={{ background: isActive ? "rgba(255,255,255,0.25)" : "rgba(139, 92, 246, 0.15)", color: isActive ? "#FFF" : "#8B5CF6", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>
+                        {frCount > 99 ? "99+" : frCount}
+                      </span>
+                    )}
+
+                    {t.id === "saved" && savedCount > 0 && (
+                      <span style={{ background: isActive ? "rgba(255,255,255,0.25)" : "rgba(245, 158, 11, 0.15)", color: isActive ? "#FFF" : "#D97706", fontSize: 10, fontWeight: 900, padding: "1px 6px", borderRadius: 8 }}>
+                        {savedCount}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
           )}
         </div>
-
-        {/* Sort & Time Filters */}
-        {!isSearching && tab !== "digest" && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", paddingTop: 4 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, background: isDarkMode ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.6)", padding: "4px 10px", borderRadius: 10, border: "1px solid var(--mm-border, rgba(139,92,246,0.15))" }}>
-              <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 600 }}>Trier par :</span>
-              <select value={sortMode} onChange={e => setSortMode(e.target.value)} style={{ background: "transparent", color: "var(--mm-fg)", border: "none", fontSize: 11, fontWeight: 700, outline: "none", cursor: "pointer" }}>
-                <option value="relevance" style={{ color: "#000" }}>⭐ Pertinence</option>
-                <option value="recent" style={{ color: "#000" }}>🕐 Récent</option>
-                <option value="popular" style={{ color: "#000" }}>🔥 Populaire</option>
-              </select>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 6, background: isDarkMode ? "rgba(0,0,0,0.25)" : "rgba(255,255,255,0.6)", padding: "4px 10px", borderRadius: 10, border: "1px solid var(--mm-border, rgba(139,92,246,0.15))" }}>
-              <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", fontWeight: 600 }}>Période :</span>
-              <select value={dateFilter} onChange={e => setDateFilter(e.target.value)} style={{ background: "transparent", color: "var(--mm-fg)", border: "none", fontSize: 11, fontWeight: 700, outline: "none", cursor: "pointer" }}>
-                <option value="all" style={{ color: "#000" }}>Tout</option>
-                <option value="today" style={{ color: "#000" }}>Aujourd'hui</option>
-                <option value="week" style={{ color: "#000" }}>Cette semaine</option>
-              </select>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ── CONTENT ── */}
       <div style={{ padding: "0 4px 90px" }}>
+
+        {/* ── SCHOLARSHIPS TAB ── */}
+        {tab === "scholarships" && !isSearching && (
+          <ScholarshipHubView
+            isDarkMode={isDarkMode}
+            onCreateCard={onCreateCard}
+            showToast={showToast}
+          />
+        )}
 
         {/* ── DIGEST TAB ── */}
         {tab === "digest" && !isSearching && (
@@ -1716,7 +1928,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                 {digest.trending_tool && (
                   <div style={{
                     marginTop: 22, padding: 20,
-                    background: "linear-gradient(135deg,rgba(99,102,241,.1),rgba(139,92,246,.15))",
+                    background: "linear-gradient(135deg,rgba(139, 92, 246,.1),rgba(139,92,246,.15))",
                     borderRadius: 18, border: "1px solid var(--mm-border-strong)",
                     boxShadow: "var(--mm-shadow-glow)", position: "relative", overflow: "hidden",
                   }}>
@@ -1755,8 +1967,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             <div style={{
               height: 180, borderRadius: 20, marginBottom: 16,
               background: isDarkMode
-                ? "linear-gradient(90deg,#0d1626 25%,#111d33 50%,#0d1626 75%)"
-                : "linear-gradient(90deg,#eef2ff 25%,#e0e7ff 50%,#eef2ff 75%)",
+                ? "linear-gradient(90deg,#181028 25%,#26153d 50%,#181028 75%)"
+                : "linear-gradient(90deg,#faf5ff 25%,#f3e8ff 50%,#faf5ff 75%)",
               backgroundSize: "800px 100%", animation: "tiv-shimmer 1.4s linear infinite",
               border: "1px solid var(--mm-border)",
             }} />
@@ -1764,8 +1976,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
               <div key={i} style={{
                 height: 90, borderRadius: 16, marginBottom: 10,
                 background: isDarkMode
-                  ? "linear-gradient(90deg,#0d1626 25%,#111d33 50%,#0d1626 75%)"
-                  : "linear-gradient(90deg,#eef2ff 25%,#e0e7ff 50%,#eef2ff 75%)",
+                  ? "linear-gradient(90deg,#181028 25%,#26153d 50%,#181028 75%)"
+                  : "linear-gradient(90deg,#faf5ff 25%,#f3e8ff 50%,#faf5ff 75%)",
                 backgroundSize: "800px 100%", animation: "tiv-shimmer 1.4s linear infinite",
                 border: "1px solid var(--mm-border)",
                 animationDelay: `${i * 0.1}s`,
@@ -1775,24 +1987,30 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         )}
 
         {/* ── ARTICLE LIST FEED ── */}
-        {((tab !== "digest" && tab !== "github") || isSearching) && listItems.length > 0 && (
+        {((tab !== "digest" && tab !== "github" && tab !== "scholarships") || isSearching) && listItems.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {listItems.slice(0, visibleCount).map((item, index) => {
               const isSaved = savedIds.has(item.id);
               const isFirst = index === 0;
               
               return (
-                <div key={item.id} className="tiv-article tiv-card" style={{ 
-                  padding: isFirst ? "24px" : "20px", 
-                  position: "relative", 
-                  boxSizing: "border-box", 
-                  width: "100%", 
-                  overflow: "hidden",
-                  background: isFirst ? (isDarkMode ? "radial-gradient(120% 120% at 50% 0%, rgba(139,92,246,0.2) 0%, rgba(15,23,42,0.9) 100%)" : "radial-gradient(120% 120% at 50% 0%, rgba(139,92,246,0.15) 0%, rgba(245,247,255,0.9) 100%)") : undefined,
-                  border: isFirst ? (isDarkMode ? "1px solid rgba(139,92,246,0.5)" : "1px solid rgba(139,92,246,0.3)") : undefined,
-                  boxShadow: isFirst ? (isDarkMode ? "0 10px 40px rgba(139,92,246,0.25), inset 0 1px 0 rgba(255,255,255,0.1)" : "0 10px 40px rgba(139,92,246,0.15), inset 0 1px 0 rgba(255,255,255,0.5)") : undefined,
-                  borderRadius: isFirst ? "20px" : "16px"
-                }}>
+                <div
+                  key={item.id}
+                  className="tiv-article tiv-card"
+                  onClick={() => analyze(item)}
+                  style={{
+                    padding: isFirst ? "24px" : "20px",
+                    position: "relative",
+                    boxSizing: "border-box",
+                    width: "100%",
+                    overflow: "hidden",
+                    cursor: "pointer",
+                    background: isFirst ? (isDarkMode ? "radial-gradient(120% 120% at 50% 0%, rgba(139,92,246,0.2) 0%, rgba(15,23,42,0.9) 100%)" : "radial-gradient(120% 120% at 50% 0%, rgba(139,92,246,0.15) 0%, rgba(245,247,255,0.9) 100%)") : undefined,
+                    border: isFirst ? (isDarkMode ? "1px solid rgba(139,92,246,0.5)" : "1px solid rgba(139,92,246,0.3)") : undefined,
+                    boxShadow: isFirst ? (isDarkMode ? "0 10px 40px rgba(139,92,246,0.25), inset 0 1px 0 rgba(255,255,255,0.1)" : "0 10px 40px rgba(139,92,246,0.15), inset 0 1px 0 rgba(255,255,255,0.5)") : undefined,
+                    borderRadius: isFirst ? "20px" : "16px"
+                  }}
+                >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
                     {isFirst && (
                       <span style={{ background: "linear-gradient(135deg, #f59e0b, #ef4444)", color: "#fff", padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 900, letterSpacing: 0.5, boxShadow: "0 2px 8px rgba(245,158,11,0.4)", display: "flex", alignItems: "center", gap: 4 }}>
@@ -1831,19 +2049,130 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     {item.titleFr || item.title}
                   </div>
 
-                  <div style={{ fontSize: 14, color: "var(--mm-fg-muted)", lineHeight: 1.6, marginBottom: 16, whiteSpace: "pre-line" }}>
-                    {summaryCache.current[item.id]?.paragraphs?.length > 0
-                      ? summaryCache.current[item.id].paragraphs.join("\n\n")
-                      : (item.descriptionFr || item.description || "")}
+                  <div style={{ fontSize: 14.5, color: isDarkMode ? "#cbd5e1" : "#334155", lineHeight: 1.65, marginBottom: 16 }}>
+                    {summaryCache.current?.[item.id]?.paragraphs?.length > 0 ? (
+                      <div>
+                        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 900, color: "#8b5cf6", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 10, background: "rgba(139,92,246,0.1)", padding: "2px 8px", borderRadius: 6, border: "1px solid rgba(139,92,246,0.2)" }}>
+                          <span>⚡</span> ACTU COMPLÈTE
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {summaryCache.current[item.id].paragraphs.map((p, pIdx) => (
+                            <p key={pIdx} style={{ margin: 0, color: isDarkMode ? "#e2e8f0" : "#1e293b", fontSize: 14.5, lineHeight: 1.65 }}>
+                              {bionicReading ? <BionicText text={p} /> : p}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p style={{ margin: 0, color: "var(--mm-fg-muted)", fontSize: 14, lineHeight: 1.6 }}>
+                        {item.descriptionFr || item.description || ""}
+                      </p>
+                    )}
                   </div>
 
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                     <ScoreChip score={item.score} />
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button onClick={(e) => { e.stopPropagation(); window.open(item.url, '_blank'); }} style={{ background: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--mm-primary-glow)", borderRadius: 10, padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); speak(item); }}
+                        title={speakingId === item.id ? "Arrêter la lecture" : "Écouter le résumé"}
+                        style={{
+                          background: speakingId === item.id ? "rgba(239,68,68,0.15)" : "rgba(139,92,246,0.15)",
+                          border: `1px solid ${speakingId === item.id ? "rgba(239,68,68,0.3)" : "rgba(139,92,246,0.3)"}`,
+                          color: speakingId === item.id ? "#ef4444" : "var(--mm-primary-glow, #a78bfa)",
+                          borderRadius: 10,
+                          padding: "8px 14px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 12,
+                          fontWeight: 700
+                        }}
+                      >
+                        {speakingId === item.id ? (
+                          <span className="soundwave">
+                            <span className="soundwave-bar" />
+                            <span className="soundwave-bar" />
+                            <span className="soundwave-bar" />
+                            <span className="soundwave-bar" />
+                          </span>
+                        ) : "🔊"}
+                        <span>{speakingId === item.id ? "Stop" : "Écouter"}</span>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleSave(item); }}
+                        title={isSaved ? "Retirer des favoris" : "Sauvegarder pour plus tard"}
+                        style={{
+                          background: isSaved ? "rgba(245,158,11,0.15)" : "rgba(255,255,255,0.05)",
+                          border: `1px solid ${isSaved ? "rgba(245,158,11,0.4)" : "var(--mm-border, rgba(255,255,255,0.1))"}`,
+                          color: isSaved ? "#f59e0b" : "var(--mm-fg-muted)",
+                          borderRadius: 10,
+                          padding: "8px 12px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          fontSize: 12,
+                          fontWeight: 600
+                        }}
+                      >
+                        <span>{isSaved ? "⭐" : "🔖"}</span>
+                        <span>{isSaved ? "Favori" : "Sauvegarder"}</span>
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setReaderArticle(item); }}
+                        title="Ouvrir en Mode Lecteur immersif sans distraction"
+                        style={{
+                          background: isDarkMode ? "rgba(139, 92, 246,0.15)" : "#F5F3FF",
+                          border: "1px solid rgba(139, 92, 246,0.3)",
+                          color: "#8B5CF6",
+                          borderRadius: 10,
+                          padding: "8px 12px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          fontSize: 12,
+                          fontWeight: 700
+                        }}
+                      >
+                        📖 Lire
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open(item.url, '_blank'); }}
+                        title="Ouvrir la source originale"
+                        style={{
+                          background: "rgba(139,92,246,0.1)",
+                          border: "1px solid rgba(139,92,246,0.2)",
+                          color: "var(--mm-primary-glow)",
+                          borderRadius: 10,
+                          padding: "8px 12px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          fontSize: 12,
+                          fontWeight: 700
+                        }}
+                      >
                         🔗 Source
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); deleteArticle(item); }} style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", borderRadius: 10, padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteArticle(item); }}
+                        title="Masquer cet article"
+                        style={{
+                          background: "rgba(239,68,68,0.1)",
+                          border: "1px solid rgba(239,68,68,0.2)",
+                          color: "#f87171",
+                          borderRadius: 10,
+                          padding: "8px 10px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          fontSize: 12,
+                          fontWeight: 700
+                        }}
+                      >
                         🗑️
                       </button>
                     </div>
@@ -1960,7 +2289,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     <p key={i} style={{ fontSize: 14, color: "var(--mm-fg-muted)", lineHeight: 1.7, margin: "0 0 12px" }}>{p}</p>
                   ))}
                   {readSummary.why_it_matters && (
-                    <div style={{ marginTop: 12, marginBottom: 4, background: "rgba(99,102,241,.08)", border: "1px solid var(--mm-border-strong)", borderRadius: 14, padding: "14px 16px" }}>
+                    <div style={{ marginTop: 12, marginBottom: 4, background: "rgba(139, 92, 246,.08)", border: "1px solid var(--mm-border-strong)", borderRadius: 14, padding: "14px 16px" }}>
                       <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: 1.2, textTransform: "uppercase", color: "var(--mm-primary-glow)", marginBottom: 8 }}>Pourquoi c'est important</div>
                       <p style={{ fontSize: 13.5, color: "var(--mm-fg)", lineHeight: 1.6, margin: 0 }}>{readSummary.why_it_matters}</p>
                     </div>
@@ -1986,12 +2315,96 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                 <p style={{ color: "var(--mm-fg-muted)", fontSize: 14, lineHeight: 1.65 }}>{selected.descriptionFr || selected.description}</p>
               )}
 
-              {/* Actions (Retour seulement) */}
-              <div style={{ marginTop: 24 }}>
-                <button onClick={() => { setSelected(null); setAnalysis(null); setReadSummary(null); setReading(false); }}
-                  style={{ width: "100%", background: "var(--mm-bg-card, rgba(255,255,255,.08))", color: "var(--mm-fg, #fff)", border: "1px solid var(--mm-border, rgba(255,255,255,.15))", borderRadius: 12, padding: "16px", cursor: "pointer", fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: "0 4px 15px rgba(0,0,0,0.1)" }}>
-                  ⬅️ Revenir en arrière
-                </button>
+              {/* Actions dans la modale */}
+              <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <button
+                    onClick={() => speak(selected)}
+                    style={{
+                      background: speakingId === selected.id ? "rgba(239,68,68,0.15)" : "linear-gradient(135deg, rgba(139,92,246,0.2), rgba(139, 92, 246,0.2))",
+                      color: speakingId === selected.id ? "#ef4444" : "var(--mm-primary-glow, #a78bfa)",
+                      border: `1px solid ${speakingId === selected.id ? "rgba(239,68,68,0.3)" : "rgba(139,92,246,0.4)"}`,
+                      borderRadius: 14,
+                      padding: "14px 16px",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span>{speakingId === selected.id ? "⏹️" : "🔊"}</span>
+                    <span>{speakingId === selected.id ? "Arrêter Audio" : "Écouter le résumé"}</span>
+                  </button>
+
+                  <button
+                    onClick={() => toggleSave(selected)}
+                    style={{
+                      background: savedIds.has(selected.id) ? "rgba(245,158,11,0.15)" : "rgba(255,255,255,0.06)",
+                      color: savedIds.has(selected.id) ? "#f59e0b" : "var(--mm-fg, #fff)",
+                      border: `1px solid ${savedIds.has(selected.id) ? "rgba(245,158,11,0.4)" : "var(--mm-border, rgba(255,255,255,0.15))"}`,
+                      borderRadius: 14,
+                      padding: "14px 16px",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span>{savedIds.has(selected.id) ? "⭐" : "🔖"}</span>
+                    <span>{savedIds.has(selected.id) ? "Enregistré" : "Sauvegarder"}</span>
+                  </button>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <a
+                    href={selected.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      textDecoration: "none",
+                      background: "rgba(139,92,246,0.1)",
+                      color: "var(--mm-primary-glow, #a78bfa)",
+                      border: "1px solid rgba(139,92,246,0.25)",
+                      borderRadius: 14,
+                      padding: "14px",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span>🔗</span>
+                    <span>Lire la source</span>
+                  </a>
+
+                  <button
+                    onClick={() => { setSelected(null); setAnalysis(null); setReadSummary(null); setReading(false); }}
+                    style={{
+                      background: "var(--mm-bg-card, rgba(255,255,255,.08))",
+                      color: "var(--mm-fg, #fff)",
+                      border: "1px solid var(--mm-border, rgba(255,255,255,.15))",
+                      borderRadius: 14,
+                      padding: "14px",
+                      cursor: "pointer",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 8,
+                    }}
+                  >
+                    ⬅️ Revenir
+                  </button>
+                </div>
               </div>
 
               {/* Deep analysis */}
@@ -2005,12 +2418,6 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     </ul>
                   )}
                   {analysis.relevance && <p style={{ fontSize: 12, color: "var(--mm-fg-faint)", fontStyle: "italic", margin: "0 0 12px" }}>💡 {analysis.relevance}</p>}
-                  {analysis.create_card && (
-                    <button onClick={createCardFromAnalysis}
-                      style={{ background: "linear-gradient(135deg,#8b5cf6,#6366f1)", color: "#fff", border: 0, borderRadius: 12, padding: "12px 0", cursor: "pointer", fontSize: 14, fontWeight: 800, width: "100%", boxShadow: "0 4px 14px rgba(139,92,246,.4)" }}>
-                      ➕ Créer une fiche mémo
-                    </button>
-                  )}
                 </div>
               )}
             </div>
@@ -2018,66 +2425,24 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         </div>
       )}
 
-      {/* ── SOURCES MODAL ── */}
-      {showSourcesModal && (
-        <div onClick={() => setShowSourcesModal(false)} style={{ position: "fixed", inset: 0, background: "rgba(4,6,15,.8)", zIndex: 1100, display: "flex", alignItems: "flex-end", justifyContent: "center", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)" }}>
-          <div onClick={e => e.stopPropagation()} style={{
-            background: "var(--mm-bg-elev, #0b0d1e)", borderRadius: "24px 24px 0 0",
-            padding: "20px", maxWidth: 640, width: "100%", maxHeight: "80vh", overflow: "auto",
-            animation: "tiv-modal-in .3s cubic-bezier(.16,1,.3,1)",
-            border: "1px solid var(--mm-border-strong)", borderBottom: "none",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <h3 style={{ margin: 0, fontSize: 18, fontFamily: "var(--mm-font-display)", color: "var(--mm-fg)" }}>⚙️ Sources & Flux RSS</h3>
-              <button onClick={() => setShowSourcesModal(false)} style={{ background: "transparent", border: "none", color: "var(--mm-fg-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
-            </div>
-            
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", color: "var(--mm-primary-glow)", marginBottom: 12, letterSpacing: 1 }}>Ajouter un flux</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input value={customFeedUrl} onChange={e => setCustomFeedUrl(e.target.value)} placeholder="URL du flux RSS ou Atom..." style={{ flex: 1, background: "rgba(255,255,255,.05)", border: "1px solid var(--mm-border)", borderRadius: 12, padding: "10px 14px", color: "var(--mm-fg)", fontSize: 13, outline: "none" }} />
-                <button 
-                  onClick={async () => {
-                    if (!customFeedUrl) return;
-                    try {
-                      const name = new URL(customFeedUrl).hostname.replace('www.', '');
-                      setCustomFeeds(prev => [...prev, { name, source: name, url: customFeedUrl, lang: "fr" }]);
-                      setEnabledSources(prev => new Set([...prev, name]));
-                      setCustomFeedUrl("");
-                      showToast?.("Flux ajouté avec succès", "success");
-                    } catch {
-                      showToast?.("Erreur: Impossible de lire ce flux", "error");
-                    }
-                  }}
-                  style={{ background: "var(--mm-primary, #8b5cf6)", color: "#fff", border: "none", borderRadius: 12, padding: "0 16px", cursor: "pointer", fontWeight: 700 }}
-                >
-                  Ajouter
-                </button>
-              </div>
-            </div>
+      {/* ── MODALS (READER MODE & CUSTOM FEED MANAGER) ── */}
+      {readerArticle && (
+        <ReaderModeModal
+          article={readerArticle}
+          onClose={() => setReaderArticle(null)}
+          onCreateCard={onCreateCard}
+          showToast={showToast}
+        />
+      )}
 
-            <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", color: "var(--mm-primary-glow)", marginBottom: 12, letterSpacing: 1 }}>Flux actifs</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {[...RSS_FEEDS, ...customFeeds].map(f => {
-                const isActive = enabledSources.has(f.name);
-                return (
-                  <label key={f.name} style={{ display: "flex", alignItems: "center", gap: 12, background: "rgba(255,255,255,.03)", padding: "12px 16px", borderRadius: 12, cursor: "pointer", border: `1px solid ${isActive ? "var(--mm-border-strong, #8b5cf6)" : "var(--mm-border)"}` }}>
-                    <input type="checkbox" checked={isActive} onChange={() => {
-                      setEnabledSources(prev => {
-                        const next = new Set(prev);
-                        if (isActive) next.delete(f.name);
-                        else next.add(f.name);
-                        return next;
-                      });
-                    }} style={{ cursor: "pointer" }} />
-                    <span style={{ color: "var(--mm-fg)", fontSize: 14, fontWeight: 600 }}>{f.name}</span>
-                    <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--mm-fg-faint)" }}>{f.lang.toUpperCase()}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-        </div>
+      {showSourcesModal && (
+        <CustomFeedManagerModal
+          isOpen={showSourcesModal}
+          onClose={() => setShowSourcesModal(false)}
+          onFeedsUpdated={() => fetchAll(false)}
+          isDarkMode={isDarkMode}
+          showToast={showToast}
+        />
       )}
     </div>
   );

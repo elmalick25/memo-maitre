@@ -19,6 +19,9 @@
 // Couche 6 : la définition de « fiche maîtrisée / à consolider » est
 // centralisée dans cardStatus.js (plus de seuils inline sur `level`).
 import { isConsolidationCandidate } from "./cardStatus.js";
+// Sous-quota anglais : on a besoin de savoir quelles fiches sont encore dans
+// le régime intensif (échelle 1→3→7→14) pour borner leur part du quota du jour.
+import { isEnglishIntensive } from "./fsrs.js";
 
 // ── Tokenization + similarité Jaccard sur le recto ────────────────────────
 const STOPWORDS_FR = new Set([
@@ -288,14 +291,37 @@ export function getDailySessionTarget(pileSize, tiers = DAILY_SESSION_TIERS) {
  * @param {Object} opts - { target, todayISO }
  * @returns {Array} session plafonnée et ordonnée.
  */
-export function composeDailySession(dueCards, opts = {}) {
-  const cards = Array.isArray(dueCards) ? dueCards : [];
-  const target = opts.target !== undefined ? opts.target : getDailySessionTarget(cards.length);
+// ══════════════════════════════════════════════════════════════════════════
+// Sous-quota ANGLAIS (régime intensif)
+// ══════════════════════════════════════════════════════════════════════════
+// Les fiches anglaises sur l'échelle intensive (1 → 3 → 7 → 14 j) reviennent
+// vite, par construction. Sans garde-fou, elles peuvent occuper la quasi-
+// totalité des 35 slots du jour et étouffer les autres modules.
+// On leur réserve donc une bande passante fixe : ~8-10 slots/jour maximum.
+//
+//   • C'est un PLAFOND, pas un plancher artificiel : s'il n'y a que 3 fiches
+//     anglaises dues, on en sert 3 (les 32 autres slots vont ailleurs).
+//   • Si les autres modules ne remplissent pas les slots restants, l'anglais
+//     peut déborder au-delà du sous-quota — mais uniquement sur des places
+//     que personne d'autre ne réclamait.
+export const ENGLISH_DAILY_SUBQUOTA = { min: 8, max: 10, ratio: 0.28 };
 
-  // Pas de plafond (petite pile) → comportement historique, juste réordonné.
-  if (!target || cards.length <= target) {
-    return antiInterferenceReorder(interleaveByCategory([...cards]));
-  }
+/** Nombre de slots max réservés à l'anglais intensif pour une cible donnée. */
+export function getEnglishSubQuota(target, cfg = ENGLISH_DAILY_SUBQUOTA) {
+  const t = Number(target);
+  if (!Number.isFinite(t) || t <= 0) return null; // pas de plafond du jour → pas de sous-quota
+  const raw = Math.round(t * cfg.ratio);
+  return Math.max(1, Math.min(t, Math.min(cfg.max, Math.max(cfg.min, raw))));
+}
+
+/**
+ * Sélection prioritaire dans un sous-ensemble de fiches :
+ * leeches sévères > retard le plus ancien > dues normales > consolidation.
+ * PURE. Renvoie au plus `target` fiches (ordre de priorité, non interleavé).
+ */
+function selectByPriority(cards, target, todayISO) {
+  if (!Array.isArray(cards) || cards.length === 0 || target <= 0) return [];
+  if (cards.length <= target) return [...cards];
 
   const used = new Set();
   const take = (list, n) => {
@@ -324,23 +350,71 @@ export function composeDailySession(dueCards, opts = {}) {
   const backlog = take(byOldest, Math.ceil(target * DAILY_SESSION_MIX.backlog));
 
   // 3. Dues normales du jour
-  const todayISO = opts.todayISO;
   const normalDue = take(
     byOldest.filter((c) => !todayISO || String(c.nextReview || "") >= todayISO),
     Math.ceil(target * DAILY_SESSION_MIX.due),
   );
 
   // 4. Consolidation (haute rétention / niveau élevé) — comble le reste
-  const remaining = Math.max(0, target - (leeches.length + backlog.length + normalDue.length));
+  const rest = Math.max(0, target - (leeches.length + backlog.length + normalDue.length));
   const consolidation = take(
     cards.filter(isConsolidationCandidate).sort((a, b) => (b.level || 0) - (a.level || 0)),
-    remaining,
+    rest,
   );
 
   // 5. Si on n'atteint toujours pas la cible, on complète par le reste du retard.
   let merged = [...leeches, ...backlog, ...normalDue, ...consolidation];
   if (merged.length < target) {
     merged = merged.concat(take(byOldest, target - merged.length));
+  }
+  return merged.slice(0, target);
+}
+
+/**
+ * Compose la session quotidienne par défaut à partir des fiches dues.
+ * Priorité : leeches sévères > retard le plus ancien > dues normales >
+ * consolidation. L'anglais intensif est borné par son sous-quota.
+ * Sortie interleavée + anti-interférence.
+ *
+ * Fonction PURE : ne modifie ni les fiches ni aucun state.
+ *
+ * @param {Array} dueCards - fiches réellement dues aujourd'hui.
+ * @param {Object} opts - { target, todayISO, englishSubQuota }
+ * @returns {Array} session plafonnée et ordonnée.
+ */
+export function composeDailySession(dueCards, opts = {}) {
+  const cards = Array.isArray(dueCards) ? dueCards : [];
+  const target = opts.target !== undefined ? opts.target : getDailySessionTarget(cards.length);
+  const todayISO = opts.todayISO;
+
+  // Pas de plafond (petite pile) → comportement historique, juste réordonné.
+  if (!target || cards.length <= target) {
+    return antiInterferenceReorder(interleaveByCategory([...cards]));
+  }
+
+  // ── Sous-quota anglais ───────────────────────────────────────────────────
+  const quota = opts.englishSubQuota !== undefined
+    ? opts.englishSubQuota
+    : getEnglishSubQuota(target);
+
+  const english = cards.filter((c) => isEnglishIntensive(c));
+  const others = cards.filter((c) => !isEnglishIntensive(c));
+
+  const engBudget = quota === null || quota === undefined ? english.length : Math.min(quota, english.length);
+  const englishPicked = selectByPriority(english, engBudget, todayISO);
+  const pickedIds = new Set(englishPicked.map((c) => c.id));
+
+  const othersPicked = selectByPriority(others, target - englishPicked.length, todayISO);
+  let merged = [...englishPicked, ...othersPicked];
+
+  // Débordement autorisé : places que les autres modules n'ont pas réclamées.
+  if (merged.length < target) {
+    const leftoverEnglish = english.filter((c) => !pickedIds.has(c.id));
+    merged = merged.concat(selectByPriority(leftoverEnglish, target - merged.length, todayISO));
+  }
+  if (merged.length < target) {
+    const inSession = new Set(merged.map((c) => c.id));
+    merged = merged.concat(cards.filter((c) => !inSession.has(c.id)).slice(0, target - merged.length));
   }
 
   return antiInterferenceReorder(interleaveByCategory(merged.slice(0, target)));

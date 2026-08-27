@@ -21,13 +21,13 @@ let memoryCache_osRadar = null;
 
 const DIFFICULTY_COLORS = {
   'Débutant': { bg: 'rgba(16,185,129,0.14)', fg: '#10b981', label: 'Débutant' },
-  'Intermédiaire': { bg: 'rgba(59,130,246,0.14)', fg: '#3b82f6', label: 'Intermédiaire' },
+  'Intermédiaire': { bg: 'rgba(139,92,246,0.14)', fg: '#8b5cf6', label: 'Intermédiaire' },
   'Avancé': { bg: 'rgba(244,63,94,0.14)', fg: '#f43f5e', label: 'Avancé' },
 };
 
 const IMPACT_COLORS = {
   'Top Tier': '#facc15',
-  'Élevé': '#22d3ee',
+  'Élevé': '#c084fc',
   'Moyen': '#a78bfa',
 };
 
@@ -275,7 +275,7 @@ Format:
                   <div className="osr-stats">
                     <div className="osr-stat"><Star size={14} color="#eab308" /><b>{proj.stars || '—'}</b><span>stars</span></div>
                     <div className="osr-stat"><TrendingUp size={14} color="#10b981" /><b>{proj.momentum || '—'}</b><span>momentum</span></div>
-                    <div className="osr-stat"><Eye size={14} color="#3b82f6" /><b>{proj.recruiterVisibility || '—'}</b><span>visibilité</span></div>
+                    <div className="osr-stat"><Eye size={14} color="#8b5cf6" /><b>{proj.recruiterVisibility || '—'}</b><span>visibilité</span></div>
                     <div className="osr-stat"><Terminal size={14} color="#f43f5e" /><b>{proj.difficulty || '—'}</b><span>difficulté</span></div>
                   </div>
 
@@ -316,14 +316,14 @@ const styles = `
   overflow: hidden;
   border-radius: 28px;
   padding: clamp(24px, 4vw, 40px);
-  background: linear-gradient(135deg, #3b5cff 0%, #4d6bfe 50%, #6a87ff 100%);
+  background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 50%, #a78bfa 100%);
   color: #fff;
-  box-shadow: 0 20px 60px -16px rgba(77,107,254,0.55);
+  box-shadow: 0 20px 60px -16px rgba(139,92,246,0.55);
   margin-bottom: 24px;
   isolation: isolate;
 }
 :root:not([data-theme="light"]) .osr-hero {
-  background: linear-gradient(135deg, #4338ca 0%, #6d28d9 50%, #8b5cf6 100%);
+  background: linear-gradient(135deg, #6d28d9 0%, #6d28d9 50%, #8b5cf6 100%);
   box-shadow: 0 20px 60px -16px rgba(124,58,237,0.55);
 }
 .osr-hero-glow { position: absolute; border-radius: 50%; filter: blur(80px); z-index: 0; }
@@ -345,7 +345,7 @@ const styles = `
 .osr-refresh-btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-radius: 999px;
-  background: rgba(255,255,255,0.95); color: #4d6bfe;
+  background: rgba(255,255,255,0.95); color: #8b5cf6;
   border: none; cursor: pointer; font-weight: 800; font-size: 13px;
   box-shadow: 0 6px 16px rgba(0,0,0,0.15); transition: transform .15s ease;
 }
@@ -458,7 +458,7 @@ const styles = `
 .osr-issue {
   display: block; text-decoration: none;
   padding: 12px 14px; border-radius: 12px;
-  background: linear-gradient(135deg, rgba(77,107,254,0.1), rgba(167,139,250,0.08));
+  background: linear-gradient(135deg, rgba(139, 92, 246,0.1), rgba(167,139,250,0.08));
   border: 1px solid var(--mm-border-strong);
   transition: transform .15s ease;
 }

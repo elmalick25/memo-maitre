@@ -423,7 +423,7 @@ export function NovaVoiceButton({ onTranscript, disabled = false, isDarkMode, cu
         background: vad.userSpeaking
           ? "linear-gradient(135deg, #EF4444, #B91C1C)"
           : isListening
-            ? "linear-gradient(135deg, #3B82F6, #2563EB)"
+            ? "linear-gradient(135deg, #8B5CF6, #7C3AED)"
             : (isDarkMode ? "#1F1F1F" : "#E5E7EB"),
         color: (vad.userSpeaking || isListening) ? "white" : (isDarkMode ? "var(--mm-border)" : "#1E293B"),
         fontWeight: 800,
@@ -431,7 +431,7 @@ export function NovaVoiceButton({ onTranscript, disabled = false, isDarkMode, cu
         transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         boxShadow: vad.userSpeaking
           ? "0 4px 15px rgba(239, 68, 68, 0.4)"
-          : isListening ? "0 4px 15px rgba(59, 130, 246, 0.4)" : "none",
+          : isListening ? "0 4px 15px rgba(139, 92, 246, 0.4)" : "none",
         opacity: (disabled || (isLoading && !vad.userSpeaking)) ? 0.7 : 1
       }}
     >
@@ -471,12 +471,12 @@ export function NovaBadge({ isDarkMode }) {
       display: "flex", alignItems: "center", gap: 8,
       padding: "6px 12px",
       borderRadius: 20,
-      background: isDarkMode ? "rgba(77, 107, 254, 0.15)" : "rgba(77, 107, 254, 0.1)",
-      border: `1px solid ${isDarkMode ? "rgba(77, 107, 254, 0.3)" : "rgba(77, 107, 254, 0.2)"}`,
-      color: isDarkMode ? "#C4B5FD" : "#4D6BFE",
+      background: isDarkMode ? "rgba(139, 92, 246, 0.15)" : "rgba(139, 92, 246, 0.1)",
+      border: `1px solid ${isDarkMode ? "rgba(139, 92, 246, 0.3)" : "rgba(139, 92, 246, 0.2)"}`,
+      color: isDarkMode ? "#C4B5FD" : "#8B5CF6",
       fontSize: 12,
       fontWeight: 600,
-      boxShadow: "0 2px 8px rgba(77, 107, 254, 0.1)",
+      boxShadow: "0 2px 8px rgba(139, 92, 246, 0.1)",
       transition: "all 0.3s"
     }}>
       <span style={{ animation: "pulseNova 2s infinite" }}>🌙</span>
@@ -490,11 +490,11 @@ export function NovaBadge({ isDarkMode }) {
         style={{
           background: "none", border: "none", cursor: "pointer",
           padding: "2px 6px", borderRadius: 4,
-          fontSize: 11, color: isDarkMode ? "#BFCBFF" : "#3451D1",
+          fontSize: 11, color: isDarkMode ? "#C084FC" : "#7C3AED",
           display: "flex", alignItems: "center", gap: 4,
           marginLeft: 4, transition: "background 0.2s"
         }}
-        onMouseOver={e => e.currentTarget.style.background = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)"}
+        onMouseOver={e => e.currentTarget.style.background = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.05)"}
         onMouseOut={e => e.currentTarget.style.background = "none"}
       >
         🔄

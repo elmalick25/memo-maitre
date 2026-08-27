@@ -30,7 +30,7 @@ function Row({ quest, theme, accent }) {
   );
 }
 
-export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = null, accent = "#4D6BFE" }) {
+export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = null, accent = "#8B5CF6" }) {
   if (!summary || !summary.daily?.length) return null;
   const { daily, weekly, doneCount, total, allDone } = summary;
 

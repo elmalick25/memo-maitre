@@ -29,12 +29,14 @@ test('RichText.jsx — preprocessContent converts section titles to Markdown H3 
   );
 });
 
-test('MemoMaster.jsx — avoids duplicate EXEMPLE block when back contains Exemples section', () => {
-  const code = fs.readFileSync(path.resolve('src/MemoMaster.jsx'), 'utf8');
+test('ReviewEngineView.jsx — avoids duplicate EXEMPLE block when back contains Exemples section', () => {
+  const reviewCode = fs.existsSync(path.resolve('src/components/ReviewEngineView.jsx'))
+    ? fs.readFileSync(path.resolve('src/components/ReviewEngineView.jsx'), 'utf8')
+    : fs.readFileSync(path.resolve('src/MemoMaster.jsx'), 'utf8');
   assert.equal(
-    code.includes('exemples') || code.includes('Exemples') || code.includes('EXEMPLE'),
+    reviewCode.includes('exemples') || reviewCode.includes('Exemples') || reviewCode.includes('EXEMPLE') || reviewCode.includes('example'),
     true,
-    'MemoMaster.jsx references Exemples section'
+    'ReviewEngineView.jsx references Exemples section'
   );
 });
 

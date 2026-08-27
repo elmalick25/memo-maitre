@@ -18,6 +18,7 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, ArcElement
 } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
+import RadialDuelChart from "./components/RadialDuelChart";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, ArcElement);
 
@@ -66,7 +67,7 @@ export function Minimap({ cards, onPixelClick, theme }) {
   const getColorForCard = (card) => {
     if ((card.level || 0) >= 7) return "#22C55E"; // Mastered - green
     if ((card.nextReview || "") <= localToday()) return "#EF4444"; // Due - red
-    if ((card.level || 0) >= 4) return "#3B82F6"; // Good - blue
+    if ((card.level || 0) >= 4) return "#8B5CF6"; // Good - blue
     if ((card.level || 0) >= 1) return "#F59E0B"; // Learning - yellow
     return "var(--mm-fg-muted)"; // New - gray
   };
@@ -89,7 +90,7 @@ export function Minimap({ cards, onPixelClick, theme }) {
         height: 'calc(100vh - 120px)', background: theme.inputBg,
         borderRadius: '9px', padding: '4px 2px', cursor: 'pointer', zIndex: 100,
         display: 'flex', flexDirection: 'column', gap: '1px',
-        boxShadow: '0 4px 12px rgba(77,107,254,0.1)',
+        boxShadow: '0 4px 12px rgba(139, 92, 246,0.1)',
       }}
     >
       {cards.map(card => (
@@ -406,7 +407,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
             onClick={analyze} disabled={!value.trim() || profiling} className="hov"
             style={{
               width: "100%", padding: 14, borderRadius: 12,
-              background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white",
+              background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white",
               border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer",
               opacity: !value.trim() || profiling ? 0.5 : 1,
             }}
@@ -429,7 +430,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
           onClick={submit} disabled={!value.trim() || loading} className="hov"
           style={{
             marginTop: 12, width: "100%", padding: 14, borderRadius: 12,
-            background: "linear-gradient(135deg, #3451D1, #4D6BFE)", color: "white",
+            background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white",
             border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer",
             opacity: !value.trim() || loading ? 0.5 : 1,
           }}
@@ -630,26 +631,39 @@ export function useSavedViews({ storage, key = "memo_saved_views" }) {
  * ════════════════════════════════════════════════════════════════════════════
  * Calcule combien de fiches seront dues chaque jour des 30 prochains.
  */
-function computeFsrsForecast(expressions, days = 30) {
+export function computeFsrsForecast(expressions, days = 7) {
   const buckets = new Map();
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  // Utilise la date LOCALE (comme nextReview stocké via toLocalISODate),
-  // sinon décalage de fuseau → forecast à 0 alors que des fiches sont dues.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   const toLocal = (d) => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const day = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${day}`;
   };
-  for (let i = 0; i <= days; i++) {
-    const d = new Date(today); d.setDate(today.getDate() + i);
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
     buckets.set(toLocal(d), 0);
   }
-  expressions.forEach(e => {
-    const next = e.nextReview || e.dueDate;
-    if (!next) return;
-    if (buckets.has(next)) buckets.set(next, buckets.get(next) + 1);
+
+  (expressions || []).forEach(e => {
+    if (!e || e.paused) return;
+    const nr = e.nextReview || e.dueDate;
+    if (!nr) return;
+    let dateStr = null;
+    if (typeof nr === "number") {
+      dateStr = toLocal(new Date(nr));
+    } else if (typeof nr === "string") {
+      dateStr = nr.slice(0, 10);
+    }
+    if (dateStr && buckets.has(dateStr)) {
+      buckets.set(dateStr, buckets.get(dateStr) + 1);
+    }
   });
+
   return Array.from(buckets.entries()).map(([date, count]) => ({ date, count }));
 }
 
@@ -678,7 +692,7 @@ export function FsrsForecastChart({ expressions, theme, isDarkMode }) {
               datasets: [{
                 data: data.map(d => d.count),
                 backgroundColor: [
-                  "#3B82F6", "#8B5CF6", "#EC4899", "#F43F5E", 
+                  "#8B5CF6", "#8B5CF6", "#EC4899", "#F43F5E", 
                   "#F59E0B", "#10B981", "#14B8A6"
                 ],
                 borderWidth: 2,
@@ -732,13 +746,13 @@ export function ForgettingCurveChart({ expressions, theme, isDarkMode }) {
             datasets: [{
               label: 'Rétention',
               data: points.map(p => p.retention),
-              borderColor: "#4D6BFE",
+              borderColor: "#8B5CF6",
               borderWidth: 3,
-              backgroundColor: "rgba(77, 107, 254, 0.2)",
+              backgroundColor: "rgba(139, 92, 246, 0.2)",
               fill: true,
               tension: 0.4,
               pointBackgroundColor: cardBg,
-              pointBorderColor: "#4D6BFE",
+              pointBorderColor: "#8B5CF6",
               pointBorderWidth: 2,
               pointRadius: 4,
               pointHoverRadius: 6,
@@ -862,14 +876,7 @@ export function ComparisonVs30Days({ sessionHistory = [], expressions, theme, is
     const trend = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
     const trendColor = trend === "up" ? "#10B981" : trend === "down" ? "#EF4444" : "var(--mm-fg-muted)";
     
-    const recentColor = "#38bdf8"; 
-    const prevColor = isDarkMode ? "#64748b" : "#cbd5e1"; 
-    
-    // If both are 0, we show a full grey ring to avoid an empty invisible chart
-    const isEmpty = recent === 0 && prev === 0;
-    const chartData = isEmpty ? [1] : [recent, prev];
-    const chartColors = isEmpty ? [(isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)")] : [recentColor, prevColor];
-    const chartLabels = isEmpty ? ['Aucune donnée'] : ['Derniers 30 jours', 'Période précédente'];
+    const recentColor = "#c084fc";
 
     return (
       <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `1px solid ${theme.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.1)", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -879,60 +886,15 @@ export function ComparisonVs30Days({ sessionHistory = [], expressions, theme, is
             {delta > 0 ? "+" : ""}{delta}%
           </div>
         </div>
-        
-        <div style={{ height: 260, width: "100%", position: "relative" }}>
-          <Doughnut 
-            data={{
-              labels: chartLabels,
-              datasets: [
-                {
-                  data: chartData,
-                  backgroundColor: chartColors,
-                  borderWidth: 2,
-                  borderColor: theme.cardBg,
-                  borderRadius: 4,
-                  hoverOffset: 4
-                }
-              ]
-            }}
-            options={{
-              responsive: true, maintainAspectRatio: false,
-              cutout: '70%', 
-              layout: {
-                padding: { bottom: 20 }
-              },
-              plugins: {
-                legend: { 
-                  display: !isEmpty,
-                  position: 'bottom', 
-                  labels: { 
-                    padding: 20,
-                    color: isDarkMode ? "#94a3b8" : "#64748b", 
-                    font: { weight: 'bold' }
-                  } 
-                },
-                tooltip: {
-                  enabled: !isEmpty,
-                  backgroundColor: isDarkMode ? "rgba(15, 23, 42, 0.95)" : "rgba(255,255,255,0.95)", 
-                  titleColor: isDarkMode ? "#fff" : "#000", 
-                  bodyColor: isDarkMode ? "#fff" : "#000",
-                  borderColor: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)", 
-                  borderWidth: 1, padding: 12,
-                  callbacks: {
-                    label: function(context) {
-                      return ` ${context.label}: ${context.raw} révisions`;
-                    }
-                  }
-                }
-              }
-            }}
-          />
-          
-          <div style={{ position: "absolute", top: isEmpty ? "50%" : "42%", left: "50%", transform: "translate(-50%, -50%)", textAlign: "center", pointerEvents: "none" }}>
-            <div style={{ fontSize: 36, fontWeight: 900, color: isEmpty ? (isDarkMode ? "#64748b" : "#94a3b8") : recentColor, lineHeight: 1 }}>{recent}</div>
-            <div style={{ fontSize: 11, color: isDarkMode ? "#94a3b8" : "#64748b", fontWeight: 800, textTransform: "uppercase", marginTop: 4 }}>révisions</div>
-          </div>
-        </div>
+
+        <RadialDuelChart
+          recent={recent}
+          previous={prev}
+          delta={delta}
+          isDarkMode={isDarkMode}
+          recentColor={recentColor}
+          height={260}
+        />
       </div>
     );
   }
@@ -973,10 +935,10 @@ Génère le digest.`
  * ════════════════════════════════════════════════════════════════════════════ */
 export function PomodoroStudy({ theme, onPhaseChange, showToast }) {
   const PHASES = [
-    { id: "read",    label: "📖 Lecture active",   minutes: 5,  color: "#4D6BFE" },
+    { id: "read",    label: "📖 Lecture active",   minutes: 5,  color: "#8B5CF6" },
     { id: "summary", label: "✍️ Synthèse",         minutes: 10, color: "#10B981" },
     { id: "quiz",    label: "❓ Auto-quiz",         minutes: 5,  color: "#F59E0B" },
-    { id: "flash",   label: "🃏 Flashcards",       minutes: 5,  color: "#4D6BFE" },
+    { id: "flash",   label: "🃏 Flashcards",       minutes: 5,  color: "#8B5CF6" },
   ];
   const [running, setRunning] = useState(false);
   const [phaseIdx, setPhaseIdx] = useState(0);

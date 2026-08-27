@@ -88,7 +88,7 @@ export default class ErrorBoundary extends React.Component {
             </p>
           )}
           <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 16, flexWrap: "wrap" }}>
-            {!tooMany && <button onClick={this.handleReset} style={btn("#3b82f6")}>Réessayer</button>}
+            {!tooMany && <button onClick={this.handleReset} style={btn("#8B5CF6")}>Réessayer</button>}
             <button onClick={this.handleReload} style={btn("#374151")}>Recharger la page</button>
           </div>
         </div>

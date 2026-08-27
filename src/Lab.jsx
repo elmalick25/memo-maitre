@@ -131,7 +131,7 @@ const HoloCard = ({ children, className, style, theme, glowColor, onClick, onDra
       {/* Lueur radiale de survol (Aura) */}
       <div style={{
         position: "absolute", inset: 0,
-        background: `radial-gradient(circle 350px at ${coord.x}px ${coord.y}px, ${glowColor || '#4D6BFE'}30, transparent 100%)`,
+        background: `radial-gradient(circle 350px at ${coord.x}px ${coord.y}px, ${glowColor || '#8B5CF6'}30, transparent 100%)`,
         opacity: hover ? 1 : 0, transition: "opacity 0.4s ease", pointerEvents: "none", zIndex: 0
       }} />
       <div style={innerStyle}>{children}</div>
@@ -425,52 +425,6 @@ async function callVisionAI(systemPrompt, userMsg, base64Data, mimeType = "image
     }
   } catch (e) { console.warn("aiRouter vision error:", e?.message); }
 
-  // ── 3. OpenRouter manuel (rotation 7 clés) ────────────────────────────────
-  for (let i = 0; i < Math.max(OPENROUTER_KEYS.length, 0); i++) {
-    const p = pickKey(OPENROUTER_KEYS, _cd.or, _idx.or);
-    if (!p) break;
-    const visionModels = [
-      "google/gemini-2.0-flash-001",
-      "qwen/qwen2.5-vl-32b-instruct:free",
-      "meta-llama/llama-4-maverick:free",
-    ];
-    for (const model of visionModels) {
-      try {
-        const r = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${p.key}`,
-            "HTTP-Referer": "https://memo-app.local",
-            "X-Title": "MemoMaster Lab",
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 4096,
-            temperature: 0.2,
-            messages: [
-              { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: [
-                  { type: "text", text: userMsg },
-                  { type: "image_url", image_url: { url: dataUrl } },
-                ],
-              },
-            ],
-          }),
-        });
-        if (r.status === 429 || r.status === 401) { markCd(_cd.or, p.idx); break; }
-        if (!r.ok) continue;
-        const d = await r.json();
-        const t = d.choices?.[0]?.message?.content;
-        if (t) {
-          console.info(`[Lab vision] OK via openrouter/${model}`);
-          return t;
-        }
-      } catch { /* try next model */ }
-    }
-  }
 
   throw new Error("Vision IA indisponible (quota Gemini atteint, fallbacks épuisés). Réessaie dans 1-2 minutes.");
 }
@@ -922,7 +876,7 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
       onMouseMove={e => e.stopPropagation()}
       style={{
         width: "100%", padding: "10px 36px 10px 14px",
-        background: theme.inputBg, border: `1.5px solid ${value ? "#4D6BFE" : theme.border}`,
+        background: theme.inputBg, border: `1.5px solid ${value ? "#8B5CF6" : theme.border}`,
         borderRadius: 12, color: theme.text, fontSize: 14, fontWeight: 600,
         cursor: "pointer",
         appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
@@ -1030,25 +984,6 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
 
 
 
-  // Restore audio URLs on mount
-  useEffect(() => {
-    const restoreAudio = async () => {
-      let changed = false;
-      const updated = await Promise.all(audioCards.map(async c => {
-        if (c.audioUrl && c.audioUrl.startsWith('blob:')) {
-           // We can't easily check if blob is alive, but usually on reload they aren't.
-           const newUrl = await getAudioObjectUrl(c.id);
-           if (newUrl && newUrl !== c.audioUrl) {
-             changed = true;
-             return { ...c, audioUrl: newUrl };
-           }
-        }
-        return c;
-      }));
-      if (changed) setAudioCards(updated);
-    };
-    if (audioCards.length > 0) restoreAudio();
-  }, []);
 
   // ── État de la session audio ──────────────────────────────────
 
@@ -1805,8 +1740,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
   // Palette de couleurs pour les onglets
   const TABS = [
-    { id: "pdf", icon: "📄", label: "PDF → Fiches", color: "#4D6BFE" },
-    { id: "resume", icon: "📝", label: "Résumé Complet", color: "#3451D1" },
+    { id: "pdf", icon: "📄", label: "PDF → Fiches", color: "#8B5CF6" },
+    { id: "resume", icon: "📝", label: "Résumé Complet", color: "#7C3AED" },
     {
       id: "audio", icon: "🎵", label: "Audio → Fiche", color: "#EA580C",
       badge: audioCards.length > 0 ? audioCards.length : null
@@ -1824,19 +1759,19 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
   // Mapping des couleurs d'aura selon l'onglet actif
   const tabColors = {
-    pdf: "#4D6BFE",    // Bleu
-    resume: "#3451D1", // Violet
+    pdf: "#8B5CF6",    // Bleu
+    resume: "#7C3AED", // Violet
     audio: "#EA580C",  // Orange
     photo: "#059669",  // Émeraude
   };
-  const activeColor = tabColors[tab] || "#4D6BFE";
+  const activeColor = tabColors[tab] || "#8B5CF6";
 
   return (
     <div style={{
       animation: "fadeUp 0.4s ease",
       background: isDarkMode
-        ? `radial-gradient(circle at 50% -20%, ${activeColor}25 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(77, 107, 254,0.15) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(77,107,254,0.15) 0%, transparent 60%)`
-        : `radial-gradient(circle at 50% -20%, ${activeColor}15 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(77, 107, 254,0.05) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(77,107,254,0.05) 0%, transparent 60%)`,
+        ? `radial-gradient(circle at 50% -20%, ${activeColor}25 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(139, 92, 246,0.15) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(139, 92, 246,0.15) 0%, transparent 60%)`
+        : `radial-gradient(circle at 50% -20%, ${activeColor}15 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(139, 92, 246,0.05) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(139, 92, 246,0.05) 0%, transparent 60%)`,
       transition: "background 0.6s ease-in-out",
       position: "relative",
     }}>
@@ -1935,7 +1870,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                   width: "100%", padding: "14px 20px",
                   background: pdfLoading || !pdfModule
                     ? theme.inputBg
-                    : "linear-gradient(135deg,#3451D1,#4D6BFE)",
+                    : "linear-gradient(135deg,#7C3AED,#8B5CF6)",
                   color: pdfLoading || !pdfModule ? theme.textMuted : "white",
                   border: "none", borderRadius: 14, fontWeight: 800, fontSize: 15,
                   cursor: pdfLoading || !pdfModule ? "default" : "pointer",
@@ -2047,7 +1982,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       animation: `fadeUp 0.5s ease forwards`,
                       animationDelay: `${i * 0.08}s`,
                       opacity: 0,
-                      boxShadow: selectedCardIndexes.has(i) ? `0 4px 15px ${activeColor}30` : "0 4px 15px rgba(77,107,254,0.05)",
+                      boxShadow: selectedCardIndexes.has(i) ? `0 4px 15px ${activeColor}30` : "0 4px 15px rgba(139, 92, 246,0.05)",
                       transition: "border-color 0.2s, box-shadow 0.2s",
                     }}>
                     {/* Checkbox header */}
@@ -2187,7 +2122,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 disabled={resLoading}
                 style={{
                   padding: "14px 28px",
-                  background: resLoading ? theme.inputBg : `linear-gradient(135deg, ${activeColor}, #4F46E5)`,
+                  background: resLoading ? theme.inputBg : `linear-gradient(135deg, ${activeColor}, #7C3AED)`,
                   color: resLoading ? theme.textMuted : "white",
                   border: "none", borderRadius: 16, fontWeight: 800, fontSize: 15,
                   cursor: resLoading ? "default" : "pointer",
@@ -2476,8 +2411,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             {/* Indicateur audio */}
                             <div style={{
                               width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                              background: audioPlaying === card.id ? "#FFF7ED" : "#EEF2FF",
-                              border: `2px solid ${audioPlaying === card.id ? "#EA580C" : "#4D6BFE"}`,
+                              background: audioPlaying === card.id ? "#FFF7ED" : "#FAF5FF",
+                              border: `2px solid ${audioPlaying === card.id ? "#EA580C" : "#8B5CF6"}`,
                               display: "flex", alignItems: "center", justifyContent: "center",
                               fontSize: 20, boxShadow: audioPlaying === card.id ? "0 4px 12px rgba(234,88,12,0.3)" : "none"
                             }}>
@@ -2557,7 +2492,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               {[
                 { icon: "📸", label: "Photos", value: photoItems.length, color: activeColor },
                 { icon: "✅", label: "Analysées", value: photoItems.filter(p => p.status === "done").length, color: "#059669" },
-                { icon: "🃏", label: "Fiches", value: photoItems.reduce((a, p) => a + (p.cards?.length || 0), 0), color: "#4D6BFE" },
+                { icon: "🃏", label: "Fiches", value: photoItems.reduce((a, p) => a + (p.cards?.length || 0), 0), color: "#8B5CF6" },
                 { icon: "⏳", label: "En cours", value: photoItems.filter(p => p.status === "loading").length, color: "#D97706" },
               ].map(s => (
                 <HoloCard theme={theme} glowColor={s.color} key={s.label} style={{
@@ -2614,7 +2549,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                   <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} key={photo.id} style={{
                     background: theme.cardBg, borderRadius: 20,
                     border: `2px solid ${photo.status === "done" ? "#10B98133" :
-                      photo.status === "loading" ? "#4D6BFE33" :
+                      photo.status === "loading" ? "#8B5CF633" :
                         photo.status === "error" ? "#EF444433" : theme.border
                       }`
                     // HoloCard gère le overflow: hidden pour nous
@@ -2637,7 +2572,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         </div>
                         <div style={{ fontSize: 12, marginTop: 3, display: "flex", flexWrap: "wrap", gap: 6 }}>
                           {photo.imageType && (
-                            <span style={{ background: "#EEF2FF", color: "#4D6BFE", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
+                            <span style={{ background: "#FAF5FF", color: "#8B5CF6", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
                               {photo.imageType.replace("_", " ")}
                             </span>
                           )}
@@ -2648,12 +2583,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                           )}
                           <span style={{
                             color: photo.status === "done" ? "#059669" :
-                              photo.status === "loading" ? "#4D6BFE" :
+                              photo.status === "loading" ? "#8B5CF6" :
                                 photo.status === "error" ? "#EF4444" : theme.textMuted,
                             fontWeight: 700,
                             display: "flex", alignItems: "center", gap: 4
                           }}>
-                            {photo.status === "loading" && <><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#4D6BFE", "--glow-color": "#4D6BFE", animation: "ai-pulse 1s infinite alternate" }} /> Analyse Neuronale...</>}
+                            {photo.status === "loading" && <><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#8B5CF6", "--glow-color": "#8B5CF6", animation: "ai-pulse 1s infinite alternate" }} /> Analyse Neuronale...</>}
                             {photo.status === "done" && `✅ ${photo.cards.length} fiches`}
                             {photo.status === "error" && `❌ ${photo.error}`}
                             {photo.status === "idle" && "⏳ En attente"}
@@ -2726,7 +2661,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             <img src={photo.dataUrl} alt="" style={{
                               width: "100%", borderRadius: 16,
                               border: `2px solid ${activeColor}40`, objectFit: "contain", maxHeight: 300,
-                              boxShadow: "0 10px 30px rgba(77,107,254,0.1)"
+                              boxShadow: "0 10px 30px rgba(139, 92, 246,0.1)"
                             }} />
                             {photo.extractedText && (
                               <details style={{ marginTop: 12, background: theme.cardBg, borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
@@ -2803,7 +2738,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                   animation: `fadeUp 0.5s ease forwards`,
                                   animationDelay: `${ci * 0.1}s`,
                                   opacity: 0,
-                                  boxShadow: "0 4px 15px rgba(77,107,254,0.05)"
+                                  boxShadow: "0 4px 15px rgba(139, 92, 246,0.05)"
                                 }}>
                                 <div style={{ padding: "14px 16px", borderBottom: `1px solid ${theme.border}` }}>
                                   <div style={{ fontSize: 10, fontWeight: 900, color: activeColor, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>RECTO</div>

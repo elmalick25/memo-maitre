@@ -10,12 +10,13 @@
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
 import { getMasteryBreakdown, computeMasteryStage } from "../lib/masteryStages";
+import { isCardMastered } from "../lib/cardStatus";
 
 const CARD_COLORS = {
   positive: { bg: "rgba(16,185,129,0.12)", border: "#10B981", icon: "🚀" },
   warning:  { bg: "rgba(245,158,11,0.12)", border: "#F59E0B", icon: "⚠️" },
-  info:     { bg: "rgba(77,107,254,0.12)", border: "#4D6BFE", icon: "💡" },
-  goal:     { bg: "rgba(139,92,246,0.12)", border: "#8B5CF6", icon: "🎯" },
+  info:     { bg: "rgba(139,92,246,0.12)", border: "#8B5CF6", icon: "💡" },
+  goal:     { bg: "rgba(168,85,247,0.12)", border: "#A855F7", icon: "🎯" },
   streak:   { bg: "rgba(239,68,68,0.12)",  border: "#EF4444", icon: "🔥" },
 };
 
@@ -96,18 +97,33 @@ function computeInsights({ expressions = [], sessionHistory = [], stats = {}, ma
     }
   }
 
-  // ── 4. Heure et jour préférés ───────────────────────────────────────────
+  // ── 4. Heure et créneau préférés ───────────────────────────────────────
   const hourBuckets = new Array(24).fill(0);
-  sessionHistory.forEach(s => {
-    const t = new Date(s.date || s.timestamp || 0);
-    if (!isNaN(t.getTime())) hourBuckets[t.getHours()]++;
+  // Priorité aux timestamps réels des révisions dans les fiches
+  expressions.forEach(e => {
+    (e?.reviewHistory || []).forEach(h => {
+      const ts = h?.timestamp || (typeof h?.date === "string" && h.date.length > 10 ? h.date : null);
+      if (ts) {
+        const t = new Date(ts);
+        if (!isNaN(t.getTime())) hourBuckets[t.getHours()]++;
+      }
+    });
   });
+  if (hourBuckets.every(v => v === 0)) {
+    sessionHistory.forEach(s => {
+      const ts = s?.timestamp || (typeof s?.date === "string" && s.date.length > 10 ? s.date : null);
+      if (ts) {
+        const t = new Date(ts);
+        if (!isNaN(t.getTime())) hourBuckets[t.getHours()]++;
+      }
+    });
+  }
   const bestHour = hourBuckets.reduce((best, v, i) => v > best.v ? { i, v } : best, { i: -1, v: 0 });
   if (bestHour.v >= 3) {
     out.push({
       kind: "info",
       title: `Ta zone d'or : ${bestHour.i}h`,
-      body: `${bestHour.v} sessions démarrées vers ${bestHour.i}h. Bloque ce créneau comme un rendez-vous — c'est là que tu apprends le mieux.`
+      body: `${bestHour.v} révisions effectuées vers ${bestHour.i}h. Bloque ce créneau comme un rendez-vous — c'est là que tu apprends le mieux.`
     });
   }
 
@@ -128,7 +144,7 @@ function computeInsights({ expressions = [], sessionHistory = [], stats = {}, ma
     const cat = e.category || "Autre";
     perCat[cat] = perCat[cat] || { total: 0, mastered: 0 };
     perCat[cat].total++;
-    if ((e.repetitions || 0) >= 3) perCat[cat].mastered++;
+    if (isCardMastered(e)) perCat[cat].mastered++;
   });
   const weakest = Object.entries(perCat)
     .filter(([, v]) => v.total >= 5)
@@ -192,10 +208,10 @@ export default function StatsInsights({
         background: isDarkMode
           ? "linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9))"
           : "linear-gradient(135deg, #FFFFFF, #F8FAFF)",
-        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(77,107,254,0.12)"}`,
+        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.12)"}`,
         boxShadow: isDarkMode
           ? "0 12px 32px rgba(0,0,0,0.25)"
-          : "0 12px 32px rgba(77,107,254,0.08)",
+          : "0 12px 32px rgba(139, 92, 246,0.08)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
@@ -264,7 +280,7 @@ export default function StatsInsights({
             const total = Math.max(1, productionSummary.total);
             const segs = [
               { key: "discovered", label: "Découvertes", color: "#94A3B8", n: b.discovered },
-              { key: "recognized", label: "Reconnues",   color: "#60A5FA", n: b.recognized },
+              { key: "recognized", label: "Reconnues",   color: "#C084FC", n: b.recognized },
               { key: "recalled",   label: "Rappelées",   color: "#8B5CF6", n: b.recalled },
               { key: "produced",   label: "Produites",   color: "#10B981", n: b.produced },
               { key: "mastered",   label: "Maîtrisées",  color: "#F59E0B", n: b.mastered },

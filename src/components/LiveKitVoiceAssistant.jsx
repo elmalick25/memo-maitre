@@ -207,7 +207,7 @@ const startAudioStyle = {
   fontSize: 14,
   fontWeight: 700,
   cursor: "pointer",
-  background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
+  background: "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
   color: "white",
   fontFamily: "system-ui, sans-serif",
   boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
@@ -461,7 +461,7 @@ const unlockButtonStyle = {
   fontSize: 14,
   fontWeight: 700,
   cursor: "pointer",
-  background: "linear-gradient(135deg, #6366F1, #8B5CF6)",
+  background: "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
   color: "white",
 };
 

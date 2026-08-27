@@ -108,7 +108,7 @@ export function recordProductiveUse(expression, entry) {
   const next = {
     ...expression,
     productiveUses: uses,
-    lastProductiveUseAt: correct ? Date.now() : (expression?.lastProductiveUseAt ?? null),
+    lastProductiveUseAt: correct ? (toMs(date) ?? Date.now()) : (expression?.lastProductiveUseAt ?? null),
   };
   next.masteryStage = computeMasteryStage(next);
   return next;

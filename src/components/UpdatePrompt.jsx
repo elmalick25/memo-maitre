@@ -66,14 +66,14 @@ export default function UpdatePrompt() {
       background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
       color: "#fff", padding: "14px 18px",
       borderRadius: 14,
-      boxShadow: "0 10px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(99,102,241,.3)",
+      boxShadow: "0 10px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(139, 92, 246,.3)",
       display: "flex", gap: 12, alignItems: "center", fontSize: 13,
       animation: "slideIn 0.3s ease"
     }}>
       <span style={{ fontSize: 20 }}>🚀</span>
       <span>Nouvelle version disponible !</span>
       <button onClick={handleUpdate} style={{
-        background: "linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)",
+        background: "linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)",
         border: 0, color: "#fff", padding: "7px 14px",
         borderRadius: 8, cursor: "pointer", fontWeight: 700,
         fontSize: 12, letterSpacing: 0.5,

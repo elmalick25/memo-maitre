@@ -28,11 +28,11 @@ export const RARITY_STYLES = {
   },
   rare: {
     label: "Rare",
-    color: "#3B82F6",
-    bgLight: "#DBEAFE",
-    bgDark: "rgba(59,130,246,0.14)",
-    glow: "0 0 14px rgba(59,130,246,0.35)",
-    gradient: "linear-gradient(135deg,#60A5FA,#2563EB)",
+    color: "#8B5CF6",
+    bgLight: "#EDE9FE",
+    bgDark: "rgba(139,92,246,0.14)",
+    glow: "0 0 14px rgba(139,92,246,0.35)",
+    gradient: "linear-gradient(135deg,#A78BFA,#7C3AED)",
     animated: false,
   },
   epique: {

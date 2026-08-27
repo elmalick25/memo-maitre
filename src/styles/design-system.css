@@ -22,20 +22,20 @@
 
   --mm-primary:      #8b5cf6;
   --mm-primary-glow: #a78bfa;
-  --mm-accent:       #6366f1; 
+  --mm-accent:       #8b5cf6; 
   --mm-success:      #10b981;
   --mm-danger:       #ef4444;
   --mm-warning:      #f59e0b;
 
   /* Gradients Vivants */
-  --mm-grad-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #d946ef 100%);
+  --mm-grad-primary: linear-gradient(135deg, #8b5cf6 0%, #8b5cf6 50%, #d946ef 100%);
   --mm-grad-ember:   linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-  --mm-grad-aurora:  linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+  --mm-grad-aurora:  linear-gradient(135deg, #a855f7 0%, #8b5cf6 50%, #d946ef 100%);
 
   /* Ombres dynamiques */
   --mm-shadow-sm:    0 2px 8px rgba(0,0,0,0.4);
   --mm-shadow:       0 8px 24px rgba(0,0,0,0.6);
-  --mm-shadow-lg:    0 24px 48px -12px rgba(99, 102, 241, 0.4);
+  --mm-shadow-lg:    0 24px 48px -12px rgba(139, 92, 246, 0.4);
   --mm-shadow-glow:  0 0 30px -5px color-mix(in oklab, var(--mm-primary) 70%, transparent);
   --mm-inner-glow:   inset 0 1px 1px rgba(255,255,255,0.1);
 
@@ -70,26 +70,26 @@
   --mm-fg-muted:     #475569;
   --mm-fg-faint:     #94a3b8;
   
-  --mm-border:       rgba(99, 102, 241, 0.15);
-  --mm-border-strong: rgba(99, 102, 241, 0.25);
-  --mm-border-glow:  rgba(99, 102, 241, 0.4);
+  --mm-border:       rgba(139, 92, 246, 0.08);
+  --mm-border-strong: rgba(139, 92, 246, 0.16);
+  --mm-border-glow:  rgba(139, 92, 246, 0.3);
 
-  --mm-primary:      #4f46e5;
-  --mm-primary-glow: #6366f1;
+  --mm-primary:      #7c3aed;
+  --mm-primary-glow: #8b5cf6;
   --mm-accent:       #7c3aed;
   --mm-success:      #10b981;
   --mm-danger:       #ef4444;
   --mm-warning:      #f59e0b;
 
-  --mm-grad-primary: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  --mm-grad-primary: linear-gradient(135deg, #7c3aed 0%, #7c3aed 100%);
   --mm-grad-ember:   linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
-  --mm-grad-aurora:  linear-gradient(135deg, #06b6d4 0%, #3b82f6 50%, #6366f1 100%);
+  --mm-grad-aurora:  linear-gradient(135deg, #a855f7 0%, #7c3aed 50%, #c084fc 100%);
 
-  --mm-shadow-sm:    0 4px 12px rgba(15, 23, 42, 0.05);
-  --mm-shadow:       0 12px 32px -4px rgba(15, 23, 42, 0.08);
-  --mm-shadow-lg:    0 24px 48px -12px rgba(99, 102, 241, 0.15);
-  --mm-shadow-glow:  0 0 30px rgba(99, 102, 241, 0.15);
-  --mm-inner-glow:   inset 0 1px 1px rgba(255,255,255,0.6);
+  --mm-shadow-sm:    0 2px 8px rgba(139, 92, 246, 0.04);
+  --mm-shadow:       0 8px 24px rgba(139, 92, 246, 0.06);
+  --mm-shadow-lg:    0 24px 48px -12px rgba(139, 92, 246, 0.12);
+  --mm-shadow-glow:  0 0 30px rgba(139, 92, 246, 0.1);
+  --mm-inner-glow:   inset 0 1px 1px rgba(255,255,255,0.8);
 }
 
 /* ── Corps en mode jour ── */
@@ -169,7 +169,7 @@
 }
 :root[data-theme="light"] .mm-btn:hover {
   border-color: var(--mm-primary) !important;
-  background: rgba(99, 102, 241, 0.05) !important;
+  background: rgba(139, 92, 246, 0.06) !important;
 }
 :root[data-theme="light"] .mm-btn-primary {
   background: var(--mm-grad-primary) !important;
@@ -178,7 +178,7 @@
   box-shadow: var(--mm-shadow-glow) !important;
 }
 :root[data-theme="light"] .mm-btn-primary:hover {
-  box-shadow: 0 0 35px rgba(99, 102, 241, 0.25) !important;
+  box-shadow: 0 0 35px rgba(139, 92, 246, 0.25) !important;
 }
 :root[data-theme="light"] .mm-btn-ghost {
   background: transparent !important;
@@ -201,14 +201,31 @@
 :root[data-theme="light"] textarea:focus,
 :root[data-theme="light"] select:focus {
   border-color: var(--mm-primary) !important;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1) !important;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1) !important;
 }
 
 /* ── Chip / Badge ── */
 :root[data-theme="light"] .mm-chip {
-  background: rgba(99, 102, 241, 0.08) !important;
+  background: rgba(139, 92, 246, 0.08) !important;
   color: var(--mm-primary) !important;
-  border-color: rgba(99, 102, 241, 0.18) !important;
+  border-color: rgba(139, 92, 246, 0.18) !important;
+}
+
+/* ═══ White text enforcement on all mauve/primary colored backgrounds ══════ */
+/* Any element with var(--mm-primary) or gradient as background must have white text */
+[class*="mm-btn-primary"],
+[class*="mhv2-cta-badge"],
+[class*="mhv2-shortcut-icon"],
+[class*="tiv-tab"][class*="active"] {
+  color: #ffffff !important;
+}
+/* Input focus rings in mauve */
+:root[data-theme="light"] .mm-input:focus,
+:root[data-theme="light"] .mm-textarea:focus,
+:root[data-theme="light"] input:focus,
+:root[data-theme="light"] textarea:focus,
+:root[data-theme="light"] select:focus {
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.12) !important;
 }
 
 /* ── Texte ── */
@@ -218,10 +235,10 @@
 
 /* Scrollbar en mode jour */
 :root[data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: rgba(37, 99, 235, 0.25) !important;
+  background: rgba(139, 92, 246, 0.3) !important;
 }
 :root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(37, 99, 235, 0.45) !important;
+  background: rgba(139, 92, 246, 0.5) !important;
 }
 
 /* ── Interactive Reader ── */
@@ -262,8 +279,8 @@ body::after {
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(circle at 15% 50%, rgba(59,130,246,0.18), transparent 25%),
-    radial-gradient(circle at 85% 30%, rgba(37,99,235,0.16), transparent 25%);
+    radial-gradient(circle at 15% 50%, rgba(139, 92, 246,0.18), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(124, 58, 237,0.16), transparent 25%);
   animation: mm-astral-pulse 15s ease-in-out infinite alternate;
 }
 
@@ -573,7 +590,7 @@ body::after {
 .reader-highlight:hover { opacity: 0.8; }
 .highlight-yellow { background-color: rgba(250, 204, 21, 0.4); border-bottom: 2px solid #facc15; }
 .highlight-green  { background-color: rgba(34, 197, 94, 0.4); border-bottom: 2px solid #22c55e; }
-.highlight-blue   { background-color: rgba(59, 130, 246, 0.4); border-bottom: 2px solid #3b82f6; }
+.highlight-blue   { background-color: rgba(139, 92, 246, 0.4); border-bottom: 2px solid #8b5cf6; }
 .highlight-pink   { background-color: rgba(236, 72, 153, 0.4); border-bottom: 2px solid #ec4899; }
 
 
@@ -594,5 +611,5 @@ body::after {
 /* ── Highlights en mode jour (couleurs adaptées bleu/blanc) ── */
 :root[data-theme="light"] .highlight-yellow { background-color: rgba(250, 204, 21, 0.25); border-bottom: 2px solid #ca8a04; }
 :root[data-theme="light"] .highlight-green  { background-color: rgba(34, 197, 94, 0.2);  border-bottom: 2px solid #16a34a; }
-:root[data-theme="light"] .highlight-blue   { background-color: rgba(59, 130, 246, 0.2); border-bottom: 2px solid #2563eb; }
-:root[data-theme="light"] .highlight-pink   { background-color: rgba(77, 107, 254, 0.15); border-bottom: 2px solid #3451D1; }
+:root[data-theme="light"] .highlight-blue   { background-color: rgba(139, 92, 246, 0.2); border-bottom: 2px solid #7c3aed; }
+:root[data-theme="light"] .highlight-pink   { background-color: rgba(217, 70, 239, 0.15); border-bottom: 2px solid #c026d3; }

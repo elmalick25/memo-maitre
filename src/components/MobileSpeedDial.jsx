@@ -116,11 +116,11 @@ export default function MobileSpeedDial({
                   width: 60, height: 60, borderRadius: 30,
                   border: "none",
                   background: isCurrent
-                    ? "linear-gradient(135deg, #4D6BFE, #3451D1)"
-                    : (isDarkMode ? "rgba(20, 25, 50, 0.95)" : "rgba(255,255,255,0.98)"),
+                    ? "linear-gradient(135deg, #8B5CF6, #7C3AED)"
+                    : (isDarkMode ? "rgba(30, 20, 50, 0.95)" : "rgba(255,255,255,0.98)"),
                   color: isCurrent ? "#fff" : (isDarkMode ? "#eaf2ff" : "#1e293b"),
                   boxShadow: isCurrent
-                    ? "0 12px 30px rgba(77,107,254,0.55), 0 0 0 2px rgba(255,255,255,0.18) inset"
+                    ? "0 12px 30px rgba(139,92,246,0.55), 0 0 0 2px rgba(255,255,255,0.18) inset"
                     : "0 10px 24px rgba(0,0,0,0.35)",
                   display: "flex", flexDirection: "column",
                   alignItems: "center", justifyContent: "center",
@@ -172,7 +172,7 @@ export default function MobileSpeedDial({
             letterSpacing: 0.5,
             boxShadow: isDarkMode 
               ? "0 12px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.15)"
-              : "0 12px 30px rgba(77,107,254,0.15), inset 0 1px 0 rgba(255,255,255,1)",
+              : "0 12px 30px rgba(139, 92, 246,0.15), inset 0 1px 0 rgba(255,255,255,1)",
             animation: "speedDialLabelEnter 0.4s cubic-bezier(0.34,1.56,0.64,1) forwards",
           }}
         >
@@ -198,7 +198,7 @@ export default function MobileSpeedDial({
           transform: `translateX(-50%) ${open ? "rotate(135deg)" : "rotate(0deg)"}`,
           width: 64, height: 64, borderRadius: 32,
           border: "none",
-          background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
+          background: "linear-gradient(135deg, #7c3aed 0%, #7c3aed 100%)",
           color: "white",
           fontSize: 26, fontWeight: 900,
           cursor: "pointer",

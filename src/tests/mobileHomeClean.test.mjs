@@ -68,11 +68,11 @@ test('MemoMaster — renders dedicated quests view and passes onBack to routine'
   );
 });
 
-test('MemoMaster — dueModules uses sessionPool to match dueCount session quota', () => {
-  const fileContent = fs.readFileSync(memoMasterPath, 'utf8');
+test('DashboardView — dueModules uses sessionPool to match dueCount session quota', () => {
+  const fileContent = fs.readFileSync(path.resolve('src/components/DashboardView.jsx'), 'utf8');
   assert.equal(
     fileContent.includes('sessionPool.filter'),
     true,
-    'MemoMaster doit décompter les modules en retard à partir de sessionPool pour être cohérent avec dueCount'
+    'DashboardView doit décompter les modules en retard à partir de sessionPool pour être cohérent avec dueCount'
   );
 });

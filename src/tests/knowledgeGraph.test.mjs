@@ -15,11 +15,17 @@ test('KnowledgeGraph — accepts sessionPool prop and uses it for due count calc
   );
 });
 
-test('MemoMaster — passes sessionPool to KnowledgeGraph', () => {
-  const fileContent = fs.readFileSync(memoMasterPath, 'utf8');
+test('DashboardView / MemoMaster — passes sessionPool to KnowledgeGraph', () => {
+  const fileContent = fs.readFileSync(path.resolve('src/components/DashboardView.jsx'), 'utf8');
   assert.equal(
     fileContent.includes('sessionPool={sessionPool}'),
     true,
-    'MemoMaster doit transmettre sessionPool à KnowledgeGraph'
+    'DashboardView doit transmettre sessionPool à KnowledgeGraph'
+  );
+  const memoContent = fs.readFileSync(memoMasterPath, 'utf8');
+  assert.equal(
+    memoContent.includes('<DashboardView'),
+    true,
+    'MemoMaster doit instancier DashboardView'
   );
 });

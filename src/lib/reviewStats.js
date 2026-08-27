@@ -35,7 +35,8 @@
 // sans avoir besoin de reconstruire tout l'historique.
 // ══════════════════════════════════════════════════════════════════════════════
 import { fsrsR } from "./fsrs.js";
-import { diffDays } from "../utils/dateUtils.js";
+import { diffDays, today as getTodayStr } from "../utils/dateUtils.js";
+import { isCardMastered, isDueCard } from "./cardStatus.js";
 
 /**
  * @returns {{ count: number, avgRetention: number|null, avgOverdueDays: number, worstRetention: number|null }}
@@ -67,7 +68,7 @@ export const SCORE_BUTTONS = [
   { score: 0, label: "Oublié",    emoji: "😵", color: "#EF4444", bg: "rgba(239,68,68,0.12)" },
   { score: 1, label: "Difficile", emoji: "😓", color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
   { score: 3, label: "Correct",   emoji: "✅", color: "#22C55E", bg: "rgba(34,197,94,0.12)" },
-  { score: 5, label: "Facile",    emoji: "🚀", color: "#4D6BFE", bg: "rgba(77,107,254,0.12)" },
+  { score: 5, label: "Facile",    emoji: "🚀", color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
 ];
 
 // ── Format "next review in Xh / Xj" (pur) ────────────────────────────────────
@@ -336,4 +337,250 @@ export function checkCreationGuard(expressions, opts = {}) {
       ? `⚠️ ${count} fiches jamais vues en attente (seuil ${threshold}) — la création reste possible, mais pense à absorber le stock avant d'en générer davantage.`
       : null,
   };
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Calculs Statistiques Dynamiques FSRS & Activité
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Calcule l'activité quotidienne réelle sur les `days` derniers jours (par défaut 30).
+ * @returns {Array<{ date: string, count: number }>}
+ */
+export function computeDailyProgress(sessions = [], expressions = [], days = 30) {
+  const buckets = new Map();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const toLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    buckets.set(toLocal(d), 0);
+  }
+
+  // 1) Agrégation depuis sessions
+  (sessions || []).forEach(s => {
+    if (!s || !s.date) return;
+    const key = String(s.date).slice(0, 10);
+    if (buckets.has(key)) {
+      buckets.set(key, buckets.get(key) + (Number(s.count) || 0));
+    }
+  });
+
+  // 2) Agrégation depuis reviewHistory des fiches (pour garantir la complétude)
+  const historyCounts = new Map();
+  (expressions || []).forEach(e => {
+    (e?.reviewHistory || []).forEach(h => {
+      if (!h) return;
+      let dateStr = null;
+      if (typeof h.date === "string") {
+        dateStr = h.date.slice(0, 10);
+      } else if (typeof h.date === "number" || typeof h.timestamp === "number") {
+        dateStr = toLocal(new Date(h.date || h.timestamp));
+      }
+      if (dateStr && buckets.has(dateStr)) {
+        historyCounts.set(dateStr, (historyCounts.get(dateStr) || 0) + 1);
+      }
+    });
+  });
+
+  // Maximum entre sessions et reviewHistory par jour
+  buckets.forEach((count, key) => {
+    const histCount = historyCounts.get(key) || 0;
+    buckets.set(key, Math.max(count, histCount));
+  });
+
+  return Array.from(buckets.entries()).map(([date, count]) => ({ date, count }));
+}
+
+/**
+ * Calcule la maîtrise et les statistiques détaillées par module.
+ * @returns {Array<{ name: string, total: number, mastered: number, due: number, pct: number, avgDiff: number|string, lastReview: string }>}
+ */
+export function computeModuleComparison(categories = [], expressions = []) {
+  const list = Array.isArray(expressions) ? expressions : [];
+  const catMap = new Map();
+
+  (categories || []).forEach(c => {
+    if (c?.name) catMap.set(c.name, { name: c.name, total: 0, mastered: 0, due: 0, diffSum: 0, countWithDiff: 0, lastReview: null });
+  });
+
+  const todayStr = getTodayStr();
+
+  list.forEach(e => {
+    if (!e) return;
+    const catName = e.category || "Autre";
+    if (!catMap.has(catName)) {
+      catMap.set(catName, { name: catName, total: 0, mastered: 0, due: 0, diffSum: 0, countWithDiff: 0, lastReview: null });
+    }
+    const item = catMap.get(catName);
+    item.total += 1;
+    if (isCardMastered(e)) item.mastered += 1;
+    if (isDueCard(e, todayStr)) item.due += 1;
+    if (typeof e.difficulty === "number" && !isNaN(e.difficulty)) {
+      item.diffSum += e.difficulty;
+      item.countWithDiff += 1;
+    }
+    (e.reviewHistory || []).forEach(h => {
+      const d = typeof h?.date === "string" ? h.date.slice(0, 10) : null;
+      if (d && (!item.lastReview || d > item.lastReview)) {
+        item.lastReview = d;
+      }
+    });
+  });
+
+  return Array.from(catMap.values()).map(item => ({
+    name: item.name,
+    total: item.total,
+    mastered: item.mastered,
+    due: item.due,
+    pct: item.total > 0 ? Math.round((item.mastered / item.total) * 100) : 0,
+    avgDiff: item.countWithDiff > 0 ? +(item.diffSum / item.countWithDiff).toFixed(1) : "-",
+    lastReview: item.lastReview || "-",
+  }));
+}
+
+/**
+ * Calcule la distribution des cartes par niveau (0 à 7).
+ * @returns {Array<{ level: number, count: number }>}
+ */
+export function computeDifficultyDistribution(expressions = []) {
+  const list = Array.isArray(expressions) ? expressions : [];
+  const counts = [0, 0, 0, 0, 0, 0, 0, 0];
+  list.forEach(e => {
+    if (!e) return;
+    const lvl = Math.min(7, Math.max(0, Math.round(Number(e.level) || 0)));
+    counts[lvl] += 1;
+  });
+  return counts.map((count, level) => ({ level, count }));
+}
+
+/**
+ * Calcule la répartition de l'activité par jour de la semaine (Lundi à Dimanche).
+ * @returns {Array<{ name: string, dayIndex: number, reviews: number }>}
+ */
+export function computeDayOfWeekPerformance(sessions = [], expressions = []) {
+  const DAYS = [
+    { name: "Lundi", dayIndex: 1, reviews: 0 },
+    { name: "Mardi", dayIndex: 2, reviews: 0 },
+    { name: "Mercredi", dayIndex: 3, reviews: 0 },
+    { name: "Jeudi", dayIndex: 4, reviews: 0 },
+    { name: "Vendredi", dayIndex: 5, reviews: 0 },
+    { name: "Samedi", dayIndex: 6, reviews: 0 },
+    { name: "Dimanche", dayIndex: 0, reviews: 0 },
+  ];
+
+  const dayMap = new Map();
+  DAYS.forEach(d => dayMap.set(d.dayIndex, d));
+
+  const dateReviewMap = new Map();
+  (sessions || []).forEach(s => {
+    if (!s?.date) return;
+    const d = String(s.date).slice(0, 10);
+    dateReviewMap.set(d, (dateReviewMap.get(d) || 0) + (Number(s.count) || 0));
+  });
+
+  (expressions || []).forEach(e => {
+    (e?.reviewHistory || []).forEach(h => {
+      if (!h?.date) return;
+      const d = String(h.date).slice(0, 10);
+      if (!dateReviewMap.has(d)) {
+        dateReviewMap.set(d, 1);
+      }
+    });
+  });
+
+  dateReviewMap.forEach((count, dateStr) => {
+    const dt = new Date(dateStr + "T12:00:00");
+    if (!isNaN(dt.getTime())) {
+      const dayIdx = dt.getDay();
+      const entry = dayMap.get(dayIdx);
+      if (entry) entry.reviews += count;
+    }
+  });
+
+  return DAYS;
+}
+
+/**
+ * Extrait les cartes les plus difficiles.
+ */
+export function computeTopDifficultCards(expressions = [], limit = 5) {
+  const list = (Array.isArray(expressions) ? expressions : []).filter(e => e && e.front);
+  return list
+    .map(e => ({
+      id: e.id,
+      front: e.front,
+      back: e.back,
+      category: e.category,
+      difficulty: typeof e.difficulty === "number" ? e.difficulty : 5,
+      stability: typeof e.stability === "number" ? e.stability : 1,
+      lapseCount: Number(e.lapseCount) || 0,
+    }))
+    .sort((a, b) => b.difficulty - a.difficulty || a.stability - b.stability)
+    .slice(0, limit);
+}
+
+/**
+ * Calcule les points de la courbe de rétention FSRS prévisionnelle sur N jours.
+ */
+export function computeRetentionCurve(expressions = [], days = 30) {
+  const list = (Array.isArray(expressions) ? expressions : []).filter(
+    e => e && typeof e.stability === "number" && e.stability > 0
+  );
+  const avgStability = list.length > 0
+    ? list.reduce((s, e) => s + e.stability, 0) / list.length
+    : 5;
+  const points = [];
+  for (let t = 1; t <= days; t++) {
+    points.push({ day: t, retention: Math.round(fsrsR(t, avgStability) * 100) });
+  }
+  return points;
+}
+
+/**
+ * Calcule combien de fiches seront dues chaque jour des `days` prochains jours.
+ * @returns {Array<{ date: string, count: number }>}
+ */
+export function computeFsrsForecast(expressions = [], days = 7) {
+  const buckets = new Map();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const toLocal = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    buckets.set(toLocal(d), 0);
+  }
+
+  (expressions || []).forEach(e => {
+    if (!e || e.paused) return;
+    const nr = e.nextReview || e.dueDate;
+    if (!nr) return;
+    let dateStr = null;
+    if (typeof nr === "number") {
+      dateStr = toLocal(new Date(nr));
+    } else if (typeof nr === "string") {
+      dateStr = nr.slice(0, 10);
+    }
+    if (dateStr && buckets.has(dateStr)) {
+      buckets.set(dateStr, buckets.get(dateStr) + 1);
+    }
+  });
+
+  return Array.from(buckets.entries()).map(([date, count]) => ({ date, count }));
 }

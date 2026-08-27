@@ -221,13 +221,13 @@ const styleCodeScroll = `
     border-radius: 12px;
   }
   .code-scroll-wrapper::-webkit-scrollbar-thumb {
-    background: rgba(77, 107, 254, 0.5) !important;
+    background: rgba(139, 92, 246, 0.5) !important;
     border-radius: 12px;
     border: 2px solid transparent;
     background-clip: content-box !important;
   }
   .code-scroll-wrapper::-webkit-scrollbar-thumb:hover {
-    background: rgba(77, 107, 254, 0.8) !important;
+    background: rgba(139, 92, 246, 0.8) !important;
     background-clip: content-box !important;
   }
 `;
@@ -237,8 +237,8 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
 
   const tableBorder = isDarkMode ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.10)";
   const tableHeaderBg = isDarkMode
-    ? "linear-gradient(180deg, rgba(77,107,254,0.25), rgba(77,107,254,0.12))"
-    : "linear-gradient(180deg, rgba(77,107,254,0.18), rgba(77,107,254,0.06))";
+    ? "linear-gradient(180deg, rgba(139, 92, 246,0.25), rgba(139, 92, 246,0.12))"
+    : "linear-gradient(180deg, rgba(139, 92, 246,0.18), rgba(139, 92, 246,0.06))";
   const tableRowAltBg = isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(15,23,42,0.025)";
   const textColor = isDarkMode ? "#E6EDFF" : "#0F172A";
   const codeTheme = isDarkMode ? vscDarkPlus : oneLight;
@@ -269,9 +269,9 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                   margin: "12px 0",
                   borderRadius: 12,
                   overflow: "hidden",
-                  border: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(77,107,254,0.18)"}`,
+                  border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
                   background: codeBg,
-                  boxShadow: isDarkMode ? "0 6px 18px rgba(0,0,0,0.18)" : "0 6px 18px rgba(77,107,254,0.08)",
+                  boxShadow: isDarkMode ? "0 6px 18px rgba(0,0,0,0.18)" : "0 6px 18px rgba(139, 92, 246,0.08)",
                   maxWidth: "100%",
                 }}>
                   <div style={{
@@ -287,7 +287,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57", display: "inline-block" }} />
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E", display: "inline-block" }} />
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#28C840", display: "inline-block" }} />
-                      <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 800, color: isDarkMode ? "#7B93FF" : "#4D6BFE", letterSpacing: "0.08em" }}>
+                      <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 800, color: isDarkMode ? "#C084FC" : "#8B5CF6", letterSpacing: "0.08em" }}>
                         {langLabel}
                       </span>
                     </div>
@@ -297,9 +297,9 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                         type="button"
                         onClick={async () => { try { await navigator.clipboard.writeText(codeString); } catch { /* noop */ } }}
                         style={{
-                          background: isDarkMode ? "rgba(123,147,255,0.12)" : "rgba(77,107,254,0.10)",
-                          border: `1px solid ${isDarkMode ? "rgba(123,147,255,0.25)" : "rgba(77,107,254,0.25)"}`,
-                          color: isDarkMode ? "#B9C8FF" : "#4D6BFE",
+                          background: isDarkMode ? "rgba(192,132,252,0.12)" : "rgba(139,92,246,0.10)",
+                          border: `1px solid ${isDarkMode ? "rgba(192,132,252,0.25)" : "rgba(139,92,246,0.25)"}`,
+                          color: isDarkMode ? "#DDD6FE" : "#8B5CF6",
                           fontSize: 10, fontWeight: 700, padding: "3px 9px",
                           borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
                         }}
@@ -349,14 +349,14 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "middle" }}>
                 <code
                   style={{
-                    background: isDarkMode ? "rgba(77,107,254,0.16)" : "rgba(77,107,254,0.08)",
-                    color: isDarkMode ? "#99ABFF" : "#3B52D4",
+                    background: isDarkMode ? "rgba(139, 92, 246,0.16)" : "rgba(139, 92, 246,0.08)",
+                    color: isDarkMode ? "#C4B5FD" : "#7C3AED",
                     padding: "2px 7px",
                     borderRadius: 6,
                     fontFamily: "'JetBrains Mono','Fira Code',monospace",
                     fontSize: "0.88em",
                     fontWeight: 600,
-                    border: `1px solid ${isDarkMode ? "rgba(77,107,254,0.25)" : "rgba(77,107,254,0.18)"}`,
+                    border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
                   }}
                   {...props}
                 >
@@ -372,7 +372,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           h1({ children }) {
             const headingText = String(children || "");
             return (
-              <h1 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.35em", fontWeight: 800, margin: "14px 0 8px 0", color: isDarkMode ? "#99ABFF" : "#3B52D4" }}>
+              <h1 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.35em", fontWeight: 800, margin: "14px 0 8px 0", color: isDarkMode ? "#DDD6FE" : "#7C3AED" }}>
                 <span>{children}</span>
                 <AudioPlayButton text={headingText} size="md" isDarkMode={isDarkMode} />
               </h1>
@@ -381,7 +381,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           h2({ children }) {
             const headingText = String(children || "");
             return (
-              <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.15em", fontWeight: 800, margin: "12px 0 6px 0", color: isDarkMode ? "#B9C8FF" : "#4D6BFE" }}>
+              <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.15em", fontWeight: 800, margin: "12px 0 6px 0", color: isDarkMode ? "#DDD6FE" : "#8B5CF6" }}>
                 <span>{children}</span>
                 <AudioPlayButton text={headingText} size="sm" isDarkMode={isDarkMode} />
               </h2>
@@ -390,20 +390,20 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           h3({ children }) {
             const str = Array.isArray(children) ? children.join("") : String(children || "");
             let themeStyle = {
-              bg: isDarkMode ? "rgba(77,107,254,0.12)" : "rgba(77,107,254,0.07)",
-              border: isDarkMode ? "rgba(77,107,254,0.3)" : "rgba(77,107,254,0.2)",
-              color: isDarkMode ? "#99ABFF" : "#3B52D4",
+              bg: isDarkMode ? "rgba(139,92,246,0.12)" : "rgba(139,92,246,0.07)",
+              border: isDarkMode ? "rgba(139,92,246,0.3)" : "rgba(139,92,246,0.2)",
+              color: isDarkMode ? "#DDD6FE" : "#7C3AED",
             };
             if (str.includes("⚙️") || /décomposition/i.test(str)) {
               themeStyle = {
-                bg: isDarkMode ? "rgba(99,102,241,0.14)" : "rgba(99,102,241,0.08)",
-                border: isDarkMode ? "rgba(99,102,241,0.35)" : "rgba(99,102,241,0.25)",
-                color: isDarkMode ? "#C7D2FE" : "#4338CA",
+                bg: isDarkMode ? "rgba(139, 92, 246,0.14)" : "rgba(139, 92, 246,0.08)",
+                border: isDarkMode ? "rgba(139, 92, 246,0.35)" : "rgba(139, 92, 246,0.25)",
+                color: isDarkMode ? "#DDD6FE" : "#6D28D9",
               };
             } else if (str.includes("🔍") || /comparatif/i.test(str)) {
               themeStyle = {
-                bg: isDarkMode ? "rgba(14,165,233,0.14)" : "rgba(14,165,233,0.08)",
-                border: isDarkMode ? "rgba(14,165,233,0.35)" : "rgba(14,165,233,0.25)",
+                bg: isDarkMode ? "rgba(168, 85, 247,0.14)" : "rgba(168, 85, 247,0.08)",
+                border: isDarkMode ? "rgba(168, 85, 247,0.35)" : "rgba(168, 85, 247,0.25)",
                 color: isDarkMode ? "#BAE6FD" : "#0369A1",
               };
             } else if (str.includes("⚠️") || /anti-pattern/i.test(str)) {
@@ -446,7 +446,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
               <strong style={{
                 display: "inline",
                 fontWeight: 700,
-                color: isDarkMode ? "#93A8FF" : "#3B52D4",
+                color: isDarkMode ? "#C4B5FD" : "#7C3AED",
                 letterSpacing: "0.01em",
               }}>{children}</strong>
             );
@@ -472,7 +472,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                     background: ${isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.025)"};
                   }
                   .rich-table-wrap table tbody tr:hover td {
-                    background: ${isDarkMode ? "rgba(123,147,255,0.08)" : "rgba(77,107,254,0.06)"};
+                    background: ${isDarkMode ? "rgba(192, 132, 252,0.08)" : "rgba(139, 92, 246,0.06)"};
                   }
                 `}</style>
                 <table style={{
@@ -509,7 +509,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                 fontSize: 12,
                 letterSpacing: "0.04em",
                 textTransform: "uppercase",
-                color: isDarkMode ? "#B9C8FF" : "#4D6BFE",
+                color: isDarkMode ? "#DDD6FE" : "#8B5CF6",
                 borderBottom: `1px solid ${tableBorder}`,
                 position: "sticky",
                 top: 0,
@@ -545,7 +545,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           blockquote({ children }) {
             return (
               <blockquote style={{
-                borderLeft: `3px solid ${isDarkMode ? "#7B93FF" : "#4D6BFE"}`,
+                borderLeft: `3px solid ${isDarkMode ? "#C084FC" : "#8B5CF6"}`,
                 paddingLeft: 12,
                 margin: "8px 0",
                 color: "inherit",

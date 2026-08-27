@@ -13,7 +13,7 @@ import { isLiteMode } from "../lib/perfTier";
 const TIER_COLORS = [
   { min: 20, color: "#F59E0B", glow: "0 0 22px rgba(245,158,11,0.55)", tag: "EN FUSION" },
   { min: 10, color: "#A855F7", glow: "0 0 18px rgba(168,85,247,0.5)",  tag: "EN FEU" },
-  { min: 5,  color: "#4D6BFE", glow: "0 0 14px rgba(77,107,254,0.45)", tag: "LANCÉ" },
+  { min: 5,  color: "#8B5CF6", glow: "0 0 14px rgba(139, 92, 246,0.45)", tag: "LANCÉ" },
   { min: 3,  color: "#10B981", glow: "0 0 10px rgba(16,185,129,0.4)",  tag: "SÉRIE" },
 ];
 

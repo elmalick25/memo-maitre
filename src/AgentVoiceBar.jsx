@@ -155,12 +155,12 @@ export default function AgentVoiceBar({ agent, onStart, variant = "default" } = 
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         background: isConnected
           ? "linear-gradient(135deg, #10B981, #059669)"
-          : "linear-gradient(135deg, #6366F1, #8B5CF6)",
+          : "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
         color: "white",
         fontSize: variant === "minimal" ? 18 : 22,
         boxShadow: isConnected
           ? "0 0 0 4px rgba(16,185,129,0.25), 0 8px 20px rgba(16,185,129,0.35)"
-          : "0 8px 20px rgba(99,102,241,0.35)",
+          : "0 8px 20px rgba(139, 92, 246,0.35)",
         transition: "all 0.2s",
         flexShrink: 0,
       }}

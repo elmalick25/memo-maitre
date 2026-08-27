@@ -8,6 +8,7 @@ import {
 import { Bar, Line, Doughnut, PolarArea, Radar } from 'react-chartjs-2';
 import { FsrsForecastChart, ComparisonVs30Days } from "../MemoMasterUpgrades";
 import StatsInsights from "./StatsInsights";
+import BacklogRetentionCard from "./BacklogRetentionCard";
 import { englishCategoryFilter } from "../hooks/useProductiveUse";
 
 ChartJS.register(
@@ -39,7 +40,8 @@ export default function GodTierStats({
   statsDifficultyDistribution,
   statsTopDifficult,
   statsDayOfWeekPerformance,
-  statsRetentionCurve
+  statsRetentionCurve,
+  dailyTarget = null
 }) {
   // Container pour l'animation stagger
   const containerVars = {
@@ -56,8 +58,8 @@ export default function GodTierStats({
   };
 
   // Couleurs basées sur le thème de l'app (et non un neon cyberpunk)
-  const primaryColor = "#4D6BFE";
-  const primaryLight = "#6B82F5";
+  const primaryColor = "#8B5CF6";
+  const primaryLight = "#C084FC";
   const dangerColor = "#EF4444";
   const successColor = "#10B981";
   
@@ -69,7 +71,7 @@ export default function GodTierStats({
     borderRadius: 24,
     padding: 24,
     border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"}`,
-    boxShadow: isDarkMode ? "0 8px 32px rgba(0,0,0,0.2)" : "0 8px 32px rgba(77,107,254,0.08)",
+    boxShadow: isDarkMode ? "0 8px 32px rgba(0,0,0,0.2)" : "0 8px 32px rgba(139,92,246,0.08)",
     position: "relative",
     overflow: "hidden"
   };
@@ -90,10 +92,10 @@ export default function GodTierStats({
       <motion.div variants={itemVars} style={{ 
         display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 24, 
         marginBottom: 32, 
-        background: isDarkMode ? `linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.95))` : `linear-gradient(135deg, #F8FAFF, #EEF2FF)`, 
+        background: isDarkMode ? `linear-gradient(135deg, rgba(30,41,59,0.8), rgba(15,23,42,0.95))` : `linear-gradient(135deg, #FAF5FF, #F3E8FF)`, 
         padding: "36px", borderRadius: 32, 
-        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.15)"}`,
-        boxShadow: isDarkMode ? "0 20px 50px rgba(0,0,0,0.4)" : "0 20px 50px rgba(77,107,254,0.15)", 
+        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.15)"}`,
+        boxShadow: isDarkMode ? "0 20px 50px rgba(0,0,0,0.4)" : "0 20px 50px rgba(139,92,246,0.15)", 
         position: "relative", overflow: "hidden" 
       }}>
         <div style={{ position: "absolute", top: "-50%", right: "-20%", width: "100%", height: "200%", background: `radial-gradient(circle, ${primaryColor}15 0%, transparent 60%)`, pointerEvents: "none" }} />
@@ -140,6 +142,16 @@ export default function GodTierStats({
         </div>
       </motion.div>
 
+      {/* ─── RÉTENTION RÉELLE DU BACKLOG (Couche 8) ─── */}
+      <motion.div variants={itemVars}>
+        <BacklogRetentionCard
+          isDarkMode={isDarkMode}
+          theme={theme}
+          expressions={expressions}
+          dailyTarget={dailyTarget}
+        />
+      </motion.div>
+
       {/* ─── INSIGHTS NARRATIFS + PRODUCTION ACTIVE (Phase 5) ─── */}
       <motion.div variants={itemVars}>
         <StatsInsights
@@ -156,32 +168,55 @@ export default function GodTierStats({
       {/* ─── REPORT IA (SI ACTIF) ─── */}
       {statsAiReport && (
         <motion.div variants={itemVars} style={{ 
-          background: isDarkMode ? "linear-gradient(135deg, rgba(77,107,254,0.1), rgba(15,23,42,0.8))" : "linear-gradient(135deg, #FFFFFF, #EEF2FF)", 
+          background: isDarkMode ? "linear-gradient(135deg, rgba(139,92,246,0.1), rgba(15,23,42,0.8))" : "linear-gradient(135deg, #FFFFFF, #FAF5FF)", 
           borderRadius: 24, padding: 32, 
           border: `2px solid ${primaryColor}`, 
           marginBottom: 32, position: "relative" 
         }}>
-          <h3 style={{ color: primaryColor, marginTop: 0, fontSize: 20, fontWeight: 900 }}>🧠 Rapport IA hebdomadaire</h3>
-          <p style={{ fontStyle: "italic", color: theme.text, fontSize: 16, lineHeight: 1.5, marginBottom: 24 }}>{statsAiReport.verdict}</p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 24 }}>
-            <div style={{ background: isDarkMode ? "rgba(16, 185, 129, 0.1)" : "#ECFDF5", padding: 20, borderRadius: 16 }}>
-              <h4 style={{ color: successColor, margin: "0 0 12px 0" }}>💪 Forces</h4>
-              <ul style={{ margin: 0, paddingLeft: 20, color: theme.text }}>
-                {statsAiReport.strengths?.map((s, i) => <li key={i} style={{ marginBottom: 6 }}>{s}</li>)}
-              </ul>
+          <h3 style={{ color: primaryColor, marginTop: 0, fontSize: 20, fontWeight: 900 }}>🧠 Rapport IA & Diagnostic</h3>
+          
+          {statsAiReport.summary && (
+            <div style={{ color: theme.text, fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-line", marginBottom: statsAiReport.verdict ? 20 : 0 }}>
+              {statsAiReport.summary}
             </div>
-            <div style={{ background: isDarkMode ? "rgba(239, 68, 68, 0.1)" : "#FEF2F2", padding: 20, borderRadius: 16 }}>
-              <h4 style={{ color: dangerColor, margin: "0 0 12px 0" }}>⚠️ Points d'attention</h4>
-              <p style={{ margin: 0, color: theme.text }}>{statsAiReport.weakness}</p>
+          )}
+
+          {statsAiReport.verdict && (
+            <p style={{ fontStyle: "italic", color: theme.text, fontSize: 16, lineHeight: 1.5, marginBottom: 24 }}>{statsAiReport.verdict}</p>
+          )}
+
+          {(statsAiReport.strengths || statsAiReport.weakness) && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 24 }}>
+              {statsAiReport.strengths && (
+                <div style={{ background: isDarkMode ? "rgba(16, 185, 129, 0.1)" : "#ECFDF5", padding: 20, borderRadius: 16 }}>
+                  <h4 style={{ color: successColor, margin: "0 0 12px 0" }}>💪 Forces</h4>
+                  <ul style={{ margin: 0, paddingLeft: 20, color: theme.text }}>
+                    {statsAiReport.strengths.map((s, i) => <li key={i} style={{ marginBottom: 6 }}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {statsAiReport.weakness && (
+                <div style={{ background: isDarkMode ? "rgba(239, 68, 68, 0.1)" : "#FEF2F2", padding: 20, borderRadius: 16 }}>
+                  <h4 style={{ color: dangerColor, margin: "0 0 12px 0" }}>⚠️ Points d'attention</h4>
+                  <p style={{ margin: 0, color: theme.text }}>{statsAiReport.weakness}</p>
+                </div>
+              )}
             </div>
-          </div>
-          <div style={{ marginTop: 24, padding: 20, background: isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)", borderRadius: 16 }}>
-            <p style={{ margin: "0 0 16px 0", color: theme.text }}><strong>💡 Conseil :</strong> {statsAiReport.tip}</p>
-            <h4 style={{ margin: "0 0 12px 0", color: theme.text }}>📋 Plan de la semaine</h4>
-            <ol style={{ margin: 0, paddingLeft: 20, color: theme.text }}>
-              {statsAiReport.plan?.map((p, i) => <li key={i} style={{ marginBottom: 6 }}>{p}</li>)}
-            </ol>
-          </div>
+          )}
+
+          {(statsAiReport.tip || (statsAiReport.plan && statsAiReport.plan.length > 0)) && (
+            <div style={{ marginTop: 24, padding: 20, background: isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)", borderRadius: 16 }}>
+              {statsAiReport.tip && <p style={{ margin: "0 0 16px 0", color: theme.text }}><strong>💡 Conseil :</strong> {statsAiReport.tip}</p>}
+              {statsAiReport.plan && statsAiReport.plan.length > 0 && (
+                <>
+                  <h4 style={{ margin: "0 0 12px 0", color: theme.text }}>📋 Plan d'action recommandé</h4>
+                  <ol style={{ margin: 0, paddingLeft: 20, color: theme.text }}>
+                    {statsAiReport.plan.map((p, i) => <li key={i} style={{ marginBottom: 6 }}>{p}</li>)}
+                  </ol>
+                </>
+              )}
+            </div>
+          )}
           <button onClick={() => setStatsAiReport(null)} style={{ position: "absolute", top: 24, right: 24, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)", border: "none", color: theme.text, cursor: "pointer", width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>✕</button>
         </motion.div>
       )}
@@ -194,22 +229,22 @@ export default function GodTierStats({
           <h3 style={{ margin: "0 0 20px", color: theme.text, fontWeight: 800, fontSize: 18 }}>⚡ Métriques Globales</h3>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, flex: 1 }}>
             
-            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.1)"}` }}>
+            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.1)"}` }}>
               <div style={{ fontSize: 36, fontWeight: 900, color: primaryColor }}>{stats.streak}</div>
               <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>Jours de streak</div>
             </div>
 
-            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.1)"}` }}>
+            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.1)"}` }}>
               <div style={{ fontSize: 36, fontWeight: 900, color: theme.text }}>{masteredCount}</div>
               <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>Maîtrisées ({expressions.length})</div>
             </div>
 
-            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.1)"}` }}>
+            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.1)"}` }}>
               <div style={{ fontSize: 36, fontWeight: 900, color: theme.text }}>{stats.totalReviews}</div>
               <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>Révisions totales</div>
             </div>
 
-            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.1)"}` }}>
+            <div style={{ background: isDarkMode ? "rgba(255,255,255,0.05)" : "#F8FAFF", borderRadius: 16, padding: 20, textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.1)"}` }}>
               <div style={{ fontSize: 36, fontWeight: 900, color: "#8B5CF6" }}>{stats.aiGenerated || 0}</div>
               <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>Générées par IA</div>
             </div>
@@ -381,7 +416,7 @@ export default function GodTierStats({
                 label: 'Révisions',
                 data: statsDayOfWeekPerformance.map(d => d.reviews),
                 backgroundColor: [
-                  "#3B82F6AA", "#8B5CF6AA", "#EC4899AA", "#F43F5EAA", 
+                  "#A855F7AA", "#8B5CF6AA", "#EC4899AA", "#F43F5EAA", 
                   "#F59E0BAA", "#10B981AA", "#14B8A6AA"
                 ],
                 borderWidth: 1,

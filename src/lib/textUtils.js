@@ -52,3 +52,35 @@ export function safeParseJSON(raw) {
     return JSON.parse(aggressive);
   }
 }
+
+export function levenshtein(a, b) {
+  if (!a || !b) return (a || b || "").length;
+  const dp = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const temp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j], dp[j - 1]) + 1;
+      prev = temp;
+    }
+  }
+  return dp[b.length];
+}
+
+export function findSimilarCards(front, expressions, threshold = 0.75) {
+  const norm = s => (s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+  const target = norm(front);
+  if (target.length < 3) return [];
+  return (expressions || [])
+    .map(e => {
+      const f = norm(e?.front);
+      if (!f) return null;
+      const dist = levenshtein(target, f);
+      const sim = 1 - dist / Math.max(target.length, f.length);
+      return sim >= threshold ? { card: e, similarity: sim } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, 3);
+}

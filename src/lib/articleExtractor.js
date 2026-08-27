@@ -122,19 +122,95 @@ function nodeToParagraphs(node) {
   return out;
 }
 
+// Détecte les textes parasites : bandeaux cookies, mentions RGPD, bannières d'abonnement / paywalls, newsletter
+export const BOILERPLATE_PATTERNS = [
+  /cookies?/i,
+  /traceurs?/i,
+  /partenaires/i,
+  /donn[ée]es personnelles/i,
+  /personnalisation publicitaire/i,
+  /consentement/i,
+  /politique de confidentialit[ée]/i,
+  /mentions l[ée]gales/i,
+  /abonnez-vous/i,
+  /abonnement/i,
+  /soutenez (notre|le) (m[ée]dia|club|journalisme|travail)/i,
+  /pour p[ée]renniser (son|notre) mod[èe]le/i,
+  /d[ée]fend une information/i,
+  /vous avez lu gratuitement/i,
+  /article r[ée]serv[ée] aux abonn[ée]s/i,
+  /inscrivez-vous (à|a) la newsletter/i,
+  /tous droits r[ée]serv[ée]s/i,
+  /privacy policy/i,
+  /terms of service/i,
+  /subscribe to/i,
+  /all rights reserved/i,
+];
+
+export function isBoilerplateOrConsentText(str) {
+  if (!str || typeof str !== "string") return false;
+  const s = str.trim();
+  if (s.length < 15) return false;
+  let matchCount = 0;
+  for (const pattern of BOILERPLATE_PATTERNS) {
+    if (pattern.test(s)) matchCount++;
+  }
+  if (matchCount >= 2) return true;
+  if (/accept(er)? (l'utilisation de |les )?cookies/i.test(s)) return true;
+  if (/traiter vos donn[ée]es personnelles/i.test(s)) return true;
+  if (/pour p[ée]renniser (son|notre) mod[èe]le/i.test(s)) return true;
+  if (/abonnement .*? sans publicit[ée]/i.test(s)) return true;
+  if (/article r[ée]serv[ée] aux abonn[ée]s/i.test(s)) return true;
+  if (/accepter et fermer|param[ée]trer les cookies/i.test(s)) return true;
+  return false;
+}
+
+export function sanitizeArticleText(text) {
+  if (!text) return "";
+  const paragraphs = text.split(/\n\n+/);
+  const cleanParas = paragraphs.filter(p => {
+    const trimmed = p.trim();
+    if (trimmed.length < 30) return false;
+    return !isBoilerplateOrConsentText(trimmed);
+  });
+  return cleanParas.join("\n\n").trim();
+}
+
 // Extrait un texte lisible depuis du HTML brut. Retourne string vide si échec.
 export function extractReadableFromHtml(html) {
   if (!html) return "";
   try {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    cleanDoc(doc);
-    const best = pickBest(doc) || doc.body;
-    let paras = nodeToParagraphs(best);
-    if (paras.join(" ").length < 400) {
-      // fallback : tout le body
-      paras = nodeToParagraphs(doc.body);
+    if (typeof DOMParser !== "undefined") {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      cleanDoc(doc);
+      const best = pickBest(doc) || doc.body;
+      let paras = nodeToParagraphs(best);
+      if (paras.join(" ").length < 400) {
+        // fallback : tout le body
+        paras = nodeToParagraphs(doc.body);
+      }
+      return sanitizeArticleText(paras.join("\n\n"));
     }
-    return paras.join("\n\n");
+  } catch {}
+
+  // Fallback regex pour Node / SSR / Worker sans DOMParser
+  try {
+    const stripped = html
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "")
+      .replace(/<nav\b[^<]*(?:(?!<\/nav>)<[^<]*)*<\/nav>/gi, "")
+      .replace(/<footer\b[^<]*(?:(?!<\/footer>)<[^<]*)*<\/footer>/gi, "")
+      .replace(/<aside\b[^<]*(?:(?!<\/aside>)<[^<]*)*<\/aside>/gi, "")
+      .replace(/<div\b[^>]*class=["'][^"']*(?:ads?|share|social|cookie|consent|paywall)[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/\s+/g, " ")
+      .trim();
+    return sanitizeArticleText(stripped);
   } catch {
     return "";
   }
@@ -146,13 +222,14 @@ export function extractReadableFromMarkdown(md) {
   // Jina préfixe parfois par "Title: ...\nURL Source: ...\nMarkdown Content:\n"
   const idx = md.indexOf("Markdown Content:");
   const body = idx >= 0 ? md.slice(idx + "Markdown Content:".length) : md;
-  return body
+  const rawClean = body
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")     // images
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // liens -> texte
     .replace(/^#+\s+/gm, "")                  // titres markdown
     .replace(/[*_`>]/g, "")                   // emphases/blockquote markers
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return sanitizeArticleText(rawClean);
 }
 
 // API publique : récupère + extrait. Renvoie { text, source, html }.

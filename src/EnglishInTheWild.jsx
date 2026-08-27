@@ -264,6 +264,7 @@ export default function EnglishInTheWild({
 
   // ── Vocab in Context Mining States ────────────────────────────────────────────
   const [miningState, setMiningState] = useState({ isOpen: false, loading: false, word: "", context: "", data: null, tab: "formal", testMode: false });
+  const [miningTestAnswers, setMiningTestAnswers] = useState({});
 
   // ── Phase 3/4/5 — Pipeline production active (hook partagé avec EnglishPractice)
   // Analyse le texte produit par l'utilisateur (dictée + shadowing) à la fin d'une
@@ -977,7 +978,7 @@ retourne UNIQUEMENT ce JSON :
     marginBottom: 16,
   };
 
-  const btn = (color = "#4D6BFE", disabled = false) => ({
+  const btn = (color = "#8B5CF6", disabled = false) => ({
     padding: "12px 20px",
     background: disabled ? (isDarkMode ? "#1F1F1F" : "#E5E7EB") : color,
     color: disabled ? theme.textMuted : "white",
@@ -996,7 +997,7 @@ retourne UNIQUEMENT ce JSON :
     fontSize: 13,
     border: "none",
     cursor: "pointer",
-    background: active ? "#4D6BFE" : "transparent",
+    background: active ? "#8B5CF6" : "transparent",
     color: active ? "white" : theme.textMuted,
     transition: "all 0.2s",
   });
@@ -1015,8 +1016,8 @@ retourne UNIQUEMENT ce JSON :
           padding: "14px 28px",
           background: isDarkMode ? "#0A0A1A" : "#EEF0FF",
           borderRadius: 16,
-          border: "1.5px solid #4D6BFE40",
-          color: "#4D6BFE",
+          border: "1.5px solid #8B5CF640",
+          color: "#8B5CF6",
           fontWeight: 700,
           fontSize: 14,
           textAlign: "center",
@@ -1040,7 +1041,7 @@ retourne UNIQUEMENT ce JSON :
         <div style={{ display: "flex", gap: 8 }}>
           {[0, 1, 2].map(i => (
             <div key={i} style={{
-              width: 10, height: 10, borderRadius: "50%", background: "#4D6BFE",
+              width: 10, height: 10, borderRadius: "50%", background: "#8B5CF6",
               animation: `bounce 1.2s ease-in-out ${i * 0.2}s infinite`,
             }} />
           ))}
@@ -1055,7 +1056,7 @@ retourne UNIQUEMENT ce JSON :
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
         {/* Header */}
-        <div style={{ ...card, background: isDarkMode ? "#06061A" : "#F0F1FF", border: "2px solid #4D6BFE30", textAlign: "center" }}>
+        <div style={{ ...card, background: isDarkMode ? "#06061A" : "#F0F1FF", border: "2px solid #8B5CF630", textAlign: "center" }}>
           <div style={{ fontSize: 40, marginBottom: 8 }}>📺</div>
           <div style={{ fontWeight: 900, fontSize: 22, color: theme.text, marginBottom: 6 }}>English in the Wild</div>
           <div style={{ fontSize: 14, color: theme.textMuted, lineHeight: 1.6 }}>
@@ -1079,7 +1080,7 @@ retourne UNIQUEMENT ce JSON :
                 fontSize: 14, fontWeight: 500, outline: "none",
               }}
             />
-            <button onClick={analyze} disabled={!url.trim()} style={{ ...btn("#4D6BFE", !url.trim()), padding: "14px 22px", fontSize: 15 }}>
+            <button onClick={analyze} disabled={!url.trim()} style={{ ...btn("#8B5CF6", !url.trim()), padding: "14px 22px", fontSize: 15 }}>
               🚀 Analyser
             </button>
           </div>
@@ -1105,7 +1106,7 @@ retourne UNIQUEMENT ce JSON :
             style={{ display: "none" }}
           />
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-            <button onClick={() => pickMedia("audio")} disabled={!!mediaBusy} style={{ ...btn("#4D6BFE", !!mediaBusy), flex: 1, minWidth: 200 }}>
+            <button onClick={() => pickMedia("audio")} disabled={!!mediaBusy} style={{ ...btn("#8B5CF6", !!mediaBusy), flex: 1, minWidth: 200 }}>
               🎧 Transcrire l'audio (Whisper)
             </button>
             <button onClick={() => pickMedia("ocr")} disabled={!!mediaBusy} style={{ ...btn("#8B5CF6", !!mediaBusy), flex: 1, minWidth: 200 }}>
@@ -1113,7 +1114,7 @@ retourne UNIQUEMENT ce JSON :
             </button>
           </div>
           {mediaBusy && (
-            <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, color: "#4D6BFE" }}>{mediaBusy}</div>
+            <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, color: "#8B5CF6" }}>{mediaBusy}</div>
           )}
         </div>
 
@@ -1137,7 +1138,7 @@ retourne UNIQUEMENT ce JSON :
           <button
             onClick={analyzeText}
             disabled={!transcript.trim() || transcript.trim().length < 100}
-            style={{ ...btn("#3451D1", !transcript.trim() || transcript.trim().length < 100), marginTop: 12, width: "100%" }}
+            style={{ ...btn("#7C3AED", !transcript.trim() || transcript.trim().length < 100), marginTop: 12, width: "100%" }}
           >
             ✨ Analyser ce texte
           </button>
@@ -1155,7 +1156,7 @@ retourne UNIQUEMENT ce JSON :
               <button
                 key={i}
                 onClick={() => setUrl(ex.url)}
-                style={{ padding: "8px 14px", background: isDarkMode ? "#1A1A2E" : "#EEF0FF", border: "1.5px solid #4D6BFE30", borderRadius: 10, color: "#4D6BFE", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                style={{ padding: "8px 14px", background: isDarkMode ? "#1A1A2E" : "#EEF0FF", border: "1.5px solid #8B5CF630", borderRadius: 10, color: "#8B5CF6", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
               >
                 {ex.label}
               </button>
@@ -1199,10 +1200,10 @@ retourne UNIQUEMENT ce JSON :
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <style>{`
-        .word-catcher:hover { color: #4D6BFE; transform: scale(1.1) translateY(-2px); font-weight: 800; text-shadow: 0 0 8px rgba(77,107,254,0.4); }
+        .word-catcher:hover { color: #8B5CF6; transform: scale(1.1) translateY(-2px); font-weight: 800; text-shadow: 0 0 8px rgba(139, 92, 246,0.4); }
       `}</style>
       {/* Header résultats */}
-      <div style={{ ...card, background: isDarkMode ? "#06061A" : "#F0F1FF", border: "2px solid #4D6BFE40" }}>
+      <div style={{ ...card, background: isDarkMode ? "#06061A" : "#F0F1FF", border: "2px solid #8B5CF640" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           {videoId && (
             <img
@@ -1221,7 +1222,7 @@ retourne UNIQUEMENT ce JSON :
                 href={`https://youtube.com/watch?v=${videoId}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ fontSize: 12, color: "#4D6BFE", fontWeight: 600 }}
+                style={{ fontSize: 12, color: "#8B5CF6", fontWeight: 600 }}
               >
                 ▶️ Voir sur YouTube
               </a>
@@ -1267,7 +1268,7 @@ retourne UNIQUEMENT ce JSON :
       {activeTab === "expressions" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {expressions10.length > 0 && (
-            <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, padding: "14px 20px", background: isDarkMode ? "#0A0A20" : "#F0F3FF", border: "1.5px solid #4D6BFE40" }}>
+            <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, padding: "14px 20px", background: isDarkMode ? "#0A0A20" : "#F0F3FF", border: "1.5px solid #8B5CF640" }}>
               <div style={{ fontWeight: 800, fontSize: 14, color: theme.text }}>
                 ⚡ {expressions10.length} expression(s) extraite(s) intégralement
               </div>
@@ -1285,37 +1286,56 @@ retourne UNIQUEMENT ce JSON :
             <div key={ex.expr || `expr-${i}`} style={{ ...card, border: savedToMemo.includes(i) ? "2px solid #10B981" : `1px solid ${theme.border}` }}>
 
               <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: "linear-gradient(135deg,#3730A3,#4D6BFE)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: 900, fontSize: 13, flexShrink: 0 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 10, background: "linear-gradient(135deg,#5B21B6,#8B5CF6)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontWeight: 900, fontSize: 13, flexShrink: 0 }}>
                   {i + 1}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {/* Titre + IPA */}
                   <div style={{ fontWeight: 900, fontSize: 18, color: theme.text, textAlign: "center" }}>{ex.expr}</div>
-                  {ex.ipa && <div style={{ fontSize: 13, color: "#4D6BFE", fontWeight: 600, fontFamily: "monospace", marginTop: 4, textAlign: "center" }}>{ex.ipa}</div>}
+                  {ex.ipa && <div style={{ fontSize: 13, color: "#8B5CF6", fontWeight: 600, fontFamily: "monospace", marginTop: 4, textAlign: "center" }}>{ex.ipa}</div>}
 
                   {/* Signification */}
-                  <div style={{ fontSize: 15, color: "#4D6BFE", marginTop: 8, textAlign: "center" }}>{ex.meaning}</div>
+                  <div style={{ fontSize: 15, color: "#8B5CF6", marginTop: 8, textAlign: "center" }}>{ex.meaning}</div>
 
-                  {/* Quand utiliser (Usage) */}
-                  {ex.usage && (
+                  {/* 1. Décomposition & Transition Métaphorique */}
+                  {(ex.decomposition || ex.usage) && (
                     <div style={{ marginTop: 20 }}>
                       <div style={{ fontSize: 11, fontWeight: 800, color: "#10B981", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        <span style={{background: "#10B981", color: "white", padding: "2px 4px", borderRadius: 4}}>✅</span> QUAND L'UTILISER
+                        <span style={{background: "#10B981", color: "white", padding: "2px 4px", borderRadius: 4}}>⚙️</span> 1. DÉCOMPOSITION & TRANSITION
                       </div>
-                      <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55, padding: "10px 16px", background: isDarkMode ? "rgba(16,185,129,0.07)" : "rgba(16,185,129,0.06)", borderRadius: 10, borderLeft: "3px solid #10B981", borderRight: "3px solid #10B981", textAlign: "center" }}>
-                        {ex.usage}
+                      <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55, padding: "10px 16px", background: isDarkMode ? "rgba(16,185,129,0.07)" : "rgba(16,185,129,0.06)", borderRadius: 10, borderLeft: "3px solid #10B981", borderRight: "3px solid #10B981", textAlign: "left" }}>
+                        <div dangerouslySetInnerHTML={{ __html: (ex.decomposition || ex.usage).replace(/\n/g, '<br/>') }} />
+                        {ex.mentalModel && (
+                          <div style={{ marginTop: 8, fontWeight: 600 }}>Le Modèle Mental : {ex.mentalModel}</div>
+                        )}
                       </div>
                     </div>
                   )}
 
-                  {/* À éviter */}
-                  {ex.avoid && (
+                  {/* 2. Comparatif */}
+                  {(ex.comparative || (ex.synonyms && ex.synonyms.length > 0)) && (
+                    <div style={{ marginTop: 16 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#8B5CF6", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <span style={{fontSize: 14}}>🔍</span> 2. COMPARATIF
+                      </div>
+                      <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55, padding: "10px 16px", background: isDarkMode ? "rgba(139, 92, 246,0.07)" : "rgba(139, 92, 246,0.05)", borderRadius: 10, borderLeft: "3px solid #8B5CF6", borderRight: "3px solid #8B5CF6", textAlign: "left" }}>
+                        {ex.comparative ? (
+                          <div dangerouslySetInnerHTML={{ __html: ex.comparative.replace(/\n/g, '<br/>') }} />
+                        ) : (
+                          <div>Synonymes : {ex.synonyms?.join(", ")}</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3. Anti-Pattern */}
+                  {(ex.antipattern || ex.avoid) && (
                     <div style={{ marginTop: 16 }}>
                       <div style={{ fontSize: 11, fontWeight: 800, color: "#EF4444", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        <span style={{color: "#EF4444", fontSize: 14}}>🚫</span> À NE PAS CONFONDRE / ÉVITER
+                        <span style={{color: "#EF4444", fontSize: 14}}>⚠️</span> 3. ANTI-PATTERN (LE PIÈGE)
                       </div>
-                      <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55, padding: "10px 16px", background: isDarkMode ? "rgba(239,68,68,0.07)" : "rgba(239,68,68,0.05)", borderRadius: 10, borderLeft: "3px solid #EF4444", borderRight: "3px solid #EF4444", textAlign: "center" }}>
-                        {ex.avoid}
+                      <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55, padding: "10px 16px", background: isDarkMode ? "rgba(239,68,68,0.07)" : "rgba(239,68,68,0.05)", borderRadius: 10, borderLeft: "3px solid #EF4444", borderRight: "3px solid #EF4444", textAlign: "left" }}>
+                        <div dangerouslySetInnerHTML={{ __html: (ex.antipattern || ex.avoid).replace(/\n/g, '<br/>') }} />
                       </div>
                     </div>
                   )}
@@ -1335,13 +1355,13 @@ retourne UNIQUEMENT ce JSON :
                   {/* Exemples multiples */}
                   {ex.examples?.length > 0 && (
                     <div style={{ marginTop: 20 }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: "#4D6BFE", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                        <span style={{color: "#4D6BFE", fontSize: 14}}>💬</span> EXEMPLES
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#8B5CF6", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        <span style={{color: "#8B5CF6", fontSize: 14}}>💬</span> EXEMPLES
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         {ex.examples.map((eg, ei) => (
-                          <div key={ei} style={{ padding: "12px 16px", background: isDarkMode ? "#0A0A1A" : "#EEF0FF", borderRadius: 10, color: theme.text, borderLeft: "3px solid #4D6BFE", borderRight: "3px solid #4D6BFE", textAlign: "center" }}>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: "#4D6BFE" }}>{renderDraggableWord(eg.en || eg)}</div>
+                          <div key={ei} style={{ padding: "12px 16px", background: isDarkMode ? "#0A0A1A" : "#EEF0FF", borderRadius: 10, color: theme.text, borderLeft: "3px solid #8B5CF6", borderRight: "3px solid #8B5CF6", textAlign: "center" }}>
+                            <div style={{ fontSize: 14, fontWeight: 500, color: "#8B5CF6" }}>{renderDraggableWord(eg.en || eg)}</div>
                             {eg.fr && <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 6 }}>{eg.fr}</div>}
                           </div>
                         ))}
@@ -1368,7 +1388,7 @@ retourne UNIQUEMENT ce JSON :
                 <button
                   onClick={() => saveExpression(ex, i)}
                   disabled={savedToMemo.includes(i)}
-                  style={{ ...btn(savedToMemo.includes(i) ? "#10B981" : "#4D6BFE", savedToMemo.includes(i)), padding: "8px 12px", fontSize: 12, flexShrink: 0 }}
+                  style={{ ...btn(savedToMemo.includes(i) ? "#10B981" : "#8B5CF6", savedToMemo.includes(i)), padding: "8px 12px", fontSize: 12, flexShrink: 0 }}
                 >
                   {savedToMemo.includes(i) ? "✅ Ajouté" : "💾 Mémoriser"}
                 </button>
@@ -1462,9 +1482,9 @@ retourne UNIQUEMENT ce JSON :
 
                 <div style={{ display: "flex", gap: 10 }}>
                   {!dictationRevealed ? (
-                    <button onClick={checkDictation} style={{ ...btn("#4D6BFE"), flex: 1 }}>✅ Vérifier mes réponses</button>
+                    <button onClick={checkDictation} style={{ ...btn("#8B5CF6"), flex: 1 }}>✅ Vérifier mes réponses</button>
                   ) : (
-                    <button onClick={() => { setDictationInputs({}); setDictationRevealed(false); setDictationScore(null); }} style={{ ...btn("#3451D1"), flex: 1 }}>🔄 Recommencer</button>
+                    <button onClick={() => { setDictationInputs({}); setDictationRevealed(false); setDictationScore(null); }} style={{ ...btn("#7C3AED"), flex: 1 }}>🔄 Recommencer</button>
                   )}
                 </div>
               </div>
@@ -1508,7 +1528,7 @@ retourne UNIQUEMENT ce JSON :
                             padding: "12px 16px", borderRadius: 12, textAlign: "left",
                             border: quizSubmitted
                               ? (isCorrect ? "2px solid #10B981" : isSelected ? "2px solid #EF4444" : `1px solid ${theme.border}`)
-                              : (isSelected ? "2px solid #4D6BFE" : `1px solid ${theme.border}`),
+                              : (isSelected ? "2px solid #8B5CF6" : `1px solid ${theme.border}`),
                             background: quizSubmitted
                               ? (isCorrect ? (isDarkMode ? "#052e16" : "#F0FDF4") : isSelected ? (isDarkMode ? "#1A0A0A" : "#FEF2F2") : theme.inputBg)
                               : (isSelected ? (isDarkMode ? "#0A0A1A" : "#EEF0FF") : theme.inputBg),
@@ -1522,7 +1542,7 @@ retourne UNIQUEMENT ce JSON :
                     })}
                   </div>
                   {quizSubmitted && q.explanation && (
-                    <div style={{ marginTop: 12, padding: "10px 14px", background: isDarkMode ? "#0A0A1A" : "#EEF0FF", borderRadius: 10, fontSize: 13, color: "#4D6BFE", fontWeight: 600 }}>
+                    <div style={{ marginTop: 12, padding: "10px 14px", background: isDarkMode ? "#0A0A1A" : "#EEF0FF", borderRadius: 10, fontSize: 13, color: "#8B5CF6", fontWeight: 600 }}>
                       💡 {q.explanation}
                     </div>
                   )}
@@ -1537,13 +1557,13 @@ retourne UNIQUEMENT ce JSON :
                   <div style={{ fontSize: 14, color: theme.textMuted, marginTop: 4 }}>
                     {quizScore.correct === quizScore.total ? "🌟 Score parfait !" : "📚 Relis le passage pour améliorer ta compréhension."}
                   </div>
-                  <button onClick={() => { setQuizAnswers({}); setQuizSubmitted(false); setQuizScore(null); }} style={{ ...btn("#3451D1"), marginTop: 14 }}>🔄 Recommencer</button>
+                  <button onClick={() => { setQuizAnswers({}); setQuizSubmitted(false); setQuizScore(null); }} style={{ ...btn("#7C3AED"), marginTop: 14 }}>🔄 Recommencer</button>
                 </div>
               ) : (
                 <button
                   onClick={submitQuiz}
                   disabled={Object.keys(quizAnswers).length < questions.length}
-                  style={{ ...btn("#4D6BFE", Object.keys(quizAnswers).length < questions.length), width: "100%", padding: 16, fontSize: 15 }}
+                  style={{ ...btn("#8B5CF6", Object.keys(quizAnswers).length < questions.length), width: "100%", padding: 16, fontSize: 15 }}
                 >
                   ✅ Soumettre mes réponses ({Object.keys(quizAnswers).length}/{questions.length})
                 </button>
@@ -1561,13 +1581,13 @@ retourne UNIQUEMENT ce JSON :
           ) : (
             <>
               {/* Phrase cible */}
-              <div style={{ ...card, border: "2px solid #4D6BFE40" }}>
+              <div style={{ ...card, border: "2px solid #8B5CF640" }}>
                 <div style={{ fontWeight: 800, fontSize: 15, color: theme.text, marginBottom: 12 }}>🎙️ Phrase de shadowing</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, lineHeight: 1.7, marginBottom: 10 }}>
                   "{renderDraggableWord(shadowing.phrase)}"
                 </div>
                 {shadowing.phonetics && (
-                  <div style={{ fontSize: 13, color: "#4D6BFE", fontFamily: "monospace", fontWeight: 600, marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, color: "#8B5CF6", fontFamily: "monospace", fontWeight: 600, marginBottom: 14 }}>
                     {shadowing.phonetics}
                   </div>
                 )}
@@ -1586,7 +1606,7 @@ retourne UNIQUEMENT ce JSON :
                 {/* Bouton écouter */}
                 <button
                   onClick={speakShadowing}
-                  style={{ ...btn(shadowingPlaying ? "#3451D1" : "#4D6BFE"), width: "100%", marginBottom: 10 }}
+                  style={{ ...btn(shadowingPlaying ? "#7C3AED" : "#8B5CF6"), width: "100%", marginBottom: 10 }}
                 >
                   {shadowingPlaying ? "🔊 Lecture en cours…" : "▶️ Écouter la phrase (TTS)"}
                 </button>
@@ -1629,7 +1649,7 @@ retourne UNIQUEMENT ce JSON :
                       rows={3}
                       style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14, outline: "none", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
                     />
-                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("#4D6BFE", !shadowingUserText.trim()), width: "100%" }}>
+                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("#8B5CF6", !shadowingUserText.trim()), width: "100%" }}>
                       🧠 Analyser mon shadowing
                     </button>
                   </div>
@@ -1666,7 +1686,7 @@ retourne UNIQUEMENT ce JSON :
                     )}
                     <button
                       onClick={() => { setShadowingFeedback(null); setShadowingUserText(""); setShadowingPhase("idle"); }}
-                      style={{ ...btn("#3451D1"), width: "100%" }}
+                      style={{ ...btn("#7C3AED"), width: "100%" }}
                     >
                       🔄 Réessayer
                     </button>
@@ -1689,7 +1709,7 @@ retourne UNIQUEMENT ce JSON :
                       rows={2}
                       style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14, outline: "none", resize: "none", boxSizing: "border-box", marginBottom: 10 }}
                     />
-                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("#4D6BFE", !shadowingUserText.trim()), width: "100%" }}>
+                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("#8B5CF6", !shadowingUserText.trim()), width: "100%" }}>
                       🧠 Obtenir mon feedback
                     </button>
                   </div>
@@ -1705,7 +1725,7 @@ retourne UNIQUEMENT ce JSON :
         style={{
           position: "fixed", top: 0, right: 0, bottom: 0, width: "100%", maxWidth: 450,
           background: isDarkMode ? "#0F172A" : "#FFFFFF",
-          boxShadow: "-10px 0 40px rgba(77,107,254,0.2)", zIndex: 10000,
+          boxShadow: "-10px 0 40px rgba(139, 92, 246,0.2)", zIndex: 10000,
           transform: miningState.isOpen ? "translateX(0)" : "translateX(100%)",
           transition: "transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
           display: "flex", flexDirection: "column", overflowY: "auto"
@@ -1717,7 +1737,7 @@ retourne UNIQUEMENT ce JSON :
               <div>
                 <h2 style={{ fontSize: 32, fontWeight: 900, margin: "0 0 8px", color: theme.text }}>{miningState.word}</h2>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <button onClick={() => speakWithFallback(miningState.word)} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(77,107,254,0.1)", color: "#4D6BFE", cursor: "pointer", fontSize: 18 }}>🔊</button>
+                  <button onClick={() => speakWithFallback(miningState.word)} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(139, 92, 246,0.1)", color: "#8B5CF6", cursor: "pointer", fontSize: 18 }}>🔊</button>
                   {miningState.data?.ipa && <span style={{ fontSize: 16, fontFamily: "monospace", color: theme.textMuted }}>{miningState.data.ipa}</span>}
                   {miningState.data?.ceferLevel && <span style={{ padding: "4px 8px", background: "rgba(16,185,129,0.1)", color: "#10B981", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>{miningState.data.ceferLevel}</span>}
                   {miningState.data?.partOfSpeech && <span style={{ padding: "4px 8px", background: "rgba(245,158,11,0.1)", color: "#D97706", borderRadius: 8, fontSize: 12, fontWeight: 800 }}>{miningState.data.partOfSpeech}</span>}
@@ -1748,7 +1768,7 @@ retourne UNIQUEMENT ce JSON :
                       <div style={{ fontSize: 13, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", marginBottom: 8 }}>Contextes d'utilisation</div>
                       <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, WebkitOverflowScrolling: "touch" }}>
                         {Object.keys(miningState.data.contexts).map(ctx => (
-                          <button key={ctx} onClick={() => setMiningState(prev => ({ ...prev, tab: ctx }))} style={{ padding: "6px 12px", borderRadius: 100, border: "none", background: miningState.tab === ctx ? "#4D6BFE" : isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(77,107,254,0.05)", color: miningState.tab === ctx ? "white" : theme.textMuted, fontWeight: 700, fontSize: 13, cursor: "pointer", textTransform: "capitalize" }}>
+                          <button key={ctx} onClick={() => setMiningState(prev => ({ ...prev, tab: ctx }))} style={{ padding: "6px 12px", borderRadius: 100, border: "none", background: miningState.tab === ctx ? "#8B5CF6" : isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.05)", color: miningState.tab === ctx ? "white" : theme.textMuted, fontWeight: 700, fontSize: 13, cursor: "pointer", textTransform: "capitalize" }}>
                             {ctx}
                           </button>
                         ))}
@@ -1765,7 +1785,7 @@ retourne UNIQUEMENT ce JSON :
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", marginBottom: 8 }}>Collocations (mots associés)</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          {miningState.data.collocations.map(c => <span key={c} style={{ padding: "6px 12px", background: "rgba(77, 107, 254,0.1)", color: "#4D6BFE", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{c}</span>)}
+                          {miningState.data.collocations.map(c => <span key={c} style={{ padding: "6px 12px", background: "rgba(139, 92, 246,0.1)", color: "#8B5CF6", borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{c}</span>)}
                         </div>
                       </div>
                     )}
@@ -1774,7 +1794,7 @@ retourne UNIQUEMENT ce JSON :
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", marginBottom: 8 }}>Synonymes</div>
                         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          {miningState.data.synonyms.map(c => <span key={c} style={{ padding: "6px 12px", background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)", color: theme.text, borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{c}</span>)}
+                          {miningState.data.synonyms.map(c => <span key={c} style={{ padding: "6px 12px", background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)", color: theme.text, borderRadius: 8, fontSize: 13, fontWeight: 600 }}>{c}</span>)}
                         </div>
                       </div>
                     )}
@@ -1805,8 +1825,8 @@ retourne UNIQUEMENT ce JSON :
 
                   {/* Test Mode */}
                   {miningState.testMode ? (
-                    <div style={{ padding: 16, background: isDarkMode ? "rgba(77,107,254,0.1)" : "#EEF0FF", borderRadius: 16, border: "1px solid #4D6BFE40" }}>
-                      <div style={{ fontWeight: 800, color: "#4D6BFE", marginBottom: 12 }}>Test de rétention</div>
+                    <div style={{ padding: 16, background: isDarkMode ? "rgba(139, 92, 246,0.1)" : "#EEF0FF", borderRadius: 16, border: "1px solid #8B5CF640" }}>
+                      <div style={{ fontWeight: 800, color: "#8B5CF6", marginBottom: 12 }}>Test de rétention</div>
                       <div style={{ fontSize: 14, color: theme.text, marginBottom: 12 }}>
                         Complète la phrase : <br /><br />
                         <i>"{(miningState.data.contexts?.casual || miningState.data.contexts?.formal || "").replace(new RegExp(miningState.word, "gi"), "_____")}"</i>
@@ -1826,10 +1846,10 @@ retourne UNIQUEMENT ce JSON :
                     </div>
                   ) : (
                     <div style={{ display: "flex", gap: 12, marginTop: 12 }}>
-                      <button onClick={addMiningToSRS} style={{ flex: 1, padding: 16, background: "#4D6BFE", color: "white", borderRadius: 14, border: "none", fontWeight: 800, fontSize: 15, cursor: "pointer", boxShadow: "0 4px 14px rgba(77,107,254,0.3)" }}>
+                      <button onClick={addMiningToSRS} style={{ flex: 1, padding: 16, background: "#8B5CF6", color: "white", borderRadius: 14, border: "none", fontWeight: 800, fontSize: 15, cursor: "pointer", boxShadow: "0 4px 14px rgba(139, 92, 246,0.3)" }}>
                         ➕ Ajouter au SRS
                       </button>
-                      <button onClick={() => setMiningState(prev => ({ ...prev, testMode: true }))} style={{ flex: 1, padding: 16, background: "transparent", color: "#4D6BFE", borderRadius: 14, border: "2px solid #4D6BFE", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
+                      <button onClick={() => setMiningState(prev => ({ ...prev, testMode: true }))} style={{ flex: 1, padding: 16, background: "transparent", color: "#8B5CF6", borderRadius: 14, border: "2px solid #8B5CF6", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
                         📝 Tester
                       </button>
                     </div>

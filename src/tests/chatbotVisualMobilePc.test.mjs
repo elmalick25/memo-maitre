@@ -26,11 +26,12 @@ test('Chatbot visual animation — applies to chatbot and robot assistant button
     'La classe robot-assistant-icon doit être définie dans responsive.css'
   );
 
-  // Verify MemoMaster chatbot assistant button uses robot-assistant-icon
+  // Verify AppStatusBar / MemoMaster chatbot assistant button uses robot-assistant-icon
+  const statusBarContent = fs.readFileSync(path.resolve('src/components/AppStatusBar.jsx'), 'utf8');
   assert.equal(
-    memoMasterContent.includes('robot-assistant-icon'),
+    statusBarContent.includes('robot-assistant-icon') || memoMasterContent.includes('robot-assistant-icon'),
     true,
-    'Le bouton Assistant 🤖 de MemoMaster doit utiliser la classe robot-assistant-icon'
+    'Le bouton Assistant 🤖 dans AppStatusBar / MemoMaster doit utiliser la classe robot-assistant-icon'
   );
 
   // Verify BetaChat uses beta-chat-icon

@@ -97,7 +97,7 @@ const bannerStyles = `
 .cert-banner {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 12px 18px; border-radius: 14px;
-  background: linear-gradient(135deg, rgba(77,107,254,0.12), rgba(167,139,250,0.12));
+  background: linear-gradient(135deg, rgba(139, 92, 246,0.12), rgba(167,139,250,0.12));
   border: 1px solid var(--mm-border-strong);
   color: var(--mm-fg); font-weight: 700; font-size: 13.5px;
   box-shadow: 0 6px 20px -10px var(--mm-primary);
@@ -227,7 +227,7 @@ const HeroHeader = ({ stats, onRefresh, refreshing }) => (
 const PRIORITY_COLOR = {
   'Critique': { bg: 'rgba(244,63,94,0.14)', fg: '#f43f5e' },
   'Élevée': { bg: 'rgba(250,204,21,0.14)', fg: '#facc15' },
-  'Moyenne': { bg: 'rgba(59,130,246,0.14)', fg: '#3b82f6' },
+  'Moyenne': { bg: 'rgba(139, 92, 246,0.14)', fg: '#8B5CF6' },
 };
 
 // ── URL helpers : évite les liens 404 / inventés ────────────────────────
@@ -372,7 +372,7 @@ const CertCard = ({ cert, onToggleDone, done, onPrepare }) => {
           <span>Impact Salaire</span>
         </div>
         <div className="cd-stat">
-          <div className="cd-stat-val"><TrendingUp size={14} color="#3b82f6" /><b>{cert.demand || '—'}</b></div>
+          <div className="cd-stat-val"><TrendingUp size={14} color="#8B5CF6" /><b>{cert.demand || '—'}</b></div>
           <span>Demande</span>
         </div>
         <div className="cd-stat">
@@ -1000,12 +1000,12 @@ const dashStyles = `
 .cd-hero {
   position: relative; overflow: hidden; isolation: isolate;
   border-radius: 28px; padding: clamp(24px, 4vw, 40px);
-  background: linear-gradient(135deg, #3b5cff 0%, #4d6bfe 50%, #6a87ff 100%);
+  background: linear-gradient(135deg, #7C3AED 0%, #8B5CF6 50%, #A78BFA 100%);
   color: #fff; margin-bottom: 24px;
-  box-shadow: 0 20px 60px -16px rgba(77,107,254,0.55);
+  box-shadow: 0 20px 60px -16px rgba(139, 92, 246,0.55);
 }
 :root:not([data-theme="light"]) .cd-hero {
-  background: linear-gradient(135deg, #4338ca 0%, #6d28d9 50%, #8b5cf6 100%);
+  background: linear-gradient(135deg, #6d28d9 0%, #6d28d9 50%, #8b5cf6 100%);
   box-shadow: 0 20px 60px -16px rgba(124,58,237,0.55);
 }
 .cd-hero-glow { position: absolute; border-radius: 50%; filter: blur(80px); z-index: 0; }
@@ -1027,7 +1027,7 @@ const dashStyles = `
 .cd-refresh-btn {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-radius: 999px;
-  background: #fff; color: #4d6bfe;
+  background: #fff; color: #8B5CF6;
   border: none; cursor: pointer; font-weight: 800; font-size: 13px;
   box-shadow: 0 6px 16px rgba(0,0,0,0.15); transition: transform .15s ease;
 }
@@ -1187,7 +1187,7 @@ const dashStyles = `
 .cd-plan-summary {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 10px 16px; border-radius: 12px; align-self: flex-start;
-  background: linear-gradient(135deg, rgba(77,107,254,0.12), rgba(167,139,250,0.12));
+  background: linear-gradient(135deg, rgba(139, 92, 246,0.12), rgba(167,139,250,0.12));
   color: var(--mm-fg); font-weight: 700; border: 1px solid var(--mm-border-strong);
 }
 .cd-weeks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
@@ -1262,7 +1262,7 @@ const dashStyles = `
 .cd-live-banner {
   display: inline-flex; align-items: center; gap: 8px;
   padding: 8px 14px; border-radius: 12px; margin-bottom: 16px;
-  background: linear-gradient(135deg, rgba(77,107,254,0.12), rgba(167,139,250,0.12));
+  background: linear-gradient(135deg, rgba(139, 92, 246,0.12), rgba(167,139,250,0.12));
   border: 1px solid var(--mm-border-strong);
   color: var(--mm-fg); font-size: 13px; font-weight: 600;
 }
@@ -1270,7 +1270,7 @@ const dashStyles = `
 
 /* ── J'ai vu une certif ─────────────────────────────────────────────── */
 .cd-hint-panel {
-  background: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(77,107,254,0.06));
+  background: linear-gradient(135deg, rgba(124,58,237,0.10), rgba(139, 92, 246,0.06));
   border: 1px solid var(--mm-border-strong);
   border-radius: 18px;
   padding: 16px 18px;

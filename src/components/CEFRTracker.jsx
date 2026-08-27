@@ -99,7 +99,7 @@ export default function CEFRTracker({ cefrState, isAnalyzing, triggerAnalysis, c
             
             <div style={{ 
               marginBottom: 24, display: "inline-flex", flexDirection: "column", alignItems: "center", 
-              background: "linear-gradient(135deg, rgba(77, 107, 254,0.1), rgba(77, 107, 254,0.1))",
+              background: "linear-gradient(135deg, rgba(139, 92, 246,0.1), rgba(139, 92, 246,0.1))",
               padding: "16px 32px", borderRadius: 20, border: `1px solid ${theme.primary}40`,
               boxShadow: `0 8px 30px ${theme.primary}20`
             }}>
@@ -114,7 +114,7 @@ export default function CEFRTracker({ cefrState, isAnalyzing, triggerAnalysis, c
                   key={level}
                   points={calculatePolygonPoints([level, level, level, level, level], cx, cy, radius, 6)}
                   fill="none"
-                  stroke={isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)"}
+                  stroke={isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)"}
                   strokeWidth="1"
                 />
               ))}
@@ -124,7 +124,7 @@ export default function CEFRTracker({ cefrState, isAnalyzing, triggerAnalysis, c
                 const angle = i * ((Math.PI * 2) / 5) - Math.PI / 2;
                 const x = cx + radius * Math.cos(angle);
                 const y = cy + radius * Math.sin(angle);
-                return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(77,107,254,0.05)"} strokeWidth="1" />;
+                return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)"} strokeWidth="1" />;
               })}
               
               {/* Labels des axes */}
@@ -208,7 +208,7 @@ export default function CEFRTracker({ cefrState, isAnalyzing, triggerAnalysis, c
                       </div>
                     )}
                     {gap.exercise && (
-                      <div style={{ fontSize: 12, fontWeight: 600, color: theme.textMuted, background: "rgba(77,107,254,0.05)", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: theme.textMuted, background: "rgba(139, 92, 246,0.05)", padding: "4px 8px", borderRadius: 6, display: "inline-block" }}>
                         💡 Drill: {gap.exercise}
                       </div>
                     )}
