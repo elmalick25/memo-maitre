@@ -148,7 +148,7 @@ test('FSRS — nextReview est dans le futur quand interval >= 1', () => {
 // Régime intensif anglais & incubation
 // ══════════════════════════════════════════════════════════════════════════════
 
-test('Régime intensif : sans masteryStage, la fiche anglaise monte palier par palier (1→3→7→14)', () => {
+test('Régime intensif : sans masteryStage, délais adaptatifs (rétention 93 %) plafonnés à 14j', () => {
   let card = { ...newCard(), category: '🇬🇧 Anglais' };
   const seen = [];
   for (let i = 0; i < 6; i++) {
@@ -156,9 +156,11 @@ test('Régime intensif : sans masteryStage, la fiche anglaise monte palier par p
     seen.push(r.interval);
     card = { ...card, ...r, elapsedDays: r.interval };
   }
-  assert.deepEqual(seen.slice(0, 4), ENGLISH_INTENSIVE_LADDER);
-  assert.ok(seen.every((i) => i <= ENGLISH_INTENSIVE_EXIT_INTERVAL));
-  assert.equal(card.interval, ENGLISH_INTENSIVE_EXIT_INTERVAL, 'plafonnée au dernier palier sans stade recalled');
+  for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1], 'délais croissants');
+  assert.ok(seen.every((i) => i >= 1 && i <= ENGLISH_INTENSIVE_EXIT_INTERVAL));
+  const plain = fsrs(newCard(), 5);
+  assert.ok(seen[0] <= plain.interval, 'rétention 93 % ⇒ jamais plus long que le régime standard');
+  assert.equal(card.interval, ENGLISH_INTENSIVE_EXIT_INTERVAL, 'plafonnée à 14j sans stade recalled');
 });
 
 test('Plafond levé pour "recalled" (fiche déjà stable, pression de production déléguée aux missions)', () => {
@@ -193,17 +195,28 @@ test('Double condition de sortie : stade recalled SEUL ne suffit pas si le derni
   assert.equal(isEnglishIntensive(stuck), true, 'dernier palier SEUL ne suffit pas non plus');
 });
 
-test('Régime intensif : un échec fait redescendre au bas de l\'échelle (1j)', () => {
+test('Régime intensif : un échec ramène la fiche à 1j', () => {
   let card = { ...newCard(), category: '🇬🇧 Anglais' };
   for (let i = 0; i < 3; i++) {
     const r = fsrs(card, 5);
     card = { ...card, ...r, elapsedDays: r.interval };
   }
-  assert.equal(card.interval, 7);
+  assert.ok(card.interval > 1);
   const failed = fsrs(card, 0);
   assert.equal(failed.interval, 0, 'échec ⇒ à revoir aujourd\'hui');
   const back = fsrs({ ...card, ...failed }, 5);
-  assert.equal(back.interval, ENGLISH_INTENSIVE_LADDER[0], 'après un échec, on repart au premier palier');
+  assert.equal(back.interval, 1, 'après un échec, retour le lendemain');
+});
+
+test('Temps de réponse : Correct lent ⇒ Difficile, seuil selon le type', () => {
+  const slowQa = fsrs({ ...newCard(), type: 'qa' }, 3, { responseMs: 20000 });
+  assert.equal(slowQa.reviewHistoryEntry.q, 1);
+  assert.equal(slowQa.reviewHistoryEntry.latencyAdjusted, true);
+  assert.equal(slowQa.reviewHistoryEntry.responseMs, 20000);
+  const slowCode = fsrs({ ...newCard(), type: 'code' }, 3, { responseMs: 20000 });
+  assert.equal(slowCode.reviewHistoryEntry.q, 3, '20s reste correct pour du code');
+  const easy = fsrs({ ...newCard(), type: 'qa' }, 5, { responseMs: 60000 });
+  assert.equal(easy.reviewHistoryEntry.q, 5, 'jamais modifié hors Correct');
 });
 
 test('nextIntensiveInterval : ne dépasse jamais l\'intervalle FSRS proposé', () => {

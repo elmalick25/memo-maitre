@@ -1,15 +1,15 @@
 :root {
   --text: #2e1065;
   --text-h: #1e1b4b;
-  --bg: #ffffff;
-  --border: #f3e8ff;
-  --code-bg: #faf5ff;
-  --accent: #8b5cf6;
-  --accent-bg: rgba(139, 92, 246, 0.10);
-  --accent-border: rgba(139, 92, 246, 0.45);
+  --bg: var(--mm-bg, #07060f);
+  --border: color-mix(in srgb, var(--mm-primary) 10%, white);
+  --code-bg: color-mix(in srgb, var(--mm-primary) 4%, white);
+  --accent: var(--mm-primary);
+  --accent-bg: color-mix(in srgb, var(--mm-primary) 10.0%, transparent);
+  --accent-border: color-mix(in srgb, var(--mm-primary) 45.0%, transparent);
   --social-bg: rgba(243, 232, 255, 0.5);
   --shadow:
-    rgba(139, 92, 246, 0.12) 0 10px 15px -3px, rgba(139, 92, 246, 0.05) 0 4px 6px -2px;
+    color-mix(in srgb, var(--mm-primary) 12.0%, transparent) 0 10px 15px -3px, color-mix(in srgb, var(--mm-primary) 5.0%, transparent) 0 4px 6px -2px;
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
@@ -24,15 +24,37 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+@media (max-width: 768px) {
+  :root {
+    font: 18px/145% var(--sans) !important;
+    font-size: 18px !important;
+    letter-spacing: 0.18px !important;
+  }
+}
+
+@media (min-width: 769px) {
+  :root {
+    font: 15px/140% var(--sans);
+    font-size: 15px;
+    letter-spacing: 0.05px;
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+}
+
 /* ══════════════════════════════════════════════
    SCROLL FIX — règle d'or :
    Un seul ancêtre scrollable = html.
    body et #root s'étirent librement.
-══════════════════════════════════════════════ */
+ ══════════════════════════════════════════════ */
 html {
   margin: 0;
   padding: 0;
+  width: 100%;
   height: 100%;          /* référence pour les enfants */
+  background: var(--mm-bg, #07060f);
   overflow-x: hidden;
   overflow-y: auto;      /* ← LE scroll container principal */
   scroll-behavior: smooth;

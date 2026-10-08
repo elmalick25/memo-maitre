@@ -8,7 +8,7 @@
 //   estMinutes     : durée estimée de session
 //   onStartSession : () => void  -> démarre la révision
 //   onExploreLab   : () => void  -> ouvre le Lab si rien à réviser
-//   stats          : { forme, mastery, nextExamDays }
+//   stats          : { forme, mastery }
 //   onOpenStats    : (which) => void
 //   quests         : [{id, label, done}]
 //   questsProgress : { done, total }
@@ -21,7 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { computeNearMiss } from "../lib/nearMiss";
 import { haptic } from "../lib/haptics";
 import { today as todayStr } from "../utils/dateUtils";
-import RoutineAlertCard from "./RoutineAlertCard";
+import { useBetaUnreadCount } from "../hooks/useBetaUnreadCount";
 
 // CHANTIER 19 — Rituel de réouverture : UNE fois par jour, pas à chaque
 // navigation. Même logique de garde journalière que monthKey/refillFreezeTokens
@@ -48,7 +48,7 @@ export default function MobileHomeV2({
   dueModules = [],
   onStartSession,
   onExploreLab,
-  stats = { forme: 0, mastery: 0, nextExamDays: null },
+  stats = { forme: 0, mastery: 0 },
   onOpenStats,
   quests = [],
   questsProgress = { done: 0, total: 0 },
@@ -68,7 +68,10 @@ export default function MobileHomeV2({
   const [isSelectingModule, setIsSelectingModule] = useState(false);
   const [ritual, setRitual] = useState(false);
   const [hookIndex, setHookIndex] = useState(0);
+  const [isHookPaused, setIsHookPaused] = useState(false);
+  const pauseTimeoutRef = useRef(null);
   const ritualDone = useRef(false);
+  const { unreadCount } = useBetaUnreadCount();
 
   // ── Accueil mobile SANS scroll : tant qu'on est sur la home (et pas sur le
   //    sélecteur de module, qui lui doit défiler), on verrouille le défilement
@@ -93,13 +96,14 @@ export default function MobileHomeV2({
   );
   const activeHook = hooks.length ? hooks[hookIndex % hooks.length] : null;
 
-  // Rotation lente : on donne plusieurs raisons de revenir sans jamais noyer
-  // le hero (une ligne à la fois).
+  // Rotation calibrée à 4 500 ms (au moins 3 secondes, confort de lecture garanti)
   useEffect(() => {
-    if (hooks.length < 2) return undefined;
-    const id = setInterval(() => setHookIndex((i) => i + 1), 6000);
+    if (hooks.length < 2 || isHookPaused) return undefined;
+    const id = setInterval(() => {
+      setHookIndex((i) => (i + 1) % hooks.length);
+    }, 4500);
     return () => clearInterval(id);
-  }, [hooks.length]);
+  }, [hooks.length, isHookPaused]);
 
   // ── CHANTIER 19 — le rituel : la flamme s'anime, un haptique discret, une
   //    seule fois dans la journée. Ouvrir l'app devient gratifiant en soi. ──
@@ -160,10 +164,10 @@ export default function MobileHomeV2({
           type="button"
           onClick={() => onStartSession?.(null)}
           style={{ 
-            background: "linear-gradient(135deg, #7c3aed 0%, #7c3aed 100%)",
+            background: "linear-gradient(135deg, var(--mm-primary) 0%, var(--mm-primary) 100%)",
             padding: "24px", borderRadius: 24, border: "none", color: "white",
             display: "flex", alignItems: "center", gap: 20, cursor: "pointer",
-            boxShadow: "0 12px 32px rgba(124,58,237,0.35)", width: "100%", marginBottom: 24,
+            boxShadow: "0 12px 32px rgba(139, 92, 246, 0.35)", width: "100%", marginBottom: 24,
             textAlign: "left"
           }}
         >
@@ -197,7 +201,7 @@ export default function MobileHomeV2({
                 }}
               >
                 <div style={{ fontWeight: 800, fontSize: 15, lineHeight: 1.3, marginBottom: 16, wordBreak: "break-word" }}>{mod.name}</div>
-                <div style={{ background: "var(--mm-primary-soft, rgba(139,92,246,0.14))", color: "var(--mm-primary, #8B5CF6)", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
+                <div style={{ background: "var(--mm-primary-soft, color-mix(in srgb, var(--mm-primary) 14.0%, transparent))", color: "var(--mm-primary, var(--mm-primary))", padding: "6px 12px", borderRadius: 12, fontSize: 13, fontWeight: 800 }}>
                   {mod.count} fiche{mod.count > 1 ? "s" : ""}
                 </div>
               </button>
@@ -221,8 +225,8 @@ export default function MobileHomeV2({
             <svg className="mhv2-hero-ring" viewBox="0 0 100 100">
               <defs>
                 <linearGradient id="mhv2RingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#a78bfa" />
-                  <stop offset="50%" stopColor="#f472b6" />
+                  <stop offset="0%" stopColor="var(--mm-primary-glow)" />
+                  <stop offset="50%" stopColor="#9c4a55" />
                   <stop offset="100%" stopColor="#fbbf24" />
                 </linearGradient>
               </defs>
@@ -267,7 +271,7 @@ export default function MobileHomeV2({
           <div className="mhv2-hero-stat" title={`Énergie ${energy}%`}>
             <span className="mhv2-hero-stat-ico" data-tone="volt">⚡</span>
             <span className="mhv2-hero-stat-body">
-              <strong>{energy}</strong>
+              <strong>{energy}%</strong>
               <em>Énergie</em>
             </span>
           </div>
@@ -275,14 +279,28 @@ export default function MobileHomeV2({
             <span className="mhv2-hero-stat-ico" data-tone="star">✨</span>
             <span className="mhv2-hero-stat-body">
               <strong>{xp}</strong>
-              <em>XP total</em>
+              <em>XP</em>
             </span>
           </div>
         </div>
 
         {/* ── CHANTIER 18 — la raison de rentrer, AVANT même de commencer ── */}
         {activeHook && (
-          <div className="mhv2-hero-hook" key={activeHook.id} aria-live="polite">
+          <div
+            className="mhv2-hero-hook"
+            key={activeHook.id}
+            aria-live="polite"
+            onTouchStart={() => {
+              setIsHookPaused(true);
+              if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
+            }}
+            onTouchEnd={() => {
+              if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
+              pauseTimeoutRef.current = setTimeout(() => setIsHookPaused(false), 3000);
+            }}
+            onMouseEnter={() => setIsHookPaused(true)}
+            onMouseLeave={() => setIsHookPaused(false)}
+          >
             <span className="mhv2-hero-hook-ico" aria-hidden="true">{activeHook.icon}</span>
             <span className="mhv2-hero-hook-text">{activeHook.text}</span>
           </div>
@@ -333,31 +351,33 @@ export default function MobileHomeV2({
         </div>
       </button>
 
-      {/* ── 4 tuiles compactes ── */}
+      {/* ── 2 tuiles d'action pleine largeur : Discussion & Assistant ── */}
       <div className="mhv2-tiles">
-        <button type="button" className="mhv2-tile" onClick={() => onOpenStats?.("forme")}>
-          <div className="mhv2-tile-value">{stats.forme ?? 0}<span className="mhv2-tile-unit">%</span></div>
-          <div className="mhv2-tile-label">Forme</div>
-        </button>
-        <button type="button" className="mhv2-tile" onClick={() => onOpenStats?.("mastery")}>
-          <div className="mhv2-tile-value">{stats.mastery ?? 0}<span className="mhv2-tile-unit">%</span></div>
-          <div className="mhv2-tile-label">Maîtrise</div>
-        </button>
         <button
           type="button"
-          className="mhv2-tile mhv2-tile-chat"
+          className="mhv2-tile mhv2-tile-action mhv2-tile-chat"
           onClick={() => { haptic("tap"); window.dispatchEvent(new CustomEvent("open_beta_chat")); }}
         >
-          <div className="mhv2-tile-icon-box">💬</div>
+          <span className="mhv2-tile-chip mhv2-tile-chip-beta">BÊTA</span>
+          <div className="mhv2-tile-icon-box">
+            💬
+            <span
+              className={`mhv2-chat-badge ${unreadCount > 0 ? "has-unread" : "is-zero"}`}
+              aria-label={unreadCount === 0 ? "0 message non lu" : `${unreadCount} message(s) non lu(s)`}
+            >
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          </div>
           <div className="mhv2-tile-label">Discussion</div>
         </button>
         <button
           type="button"
-          className="mhv2-tile mhv2-tile-agent"
+          className="mhv2-tile mhv2-tile-action mhv2-tile-agent"
           onClick={() => { haptic("tap"); window.dispatchEvent(new CustomEvent("open_agent_panel")); }}
         >
+          <span className="mhv2-tile-chip">IA</span>
           <div className="mhv2-tile-icon-box">🤖</div>
-          <div className="mhv2-tile-label">Assistant IA</div>
+          <div className="mhv2-tile-label">Assistant</div>
         </button>
       </div>
 
@@ -395,7 +415,7 @@ export default function MobileHomeV2({
         </button>
       </div>
 
-      {/* ── Contenu additionnel (ex: DailyRoutineTracker) ── */}
+      {/* ── Contenu additionnel ── */}
       {children}
     </div>
   );

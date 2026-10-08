@@ -64,7 +64,7 @@ export function useXP(storage, showToast, callClaude) {
     storage.set(STORAGE_KEY, newState);
   }, [storage]);
 
-  const addXP = useCallback((baseAmount, reason, actionType = null) => {
+  const addXP = useCallback((baseAmount, reason = "", actionType = null) => {
     if (!isLoaded) return;
     
     // On utilise les reférences pour muter les variables de session, mais on calcule
@@ -96,11 +96,12 @@ export function useXP(storage, showToast, callClaude) {
 
       // Check Badges
       let newActionData = actionType ? { type: actionType } : null;
-      if (reason.toLowerCase().includes("role-play")) {
+      const safeReason = (typeof reason === "string" ? reason : "").toLowerCase();
+      if (safeReason.includes("role-play")) {
         if (!newActionData) newActionData = { type: "ROLE_PLAY_COMPLETED" };
         else newActionData.type = "ROLE_PLAY_COMPLETED";
       }
-      if (reason.toLowerCase().includes("news")) {
+      if (safeReason.includes("news")) {
         if (!newActionData) newActionData = { type: "NEWS_READ" };
         else newActionData.type = "NEWS_READ";
       }

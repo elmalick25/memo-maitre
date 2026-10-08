@@ -24,10 +24,10 @@ export default function AppMobileNav({
   navigate = () => {},
   searchQuery = "",
   setSearchQuery = () => {},
-  setProjectSubView = () => {},
   unlockedBadges = [],
   lastViewedBadgesCount = 0,
-  projectPomodoroTime = 1500,
+  projectPomodoroTime = 50 * 60,
+  projectPomodoroTotal = 50 * 60,
   projectPomodoroActive = false,
   setProjectPomodoroActive = () => {},
   projectPomodoroMode = "study",
@@ -53,11 +53,19 @@ export default function AppMobileNav({
           setMobileDrawerOpen(false);
           setMobileFabOpen(false);
           setView(id);
+          navigate?.(id);
+          if (id === "dashboard" || id === "home") {
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }
         }}
         onOpenAddSheet={() => {
           setMobileDrawerOpen(false);
           setMobileFabOpen(false);
-          setView("add");
+          if (typeof setMobileAddSheetOpen === "function") {
+            setMobileAddSheetOpen(true);
+          } else {
+            setView("add");
+          }
         }}
         onOpenMoreDrawer={() => {
           setMobileFabOpen(false);
@@ -101,7 +109,7 @@ export default function AppMobileNav({
               animation: "drawerUp 0.3s cubic-bezier(0.34,1.56,0.64,1)",
               maxHeight: "85vh",
               overflowY: "auto",
-              boxShadow: "0 -10px 40px rgba(139, 92, 246,0.2)",
+              boxShadow: "0 -10px 40px color-mix(in srgb, var(--mm-primary) 20.0%, transparent)",
             }}
             onTouchStart={(e) => {
               touchStartY.current = e.touches[0].clientY;
@@ -118,7 +126,7 @@ export default function AppMobileNav({
               style={{
                 width: 48,
                 height: 5,
-                background: isDarkMode ? "rgba(255,255,255,0.2)" : "rgba(139, 92, 246,0.1)",
+                background: isDarkMode ? "rgba(255,255,255,0.2)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
                 borderRadius: 3,
                 margin: "0 auto 24px",
               }}
@@ -132,8 +140,8 @@ export default function AppMobileNav({
                 style={{
                   width: "100%",
                   padding: "12px 16px",
-                  background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.05)",
-                  border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)"}`,
+                  background: isDarkMode ? "rgba(255,255,255,0.05)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)",
+                  border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)"}`,
                   borderRadius: 16,
                   color: theme?.text || "#0F172A",
                   fontSize: 15,
@@ -141,9 +149,9 @@ export default function AppMobileNav({
                 }}
                 value={searchQuery}
                 onChange={(e) => {
+                  // Ne ferme plus le drawer à chaque frappe : on laisse
+                  // l'utilisateur taper sa recherche complète.
                   setSearchQuery(e.target.value);
-                  setView("list");
-                  setMobileDrawerOpen(false);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
@@ -183,11 +191,9 @@ export default function AppMobileNav({
             >
               Apprentissage
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12, marginBottom: 24 }}>
               {[
-                { id: "routine", icon: "🌟", label: "Routine" },
                 { id: "practice", icon: "🗣️", label: "English" },
-                { id: "projects", icon: "🗂️", label: "Projets" },
                 { id: "veille", icon: "📰", label: "Actualités" },
               ].map((item) => (
                 <button
@@ -195,20 +201,19 @@ export default function AppMobileNav({
                   onClick={() => {
                     setView(item.id);
                     setMobileDrawerOpen(false);
-                    if (item.id === "projects") setProjectSubView("hub");
                   }}
                   style={{
                     background:
                       view === item.id
-                        ? (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.1)")
-                        : (isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(139,92,246,0.05)"),
+                        ? (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)")
+                        : (isDarkMode ? "rgba(255,255,255,0.03)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)"),
                     border: `1px solid ${
                       view === item.id
-                        ? (theme?.highlight || "#8B5CF6")
-                        : (isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139,92,246,0.05)")
+                        ? (theme?.highlight || "var(--mm-primary)")
+                        : (isDarkMode ? "rgba(255,255,255,0.05)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)")
                     }`,
                     borderRadius: 18,
-                    color: view === item.id ? (theme?.highlight || "#8B5CF6") : (theme?.text || "#0F172A"),
+                    color: view === item.id ? (theme?.highlight || "var(--mm-primary)") : (theme?.text || "#0F172A"),
                     padding: "16px 8px",
                     cursor: "pointer",
                     display: "flex",
@@ -261,15 +266,15 @@ export default function AppMobileNav({
                   style={{
                     background:
                       view === item.id
-                        ? (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.1)")
-                        : (isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(139,92,246,0.05)"),
+                        ? (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)")
+                        : (isDarkMode ? "rgba(255,255,255,0.03)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)"),
                     border: `1px solid ${
                       view === item.id
-                        ? (theme?.highlight || "#8B5CF6")
-                        : (isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139,92,246,0.05)")
+                        ? (theme?.highlight || "var(--mm-primary)")
+                        : (isDarkMode ? "rgba(255,255,255,0.05)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)")
                     }`,
                     borderRadius: 18,
-                    color: view === item.id ? (theme?.highlight || "#8B5CF6") : (theme?.text || "#0F172A"),
+                    color: view === item.id ? (theme?.highlight || "var(--mm-primary)") : (theme?.text || "#0F172A"),
                     padding: "16px 8px",
                     cursor: "pointer",
                     display: "flex",
@@ -308,7 +313,7 @@ export default function AppMobileNav({
             {expressions.length > 0 && (
               <div
                 style={{
-                  background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139,92,246,0.05)",
+                  background: isDarkMode ? "rgba(255,255,255,0.05)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)",
                   borderRadius: 18,
                   padding: "16px 20px",
                   marginBottom: 16,
@@ -316,16 +321,16 @@ export default function AppMobileNav({
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <span style={{ fontSize: 12, color: theme?.textMuted || "#64748B", fontWeight: 700 }}>MAÎTRISE GLOBALE</span>
-                  <span style={{ fontSize: 16, fontWeight: 900, color: theme?.highlight || "#8B5CF6" }}>
+                  <span style={{ fontSize: 16, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)" }}>
                     {expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%
                   </span>
                 </div>
-                <div style={{ height: 6, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.1)", borderRadius: 3 }}>
+                <div style={{ height: 6, background: isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)", borderRadius: 3 }}>
                   <div
                     style={{
                       height: "100%",
                       width: `${expressions.length > 0 ? Math.round((masteredCount / expressions.length) * 100) : 0}%`,
-                      background: "linear-gradient(90deg,#C084FC,#8B5CF6)",
+                      background: "linear-gradient(90deg,var(--mm-primary-glow),var(--mm-primary))",
                       borderRadius: 3,
                     }}
                   />
@@ -338,25 +343,25 @@ export default function AppMobileNav({
             )}
 
             {/* Pomodoro dans drawer si actif */}
-            {(projectPomodoroTime < 25 * 60 || projectPomodoroActive) && (
+            {(projectPomodoroTime < projectPomodoroTotal || projectPomodoroActive) && (
               <div
                 style={{
-                  background: isDarkMode ? "rgba(139,92,246,0.15)" : "rgba(139,92,246,0.1)",
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
                   borderRadius: 18,
                   padding: "16px 20px",
                   display: "flex",
                   alignItems: "center",
                   gap: 12,
-                  border: `1px solid ${isDarkMode ? "rgba(139,92,246,0.2)" : "rgba(139,92,246,0.15)"}`,
+                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)"}`,
                 }}
               >
                 <span style={{ fontSize: 20 }}>{projectPomodoroMode === "study" ? "📚" : projectPomodoroMode === "project" ? "🗂️" : "☕"}</span>
-                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: theme?.highlight || "#8B5CF6", fontWeight: 800, flex: 1 }}>
+                <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: theme?.highlight || "var(--mm-primary)", fontWeight: 800, flex: 1 }}>
                   {formatPomodoro(projectPomodoroTime)}
                 </span>
                 <button
                   onClick={() => setProjectPomodoroActive((a) => !a)}
-                  style={{ background: "none", border: "none", color: theme?.highlight || "#8B5CF6", cursor: "pointer", fontSize: 24 }}
+                  style={{ background: "none", border: "none", color: theme?.highlight || "var(--mm-primary)", cursor: "pointer", fontSize: 24 }}
                 >
                   {projectPomodoroActive ? "⏸" : "▶"}
                 </button>

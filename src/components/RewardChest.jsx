@@ -64,7 +64,7 @@ export default function RewardChest({ chest, onClose, theme = {}, duration = 260
           </div>
         )}
         {chest.freezeToken > 0 && (
-          <div style={{ marginTop: 12, fontWeight: 800, fontSize: 15, color: "#C084FC" }}>
+          <div style={{ marginTop: 12, fontWeight: 800, fontSize: 15, color: "var(--mm-primary-glow)" }}>
             🧊 +{chest.freezeToken} jeton de gel
           </div>
         )}

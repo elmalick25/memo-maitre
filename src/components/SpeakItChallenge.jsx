@@ -226,7 +226,7 @@ export default function SpeakItChallenge({
                   padding: "10px 14px", background: card, borderRadius: 12,
                   marginBottom: 8, display: "flex", alignItems: "center", gap: 10,
                 }}>
-                  <span style={{ fontSize: 20, fontWeight: 900, color: "#8B5CF6" }}>{i + 1}</span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: "var(--mm-primary)" }}>{i + 1}</span>
                   <strong style={{ fontSize: 15 }}>{t.front}</strong>
                 </div>
               ))}
@@ -236,7 +236,7 @@ export default function SpeakItChallenge({
                 disabled={!targets.length}
                 onClick={startRecording}
                 style={{
-                  flex: 1, padding: "14px", background: "linear-gradient(135deg, #A855F7, #8B5CF6)",
+                  flex: 1, padding: "14px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                   color: "white", border: "none", borderRadius: 100, fontWeight: 800, fontSize: 15,
                   cursor: targets.length ? "pointer" : "not-allowed", opacity: targets.length ? 1 : 0.4,
                 }}
@@ -282,7 +282,7 @@ export default function SpeakItChallenge({
               disabled={transcript.trim().length < 10}
               onClick={() => grade(transcript)}
               style={{
-                width: "100%", padding: 14, background: "linear-gradient(135deg, #A855F7, #8B5CF6)",
+                width: "100%", padding: 14, background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                 color: "white", border: "none", borderRadius: 100, fontWeight: 800, fontSize: 15,
                 cursor: transcript.trim().length >= 10 ? "pointer" : "not-allowed",
                 opacity: transcript.trim().length >= 10 ? 1 : 0.4,
@@ -326,7 +326,7 @@ export default function SpeakItChallenge({
                 flex: 1, padding: 12, background: card, color: text, border: "none", borderRadius: 100, fontWeight: 700, cursor: "pointer",
               }}>🔁 Nouveau défi</button>
               <button onClick={onClose} style={{
-                flex: 1, padding: 12, background: "linear-gradient(135deg, #A855F7, #8B5CF6)", color: "white", border: "none", borderRadius: 100, fontWeight: 800, cursor: "pointer",
+                flex: 1, padding: 12, background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 100, fontWeight: 800, cursor: "pointer",
               }}>Terminé</button>
             </div>
           </>

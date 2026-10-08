@@ -105,14 +105,19 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
   const cards = Array.isArray(dueCards) ? dueCards : [];
   let base = normalizeDailyPlan(plan, todayISO);
 
-  // Auto-intégration des fiches révisées aujourd'hui (même si faites sur un autre appareil)
+  // Auto-intégration des fiches révisées aujourd'hui (même si faites sur un autre appareil) :
+  // Si la fiche appartenait déjà au plan officiel (base.ids), elle est marquée comme traitée (base.doneIds).
+  // Si la fiche a été révisée hors plan (ex: révision libre d'un module), elle est enregistrée
+  // en `bonusIds` et `doneIds` pour figurer dans l'historique SANS cannibaliser le quota des 35 fiches du jour.
   if (Array.isArray(reviewedTodayIds) && reviewedTodayIds.length > 0) {
     for (const id of reviewedTodayIds) {
       if (!base.doneIds.includes(id)) {
         base.doneIds.push(id);
-        if (!base.ids.includes(id)) {
-          // On l'ajoute au plan officiel (pas en bonus) pour qu'elle consomme le quota.
-          base.ids.push(id);
+      }
+      if (!base.ids.includes(id)) {
+        base.ids.push(id);
+        if (!base.bonusIds.includes(id)) {
+          base.bonusIds.push(id);
         }
       }
     }
@@ -168,7 +173,14 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
   // fiches ajoutées/déverrouillées en cours de journée), on comble les places
   // libres avec la même priorisation (leech > retard > dues > consolidation).
   const keptSet = new Set(kept);
-  const freeSlots = room === Infinity ? Infinity : room - allowedPending.length;
+  // BUGFIX « fiches injectées » : une fois le plan du jour scellé (et non
+  // vide), on ne le complète PLUS. Avant, chaque fois qu'une fiche du plan
+  // sortait du pool éligible (budget de fiches neuves qui baisse au fil des
+  // révisions, fiche suspendue, sync…), une place se libérait et de nouvelles
+  // fiches (souvent anglaises) étaient injectées à chaque sortie de session.
+  // Les révisions supplémentaires passent par la session bonus explicite.
+  const planLocked = base.sealed === true && base.ids.length > 0;
+  const freeSlots = planLocked ? 0 : (room === Infinity ? Infinity : room - allowedPending.length);
   let ids = kept;
   if (freeSlots > 0) {
     const candidates = cards.filter((c) => !keptSet.has(c.id) && !doneSet.has(c.id));

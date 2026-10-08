@@ -17,14 +17,14 @@
 
 export const NOTIF_GROUPS = [
   { id: "urgent", label: "Urgent", icon: "🚨", color: "#EF4444" },
-  { id: "today", label: "Aujourd'hui", icon: "🎯", color: "#8B5CF6" },
-  { id: "progress", label: "Progression", icon: "📈", color: "#10B981" },
-  { id: "info", label: "Infos", icon: "💡", color: "#94A3B8" },
+  { id: "insights", label: "Insights & Analyse", icon: "💡", color: "#8B5CF6" },
+  { id: "today", label: "À réviser", icon: "🎯", color: "#2563eb" },
+  { id: "info", label: "Système", icon: "⚙️", color: "#94A3B8" },
 ];
 
 const STORE_KEY = "mm_notif_state_v1";
 
-/** État local : { read: {id: ts}, snoozed: {id: dateISO}, lastOpen: ts } */
+/** État local : { read: {id: ts}, snoozed: {id: dateISO}, dismissedInsights: {id: ts}, lastOpen: ts } */
 export function loadNotifState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -32,10 +32,11 @@ export function loadNotifState() {
     return {
       read: parsed.read && typeof parsed.read === "object" ? parsed.read : {},
       snoozed: parsed.snoozed && typeof parsed.snoozed === "object" ? parsed.snoozed : {},
+      dismissedInsights: parsed.dismissedInsights && typeof parsed.dismissedInsights === "object" ? parsed.dismissedInsights : {},
       lastOpen: Number(parsed.lastOpen) || 0,
     };
   } catch {
-    return { read: {}, snoozed: {}, lastOpen: 0 };
+    return { read: {}, snoozed: {}, dismissedInsights: {}, lastOpen: 0 };
   }
 }
 
@@ -55,29 +56,58 @@ export function isSnoozed(notif, state) {
   return !!until && until >= todayISO();
 }
 
+/** Vérifie si un insight a expiré (TTL 48h par défaut pour les insights) */
+export function isExpiredInsight(notif, state) {
+  if (notif.group !== "insights") return false;
+  // Si déjà ignoré/dismissed par l'utilisateur
+  if (state?.dismissedInsights?.[notif.id]) return true;
+  // TTL temporel : 48h à partir de l'horodatage ou de la date de création
+  const createdTs = notif.timestamp || (notif.dateISO ? new Date(notif.dateISO).getTime() : Date.now());
+  const ageHours = (Date.now() - createdTs) / (1000 * 60 * 60);
+  return ageHours > 48;
+}
+
 /**
- * Construit le flux complet.
+ * Construit le flux complet axé sur la valeur pédagogique et les insights.
+ * Zéro gamification (ni quêtes, ni streaks, ni combos, ni niveau d'énergie).
  * @param {object} ctx — données brutes de MemoMaster
  */
 export function buildNotifications(ctx = {}) {
   const {
     dueCount = 0,
     overdueCount = 0,
-    routineSummary = null,
-    routineFraming = null,
-    questBoard = null,
     leeches = [],
     incubating = [],
-    streak = 0,
-    reviewedToday = 0,
-    energy = null,
     syncError = null,
     lastSyncAt = null,
-    newCardsToday = 0,
+    // Données d'analyse & métacognition
+    retentionRate = null,
+    dormantCount = 0,
+    weakCategory = null,
+    englishOralOpportunity = 0,
+    totalCards = 0,
+    weeklyDigest = null,
   } = ctx;
 
   const out = [];
   const push = (n) => out.push(n);
+
+  // ── 0. INSIGHT SPÉCIAL : Bulletin Hebdomadaire d'Analyse (Dimanche soir / Lundi) ──
+  if (weeklyDigest) {
+    push({
+      id: `insight-weekly-digest-${weeklyDigest.weekKey || todayISO()}`,
+      group: "insights",
+      priority: 86,
+      icon: "📋",
+      tone: "accent",
+      title: "Bilan Hebdomadaire d'Analyse",
+      body: `${weeklyDigest.totalReviews || 0} fiches révisées · ${weeklyDigest.activeDays || 0} jours actifs · Rétention : ${weeklyDigest.retentionRate || 85}%.`,
+      cta: { label: "Découvrir mon bilan", action: "weekly_digest" },
+      timestamp: Date.now(),
+      dateISO: todayISO(),
+      payload: weeklyDigest,
+    });
+  }
 
   // ── 1. Sync KO — bloquant, toujours en tête ────────────────────────────
   if (syncError) {
@@ -94,7 +124,7 @@ export function buildNotifications(ctx = {}) {
     });
   }
 
-  // ── 2. Fiches qui bloquent (leeches) ───────────────────────────────────
+  // ── 2. Rétention critique : Fiches qui bloquent (leeches) ───────────────
   if (leeches.length > 0) {
     push({
       id: `leeches-${leeches.length}`,
@@ -102,13 +132,13 @@ export function buildNotifications(ctx = {}) {
       priority: 92,
       icon: "🧱",
       tone: "danger",
-      title: `${leeches.length} fiche${leeches.length > 1 ? "s" : ""} bloque${leeches.length > 1 ? "nt" : ""}`,
+      title: `${leeches.length} fiche${leeches.length > 1 ? "s" : ""} bloquante${leeches.length > 1 ? "s" : ""}`,
       body:
         leeches
           .slice(0, 3)
           .map((l) => `• ${String(l.front || l.title || "").slice(0, 46)}`)
           .join("\n") || "Elles reviennent en boucle sans être retenues.",
-      cta: { label: "Les traiter", action: "leeches" },
+      cta: { label: "Les débloquer", action: "leeches" },
       meta: { count: leeches.length },
     });
   }
@@ -122,7 +152,7 @@ export function buildNotifications(ctx = {}) {
       icon: "⏰",
       tone: "danger",
       title: `${overdueCount} fiche${overdueCount > 1 ? "s" : ""} en retard`,
-      body: "Plus elles attendent, plus la rétention chute. 10 minutes suffisent souvent.",
+      body: "Plus elles attendent, plus la rétention chute. Une micro-session suffit souvent.",
       cta: { label: "Rattraper", action: "review" },
       meta: { count: overdueCount },
     });
@@ -140,151 +170,124 @@ export function buildNotifications(ctx = {}) {
     });
   }
 
-  // ── 4. Incubation anglais (7 jours quotidiens) ─────────────────────────
+  // ── 4. INSIGHTS : Diagnostic Stats & Métacognition ─────────────────────
+  const nowTs = Date.now();
+  const todayStr = todayISO();
+
+  if (retentionRate !== null && typeof retentionRate === "number") {
+    if (retentionRate < 70 && totalCards >= 10) {
+      push({
+        id: `insight-retention-low-${todayStr}`,
+        group: "insights",
+        priority: 78,
+        icon: "📊",
+        tone: "warn",
+        title: `Rétention globale fragile (${retentionRate}%)`,
+        body: "L'analyse de tes sessions récentes montre une baisse de consolidation. Consulte tes statistiques pour cibler les modules à réajuster.",
+        cta: { label: "Consulter les stats", action: "stats" },
+        timestamp: nowTs,
+        dateISO: todayStr,
+      });
+    } else if (retentionRate >= 85 && totalCards >= 15) {
+      push({
+        id: `insight-retention-high-${todayStr}`,
+        group: "insights",
+        priority: 55,
+        icon: "📈",
+        tone: "success",
+        title: `Haute stabilité mnésique (${retentionRate}%)`,
+        body: "Tes cartes clés sont solidement ancrées. Vérifie tes courbes d'évolution pour planifier tes futurs modules.",
+        cta: { label: "Voir ma progression", action: "stats" },
+        timestamp: nowTs,
+        dateISO: todayStr,
+      });
+    }
+  }
+
+  // Focus module déséquilibré détecté
+  if (weakCategory && weakCategory.name && weakCategory.count > 0) {
+    push({
+      id: `insight-weak-cat-${weakCategory.name}-${todayStr}`,
+      group: "insights",
+      priority: 74,
+      icon: "🎯",
+      tone: "warn",
+      title: `Point d'attention : « ${weakCategory.name} »`,
+      body: `Ce module concentre un taux d'erreur notable (${weakCategory.errorRate || 0}%). Une révision focalisée permettra de stabiliser ces notions.`,
+      cta: { label: `Réviser ${weakCategory.name}`, action: "review_category", payload: weakCategory.name },
+      timestamp: nowTs,
+      dateISO: todayStr,
+    });
+  }
+
+  // ── 5. INSIGHTS : Immersion & Pratique Anglais ─────────────────────────
   if (incubating.length > 0) {
+    const nearGraduation = incubating.filter((c) => Number(c.remaining) <= 2);
     const soonest = incubating.reduce(
       (min, c) => Math.min(min, Number(c.remaining) || 0),
       99
     );
     push({
-      id: `incubation-${incubating.length}`,
-      group: "today",
-      priority: 74,
+      id: `insight-english-incubation-${incubating.length}`,
+      group: "insights",
+      priority: 76,
       icon: "🇬🇧",
       tone: "accent",
-      title: `${incubating.length} fiche${incubating.length > 1 ? "s" : ""} anglais en incubation`,
-      body: `Contact quotidien obligatoire pendant 7 jours. La plus avancée sort dans ${soonest} jour${soonest > 1 ? "s" : ""}.`,
-      cta: { label: "Réviser l'anglais", action: "english" },
+      title: nearGraduation.length > 0
+        ? `${nearGraduation.length} expression${nearGraduation.length > 1 ? "s" : ""} anglaise${nearGraduation.length > 1 ? "s" : ""} proche${nearGraduation.length > 1 ? "s" : ""} de l'ancrage`
+        : `${incubating.length} expression${incubating.length > 1 ? "s" : ""} anglaise${incubating.length > 1 ? "s" : ""} en incubation active`,
+      body: `Cycle d'incubation quotidien (7 jours). La plus avancée termine dans ${soonest} jour${soonest > 1 ? "s" : ""}.`,
+      cta: { label: "Pratiquer l'anglais", action: "english" },
       meta: { count: incubating.length },
+      timestamp: nowTs,
+      dateISO: todayStr,
     });
   }
 
-  // ── 5. Routine du jour ─────────────────────────────────────────────────
-  if (routineSummary && routineSummary.total > 0) {
-    const remaining = routineSummary.total - (routineSummary.doneCount || 0);
-    if (remaining > 0) {
-      push({
-        id: `routine-${todayISO()}-${remaining}`,
-        group: "today",
-        priority: 66,
-        icon: routineFraming?.icon || "🧭",
-        tone: routineFraming?.tone === "nearmiss" ? "warn" : "info",
-        title: routineFraming?.title || `Ma routine · ${routineSummary.doneCount}/${routineSummary.total}`,
-        body:
-          routineFraming?.message ||
-          `${remaining} étape${remaining > 1 ? "s" : ""} pour boucler ta journée.`,
-        cta: { label: "Ouvrir la routine", action: "routine" },
-        meta: { done: routineSummary.doneCount, total: routineSummary.total },
-      });
-    } else {
-      push({
-        id: `routine-done-${todayISO()}`,
-        group: "progress",
-        priority: 30,
-        icon: "✅",
-        tone: "success",
-        title: "Routine bouclée",
-        body: "Les 100 % du jour sont dans la poche.",
-      });
-    }
+  if (englishOralOpportunity > 0) {
+    push({
+      id: `insight-english-oral-${todayStr}`,
+      group: "insights",
+      priority: 72,
+      icon: "🎙️",
+      tone: "accent",
+      title: "Opportunité de pratique orale en anglais",
+      body: `${englishOralOpportunity} expression${englishOralOpportunity > 1 ? "s" : ""} méritent d'être prononcées à voix haute pour ancrer la mémoire musculaire.`,
+      cta: { label: "Pratiquer la voix", action: "english" },
+      timestamp: nowTs,
+      dateISO: todayStr,
+    });
   }
 
-  // ── 6. Quêtes du jour + hebdo ──────────────────────────────────────────
-  if (questBoard && questBoard.total > 0) {
-    const pending = (questBoard.daily || []).filter((q) => !q.done);
-    if (pending.length > 0) {
-      push({
-        id: `quests-${todayISO()}-${questBoard.doneCount}`,
-        group: "today",
-        priority: 60,
-        icon: "🎯",
-        tone: "accent",
-        title: `Quêtes du jour · ${questBoard.doneCount}/${questBoard.total}`,
-        body: pending
-          .slice(0, 3)
-          .map((q) => `• ${q.label || q.title} (${q.progress ?? 0}/${q.target ?? 1})`)
-          .join("\n"),
-        cta: { label: "Voir les quêtes", action: "quests" },
-        meta: { done: questBoard.doneCount, total: questBoard.total },
-      });
-    } else if (questBoard.allDone) {
-      push({
-        id: `quests-done-${todayISO()}`,
-        group: "progress",
-        priority: 34,
-        icon: "🏆",
-        tone: "success",
-        title: "Toutes les quêtes du jour sont tombées",
-        body: "Bonus combo empoché. Rendez-vous demain.",
-      });
-    }
-  }
-  if (questBoard?.weekly && !questBoard.weekly.done) {
-    const w = questBoard.weekly;
+  // ── 6. INSIGHTS : Hygiène & Cartes dormantes ───────────────────────────
+  if (dormantCount >= 3) {
     push({
-      id: `weekly-${w.id}`,
-      group: "progress",
-      priority: 40,
-      icon: "🏔️",
+      id: `insight-dormant-${dormantCount}`,
+      group: "insights",
+      priority: 66,
+      icon: "📦",
       tone: "info",
-      title: `Quête de la semaine · ${w.progress ?? 0}/${w.target ?? 1}`,
-      body: w.label || w.title || "Objectif hebdomadaire en cours.",
-      cta: { label: "Voir", action: "quests" },
+      title: `${dormantCount} fiche${dormantCount > 1 ? "s" : ""} dormante${dormantCount > 1 ? "s" : ""} jamais abordée${dormantCount > 1 ? "s" : ""}`,
+      body: "Ces cartes ont été ajoutées mais n'ont pas encore amorcé leur premier cycle de répétition espacée.",
+      cta: { label: "Activer ces fiches", action: "dormant" },
+      meta: { count: dormantCount },
+      timestamp: nowTs,
+      dateISO: todayStr,
     });
   }
 
-  // ── 7. Série en danger ─────────────────────────────────────────────────
-  if (streak > 0 && reviewedToday === 0) {
-    push({
-      id: `streak-risk-${todayISO()}`,
-      group: "urgent",
-      priority: 84,
-      icon: "🔥",
-      tone: "warn",
-      title: `Série de ${streak} jour${streak > 1 ? "s" : ""} en danger`,
-      body: "Une seule fiche révisée suffit à la sauver aujourd'hui.",
-      cta: { label: "Sauver la série", action: "review" },
-    });
-  }
-
-  // ── 8. Énergie / charge ────────────────────────────────────────────────
-  if (energy && Number(energy.value) <= Number(energy.low ?? 25)) {
-    push({
-      id: `energy-${todayISO()}`,
-      group: "info",
-      priority: 20,
-      icon: "🔋",
-      tone: "warn",
-      title: "Énergie basse",
-      body: "Vise une micro-session de 5 fiches plutôt qu'un marathon.",
-    });
-  }
-
-  // ── 9. Nouvelles fiches créées aujourd'hui ─────────────────────────────
-  if (newCardsToday > 0) {
-    push({
-      id: `new-cards-${todayISO()}-${newCardsToday}`,
-      group: "progress",
-      priority: 26,
-      icon: "✨",
-      tone: "success",
-      title: `${newCardsToday} nouvelle${newCardsToday > 1 ? "s" : ""} fiche${newCardsToday > 1 ? "s" : ""} aujourd'hui`,
-      body: "Elles entrent dès demain dans le cycle de révision.",
-    });
-  }
-
-  // ── 10. Dernière synchro ───────────────────────────────────────────────
+  // ── 7. Système & Synchro ───────────────────────────────────────────────
   if (!syncError && lastSyncAt) {
     const hours = Math.floor((Date.now() - new Date(lastSyncAt).getTime()) / 3600000);
-    if (hours >= 24) {
+    if (hours >= 48) {
       push({
-        id: `sync-stale-${todayISO()}`,
+        id: `sync-stale-${todayStr}`,
         group: "info",
         priority: 18,
         icon: "☁️",
         tone: "info",
-        title: "Sauvegarde ancienne",
-        body: `Dernière synchro il y a ${hours} h.`,
+        title: "Dernière sauvegarde distante ancienne",
+        body: `Dernière synchronisation effectuée il y a ${hours} h.`,
         cta: { label: "Synchroniser", action: "sync" },
       });
     }
@@ -301,7 +304,7 @@ export function groupNotifications(list) {
   })).filter((g) => g.items.length > 0);
 }
 
-/** Compte ce qui mérite la pastille rouge (non lu, non reporté). */
+/** Compte ce qui mérite la pastille (non lu, non reporté, non expiré). */
 export function countUnread(list, state) {
-  return list.filter((n) => !state?.read?.[n.id] && !isSnoozed(n, state)).length;
+  return list.filter((n) => !state?.read?.[n.id] && !isSnoozed(n, state) && !isExpiredInsight(n, state)).length;
 }

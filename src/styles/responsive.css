@@ -12,35 +12,49 @@
  * ════════════════════════════════════════════════════════════════════════════ */
 
 /* ── 0. Reset global mobile-safe ─────────────────────────────────────────── */
-html, body, #root {
+html,
+body,
+#root {
   max-width: 100vw;
   overflow-x: hidden;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
+
 body {
   /* overscroll-behavior-y: none; — retiré : bloquait le scroll souris sur desktop */
   -webkit-tap-highlight-color: transparent;
 }
-img, video, canvas, svg {
+
+img,
+video,
+canvas,
+svg {
   max-width: 100%;
   height: auto;
 }
-* { min-width: 0; }            /* anti-overflow flex/grid */
+
+* {
+  min-width: 0;
+}
+
+/* anti-overflow flex/grid */
 
 /* Toujours afficher la bottom-nav par défaut (mobile), masquée en desktop plus bas */
-.mobile-bottom-nav { z-index: 95; }
+.mobile-bottom-nav {
+  z-index: 95;
+}
 
 /* ── 1. ≤ 1024 px (tablette) ─────────────────────────────────────────────── */
 @media (max-width: 1024px) {
-  .desktop-sidebar,
-  .desktop-sidebar-spacer { display: none !important; }
 
   /* Conteneurs aux paddings de bureau trop larges */
   [style*="padding: 40px"],
   [style*="padding: 48px"],
   [style*="padding: 56px"],
-  [style*="padding: 64px"] { padding: 24px !important; }
+  [style*="padding: 64px"] {
+    padding: 24px !important;
+  }
 
   /* Grille 3 colonnes → 2 colonnes */
   [style*="gridTemplateColumns: '1fr 1fr 1fr'"],
@@ -54,11 +68,16 @@ img, video, canvas, svg {
 @media (max-width: 767.98px) {
 
   /* —— Layout général —— */
-  body, #root { font-size: 15px; }
+  body,
+  #root {
+    font-size: 12.5px;
+  }
 
   .desktop-sidebar,
   .desktop-sidebar-spacer,
-  .show-desktop-only { display: none !important; }
+  .show-desktop-only {
+    display: none !important;
+  }
 
   /* Navigation haute */
   .nav-top {
@@ -66,17 +85,25 @@ img, video, canvas, svg {
     min-height: 56px !important;
     padding-top: calc(env(safe-area-inset-top, 0px)) !important;
   }
+
   .nav-logo-text,
   .nav-title-sub,
-  .nav-text-container { font-size: 14px !important; }
-  .nav-title-sub { display: none !important; }
+  .nav-text-container {
+    font-size: 14px !important;
+  }
+
+  .nav-title-sub {
+    display: none !important;
+  }
 
   /* Réservation de hauteur pour la bottom-nav + safe-area iOS */
   .main-content,
   .main-content-area,
   [style*="minHeight: calc(100vh - 68px)"],
   [style*="minHeight:calc(100vh - 68px)"] {
-    padding: 12px 12px 110px !important;
+    padding-top: calc(env(safe-area-inset-top, 24px) + 12px) !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
     width: 100% !important;
     max-width: 100vw !important;
     box-sizing: border-box !important;
@@ -102,51 +129,121 @@ img, video, canvas, svg {
   }
 
   /* Tous les paddings inline démesurés */
-  [style*="padding: 36px"],  [style*='padding: "36px"'],
-  [style*="padding: 32px"],  [style*='padding: "32px"'],
-  [style*="padding: 40px"],  [style*='padding: "40px"'],
-  [style*="padding: 48px"],  [style*='padding: "48px"'],
-  [style*="padding: 56px"],  [style*='padding: "56px"'],
-  [style*="padding: 64px"],  [style*='padding: "64px"'],
+  [style*="padding: 36px"],
+  [style*='padding: "36px"'],
+  [style*="padding: 32px"],
+  [style*='padding: "32px"'],
+  [style*="padding: 40px"],
+  [style*='padding: "40px"'],
+  [style*="padding: 48px"],
+  [style*='padding: "48px"'],
+  [style*="padding: 56px"],
+  [style*='padding: "56px"'],
+  [style*="padding: 64px"],
+  [style*='padding: "64px"'],
   .section-header,
   .academy-header {
     padding: 16px !important;
     border-radius: 18px !important;
   }
-  [style*="padding: 24px"], [style*='padding: "24px"'] { padding: 14px !important; }
-  [style*="padding: 20px"], [style*='padding: "20px"'] { padding: 14px !important; }
+
+  [style*="padding: 24px"],
+  [style*='padding: "24px"'] {
+    padding: 14px !important;
+  }
+
+  [style*="padding: 20px"],
+  [style*='padding: "20px"'] {
+    padding: 14px !important;
+  }
 
   /* Marges démesurées */
-  [style*="margin: 32px"], [style*="margin: 40px"], [style*="margin: 48px"] { margin: 16px 0 !important; }
-  [style*="marginBottom: 48"], [style*="marginBottom: 40"], [style*="marginBottom: 32"] { margin-bottom: 20px !important; }
-  [style*="marginTop: 48"], [style*="marginTop: 40"], [style*="marginTop: 32"] { margin-top: 20px !important; }
+  [style*="margin: 32px"],
+  [style*="margin: 40px"],
+  [style*="margin: 48px"] {
+    margin: 16px 0 !important;
+  }
+
+  [style*="marginBottom: 48"],
+  [style*="marginBottom: 40"],
+  [style*="marginBottom: 32"] {
+    margin-bottom: 20px !important;
+  }
+
+  [style*="marginTop: 48"],
+  [style*="marginTop: 40"],
+  [style*="marginTop: 32"] {
+    margin-top: 20px !important;
+  }
 
   /* Gap démesurés */
-  [style*="gap: 32"], [style*="gap: 40"], [style*="gap: 48"], [style*="gap: 56"] { gap: 16px !important; }
-  [style*="gap: 24"] { gap: 12px !important; }
+  [style*="gap: 32"],
+  [style*="gap: 40"],
+  [style*="gap: 48"],
+  [style*="gap: 56"] {
+    gap: 16px !important;
+  }
+
+  [style*="gap: 24"] {
+    gap: 12px !important;
+  }
 
   /* Hauteurs inline fixes (hero) → fluides */
-  [style*="height: 400px"], [style*="height: 500px"], [style*="height: 600px"] { height: auto !important; min-height: 260px; }
-  [style*="minHeight: 400"], [style*="minHeight: 500"], [style*="minHeight: 600"] { min-height: 260px !important; }
+  [style*="height: 400px"],
+  [style*="height: 500px"],
+  [style*="height: 600px"] {
+    height: auto !important;
+    min-height: 260px;
+  }
+
+  [style*="minHeight: 400"],
+  [style*="minHeight: 500"],
+  [style*="minHeight: 600"] {
+    min-height: 260px !important;
+  }
 
   /* —— Typographie —— */
-  h1, [style*="fontSize: 48"], [style*="fontSize: 56"], [style*="fontSize: 64"], [style*="fontSize: 72"] {
+  h1,
+  [style*="fontSize: 48"],
+  [style*="fontSize: 56"],
+  [style*="fontSize: 64"],
+  [style*="fontSize: 72"] {
     font-size: 28px !important;
     line-height: 1.15 !important;
     letter-spacing: -0.5px !important;
     word-break: break-word;
   }
-  h2, [style*="fontSize: 32"], [style*="fontSize: 36"], [style*="fontSize: 40"] {
+
+  h2,
+  [style*="fontSize: 32"],
+  [style*="fontSize: 36"],
+  [style*="fontSize: 40"] {
     font-size: 22px !important;
     line-height: 1.2 !important;
   }
-  h3, [style*="fontSize: 24"], [style*="fontSize: 28"] {
+
+  h3,
+  [style*="fontSize: 24"],
+  [style*="fontSize: 28"] {
     font-size: 18px !important;
     line-height: 1.25 !important;
   }
-  [style*="fontSize: 20"] { font-size: 16px !important; }
-  [style*="fontSize: 18"] { font-size: 15px !important; }
-  p, li, span { word-break: break-word; overflow-wrap: anywhere; hyphens: auto; }
+
+  [style*="fontSize: 20"] {
+    font-size: 16px !important;
+  }
+
+  [style*="fontSize: 18"] {
+    font-size: 15px !important;
+  }
+
+  p,
+  li,
+  span {
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    hyphens: auto;
+  }
 
   /* —— Grilles → 1 colonne —— */
   [style*="gridTemplateColumns: '1fr 1fr'"],
@@ -169,33 +266,68 @@ img, video, canvas, svg {
     grid-template-columns: 1fr !important;
   }
 
-  /* —— Flex wrap forcé pour éviter les débordements —— */
-  [style*="display: flex"][style*="gap:"],
-  [style*="display:flex"][style*="gap:"] {
+  /* —— Flex wrap forcé pour éviter les débordements (SAUF conteneurs verticaux column et discussions) —— */
+  [style*="display: flex"][style*="gap:"]:not([style*="column"]):not(.mm-chat-scroll):not(.mm-chat-scroll *),
+  [style*="display:flex"][style*="gap:"]:not([style*="column"]):not(.mm-chat-scroll):not(.mm-chat-scroll *) {
     flex-wrap: wrap !important;
   }
+
   /* Sauf les barres d'actions courtes qui doivent rester sur 1 ligne */
-  .nav-top[style*="display: flex"] { flex-wrap: nowrap !important; }
+  .nav-top[style*="display: flex"] {
+    flex-wrap: nowrap !important;
+  }
+
+  div.mm-chat-scroll,
+  .mm-chat-scroll,
+  .mm-chat-scroll[style],
+  .mm-chat-scroll * {
+    flex-wrap: nowrap !important;
+    flex-direction: column !important;
+  }
 
   /* Largeur min des cellules d'auto-fit cassées */
-  [style*="minmax(280"], [style*="minmax(300"], [style*="minmax(320"], [style*="minmax(360"], [style*="minmax(400"] {
+  [style*="minmax(280"],
+  [style*="minmax(300"],
+  [style*="minmax(320"],
+  [style*="minmax(360"],
+  [style*="minmax(400"] {
     grid-template-columns: 1fr !important;
   }
 
   /* —— Forms / inputs : éviter le zoom iOS (font-size ≥ 16px) —— */
-  input, textarea, select, .mm-input, .mm-textarea {
+  input,
+  textarea,
+  select,
+  .mm-input,
+  .mm-textarea {
     font-size: 16px !important;
     max-width: 100%;
   }
-  input[type="checkbox"], input[type="radio"] { font-size: inherit !important; }
-  textarea { min-height: 90px; }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    font-size: inherit !important;
+  }
+
+  textarea {
+    min-height: 90px;
+  }
 
   /* —— Tap targets ≥ 44px —— */
-  button, [role="button"], .mm-btn, .academy-tab-btn, .chat-send-btn, .coach-mic-btn {
+  button,
+  [role="button"],
+  .mm-btn,
+  .academy-tab-btn,
+  .chat-send-btn,
+  .coach-mic-btn {
     min-height: 44px;
     touch-action: manipulation;
   }
-  .mm-btn { padding: .65rem 1rem !important; font-size: 15px !important; }
+
+  .mm-btn {
+    padding: .65rem 1rem !important;
+    font-size: 15px !important;
+  }
 
   /* —— Tabs : scroll horizontal —— */
   .academy-tabs,
@@ -206,19 +338,36 @@ img, video, canvas, svg {
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-  .academy-tabs::-webkit-scrollbar { display: none; }
-  .academy-tab-btn { flex: 0 0 auto !important; white-space: nowrap; }
+
+  .academy-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .academy-tab-btn {
+    flex: 0 0 auto !important;
+    white-space: nowrap;
+  }
 
   /* —— Tables → scroll horizontal —— */
-  table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 
   /* —— Modals plein écran —— */
   [style*="position: fixed"][style*="inset: 0"],
   [style*="position:fixed"][style*="inset:0"] {
     padding: 0 !important;
   }
+
   /* Conteneur interne d'un modal qui a un maxWidth → plein largeur */
-  [style*="maxWidth: 600"], [style*="maxWidth: 700"], [style*="maxWidth: 800"], [style*="maxWidth: 900"], [style*="maxWidth: 1000"], [style*="maxWidth: 1200"] {
+  [style*="maxWidth: 600"],
+  [style*="maxWidth: 700"],
+  [style*="maxWidth: 800"],
+  [style*="maxWidth: 900"],
+  [style*="maxWidth: 1000"],
+  [style*="maxWidth: 1200"] {
     max-width: 100% !important;
   }
 
@@ -236,7 +385,9 @@ img, video, canvas, svg {
   }
 
   /* —— Cards listing : padding plus serré —— */
-  .mm-card { padding: 14px !important; }
+  .mm-card {
+    padding: 14px !important;
+  }
 
   /* —— Sidebar drawer ouverte → plein écran —— */
   .sidebar {
@@ -244,7 +395,10 @@ img, video, canvas, svg {
     max-width: 360px !important;
     z-index: 200 !important;
   }
-  .sidebar-nav-scroll { -webkit-overflow-scrolling: touch; }
+
+  .sidebar-nav-scroll {
+    -webkit-overflow-scrolling: touch;
+  }
 
   /* —— Bottom nav : safe-area + style propre —— */
   .mobile-bottom-nav {
@@ -253,136 +407,252 @@ img, video, canvas, svg {
 
   /* —— Désactiver les transformations de hover lourdes (perf mobile) —— */
   .astral-card-hover:hover,
-  .dashboard-card:hover { transform: none !important; }
+  .dashboard-card:hover {
+    transform: none !important;
+  }
 
   /* —— Évite les éléments collants 100vh qui se chevauchent au clavier —— */
-  [style*="minHeight: 100vh"], [style*="min-height: 100vh"] {
+  [style*="minHeight: 100vh"],
+  [style*="min-height: 100vh"] {
     min-height: 100svh !important;
   }
-  [style*="height: 100vh"], [style*="height:100vh"] {
+
+  [style*="height: 100vh"],
+  [style*="height:100vh"] {
     height: 100svh !important;
   }
 
   /* —— Empêche le hover sticky de bouger sur mobile —— */
-  [style*="position: sticky"][style*="top: 0"] { top: 0 !important; }
+  [style*="position: sticky"][style*="top: 0"] {
+    top: 0 !important;
+  }
 }
 
 /* ── 3. ≤ 480 px (petit mobile) ──────────────────────────────────────────── */
 @media (max-width: 480px) {
-  body, #root { font-size: 14.5px; }
 
-  h1, [style*="fontSize: 48"], [style*="fontSize: 56"], [style*="fontSize: 64"], [style*="fontSize: 72"] {
+  body,
+  #root {
+    font-size: 14.5px;
+  }
+
+  h1,
+  [style*="fontSize: 48"],
+  [style*="fontSize: 56"],
+  [style*="fontSize: 64"],
+  [style*="fontSize: 72"] {
     font-size: 24px !important;
   }
-  h2, [style*="fontSize: 32"], [style*="fontSize: 36"], [style*="fontSize: 40"] {
+
+  h2,
+  [style*="fontSize: 32"],
+  [style*="fontSize: 36"],
+  [style*="fontSize: 40"] {
     font-size: 19px !important;
   }
 
-  [style*="padding: 16"], [style*='padding: "16px"'] { padding: 12px !important; }
-  [style*="padding: 20"], [style*='padding: "20px"'] { padding: 12px !important; }
+  [style*="padding: 16"],
+  [style*='padding: "16px"'] {
+    padding: 12px !important;
+  }
 
-  .nav-top { min-height: 52px !important; }
-  .mm-btn { padding: .55rem .9rem !important; font-size: 14px !important; }
-  .mm-chip { font-size: .7rem !important; padding: .2rem .55rem !important; }
+  [style*="padding: 20"],
+  [style*='padding: "20px"'] {
+    padding: 12px !important;
+  }
+
+  .nav-top {
+    min-height: 52px !important;
+  }
+
+  .mm-btn {
+    padding: .55rem .9rem !important;
+    font-size: 14px !important;
+  }
+
+  .mm-chip {
+    font-size: .7rem !important;
+    padding: .2rem .55rem !important;
+  }
 
   /* Cards & glass — radius plus doux */
-  .mm-card, .dashboard-card, .astral-glass, .mm-glass {
+  .mm-card,
+  .dashboard-card,
+  .astral-glass,
+  .mm-glass {
     border-radius: 14px !important;
   }
 
   /* Empêcher les emojis géants de pousser le layout */
-  [style*="fontSize: 64"], [style*="fontSize: 72"], [style*="fontSize: 80"], [style*="fontSize: 96"] {
+  [style*="fontSize: 64"],
+  [style*="fontSize: 72"],
+  [style*="fontSize: 80"],
+  [style*="fontSize: 96"] {
     font-size: 40px !important;
   }
 }
 
 /* ── 4. ≤ 380 px (iPhone SE & co) ────────────────────────────────────────── */
 @media (max-width: 380px) {
-  body, #root { font-size: 14px; }
-  h1 { font-size: 22px !important; }
-  h2 { font-size: 17px !important; }
-  .mm-btn { padding: .5rem .8rem !important; font-size: 13.5px !important; }
-  [style*="gap: 16"] { gap: 10px !important; }
+
+  body,
+  #root {
+    font-size: 14px;
+  }
+
+  h1 {
+    font-size: 22px !important;
+  }
+
+  h2 {
+    font-size: 17px !important;
+  }
+
+  .mm-btn {
+    padding: .5rem .8rem !important;
+    font-size: 13.5px !important;
+  }
+
+  [style*="gap: 16"] {
+    gap: 10px !important;
+  }
 }
 
 /* ── 5. ≥ 769 px : masquer le mobile-only ────────────────────────────────── */
 @media (min-width: 769px) {
+
   .mobile-bottom-nav,
   .mobile-drawer-overlay,
   .mobile-fab-overlay,
-  .show-mobile-only { display: none !important; }
+  .show-mobile-only {
+    display: none !important;
+  }
 }
 
 /* ── 6. Animations préservées (compat existante) ─────────────────────────── */
 @keyframes pulseAstral {
-  0%   { transform: scale(1);    opacity: 0.2; }
-  50%  { transform: scale(1.05); opacity: 0.4; }
-  100% { transform: scale(1);    opacity: 0.2; }
+  0% {
+    transform: scale(1);
+    opacity: 0.2;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 0.4;
+  }
+
+  100% {
+    transform: scale(1);
+    opacity: 0.2;
+  }
 }
+
 @keyframes realityDistortHeader {
-  0%   { box-shadow: 0 20px 50px rgba(46,49,146,0.3),  0 0 80px  rgba(139, 92, 246,0.15); }
-  50%  { box-shadow: 0 25px 60px rgba(46,49,146,0.4),  0 0 100px rgba(139, 92, 246,0.25); }
-  100% { box-shadow: 0 20px 50px rgba(46,49,146,0.3),  0 0 80px  rgba(139, 92, 246,0.15); }
+  0% {
+    box-shadow: 0 20px 50px rgba(46, 49, 146, 0.3), 0 0 80px color-mix(in srgb, var(--mm-primary) 15.0%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 25px 60px rgba(46, 49, 146, 0.4), 0 0 100px color-mix(in srgb, var(--mm-primary) 25.0%, transparent);
+  }
+
+  100% {
+    box-shadow: 0 20px 50px rgba(46, 49, 146, 0.3), 0 0 80px color-mix(in srgb, var(--mm-primary) 15.0%, transparent);
+  }
 }
 
 /* ── Chatbot Assistant 🤖 Visual Animation (Mobile & PC) ─────────────────── */
 @keyframes robotAssistantPulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1) rotate(0deg);
-    filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.5));
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--mm-primary) 50.0%, transparent));
   }
+
   15% {
     transform: scale(1.38) rotate(-12deg);
-    filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.95));
+    filter: drop-shadow(0 0 10px color-mix(in srgb, var(--mm-primary) 95.0%, transparent));
   }
+
   30% {
     transform: scale(1.38) rotate(12deg);
-    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.95));
+    filter: drop-shadow(0 0 12px color-mix(in srgb, var(--mm-primary) 95.0%, transparent));
   }
+
   45% {
     transform: scale(1.18) rotate(-6deg);
-    filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.75));
+    filter: drop-shadow(0 0 6px color-mix(in srgb, var(--mm-primary) 75.0%, transparent));
   }
+
   60% {
     transform: scale(1.28) rotate(6deg);
-    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.85));
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--mm-primary) 85.0%, transparent));
   }
+
   75% {
     transform: scale(0.95) rotate(0deg);
-    filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.5));
+    filter: drop-shadow(0 0 2px color-mix(in srgb, var(--mm-primary) 50.0%, transparent));
   }
 }
 
-.robot-assistant-icon, .robot-assistant-btn {
+.robot-assistant-icon,
+.robot-assistant-btn {
   display: inline-block;
   animation: robotAssistantPulse 2.4s infinite ease-in-out !important;
   transform-origin: center;
   line-height: 1;
 }
+
 .battle-action-btn {
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform: translateY(0);
 }
-.battle-action-btn:hover  { transform: translateY(-4px) scale(1.02); box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
-.battle-action-btn:active { transform: translateY(2px)  scale(0.98); }
+
+.battle-action-btn:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+}
+
+.battle-action-btn:active {
+  transform: translateY(2px) scale(0.98);
+}
+
 @media (max-width: 767.98px) {
-  .battle-action-btn:hover { transform: none; box-shadow: none; }
+  .battle-action-btn:hover {
+    transform: none;
+    box-shadow: none;
+  }
 }
 
 /* ── 7. Mode paysage mobile : éviter de couper la nav haute ──────────────── */
 @media (max-width: 900px) and (orientation: landscape) {
-  .nav-top { min-height: 48px !important; }
-  .main-content-area { padding-bottom: 80px !important; }
+  .nav-top {
+    min-height: 48px !important;
+  }
+
+  .main-content-area {
+    padding-bottom: 80px !important;
+  }
 }
 
 /* ── 8. Empêche tout débordement horizontal résiduel ─────────────────────── */
 @media (max-width: 767.98px) {
-  pre, code { white-space: pre-wrap !important; word-break: break-word !important; }
-  a { word-break: break-word; }
+
+  pre,
+  code {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+  }
+
+  a {
+    word-break: break-word;
+  }
 }
 
 /* ── Mobile: collapse Fiches omnibar / English tabs / Add tabs / Chat cockpit ── */
 @media (max-width: 767.98px) {
+
   /* Fiches — entire omnibar contents collapse behind ⚙ Vue button. Not sticky. */
   .fiches-omnibar {
     position: static !important;
@@ -391,40 +661,77 @@ img, video, canvas, svg {
     border-radius: 16px !important;
     flex-wrap: wrap !important;
   }
-  .fiches-actions-toggle { display: inline-flex !important; }
-  body:not(.fiches-actions-expanded) .fiches-omnibar > *:not(.fiches-actions-toggle) {
+
+  .fiches-actions-toggle {
+    display: inline-flex !important;
+  }
+
+  body:not(.fiches-actions-expanded) .fiches-omnibar>*:not(.fiches-actions-toggle) {
     display: none !important;
   }
 
   /* English practice tabs */
-  .english-tabs-toggle { display: inline-flex !important; }
-  body:not(.english-tabs-expanded) .english-tabs-cluster { display: none !important; }
+  .english-tabs-toggle {
+    display: inline-flex !important;
+  }
+
+  body:not(.english-tabs-expanded) .english-tabs-cluster {
+    display: none !important;
+  }
 
   /* Chat cockpit (TOPIC / LEVEL / PERSONA / VOICE / SPEED) */
-  .chat-cockpit-toggle { display: inline-flex !important; }
-  body:not(.chat-cockpit-expanded) .chat-cockpit-cluster { display: none !important; }
+  .chat-cockpit-toggle {
+    display: inline-flex !important;
+  }
+
+  body:not(.chat-cockpit-expanded) .chat-cockpit-cluster {
+    display: none !important;
+  }
 
   /* Ajouter — open MobileAddSheet via the button instead of the inline cluster */
-  .add-tabs-toggle { display: inline-flex !important; }
-  .add-tabs-cluster { display: none !important; }
+  .add-tabs-toggle {
+    display: inline-flex !important;
+  }
+
+  .add-tabs-cluster {
+    display: none !important;
+  }
 
   /* Nav top — keep logo + search + badges on one line and never overflow */
   .nav-top {
     flex-wrap: nowrap !important;
     gap: 8px !important;
   }
-  .nav-top > div:first-child { width: auto !important; min-width: 0; flex: 0 0 auto; }
-  .nav-top > div:nth-child(2),
-  .nav-top > div:nth-child(3) { width: auto !important; min-width: 0; }
+
+  .nav-top>div:first-child {
+    width: auto !important;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .nav-top>div:nth-child(2),
+  .nav-top>div:nth-child(3) {
+    width: auto !important;
+    min-width: 0;
+  }
+
   .search-bar-mobile {
     width: 100% !important;
     max-width: 100% !important;
     min-width: 0 !important;
     padding: 8px 12px !important;
   }
-  .search-bar-mobile > span,
-  .search-bar-mobile > kbd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .nav-logo-text { font-size: 13px !important; }
+
+  .search-bar-mobile>span,
+  .search-bar-mobile>kbd {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-logo-text {
+    font-size: 13px !important;
+  }
 }
 
 
@@ -433,13 +740,20 @@ img, video, canvas, svg {
  * 🩹 PATCH — Home cut-off / vertical color rail / chat voice
  * ════════════════════════════════════════════════════════════════════════════ */
 @media (max-width: 767.98px) {
+
   /* —— Anti débordement horizontal global, plus strict —— */
-  html, body, #root, .main-content, .main-content-area {
+  html,
+  body,
+  #root,
+  .main-content,
+  .main-content-area {
     overflow-x: hidden !important;
     max-width: 100vw !important;
   }
+
   /* Tous les enfants directs des conteneurs principaux : interdiction de pousser */
-  .main-content > *, .main-content-area > * {
+  .main-content>*,
+  .main-content-area>* {
     max-width: 100% !important;
   }
 
@@ -449,11 +763,17 @@ img, video, canvas, svg {
     padding-bottom: calc(var(--nav-h, 92px) + 88px + env(safe-area-inset-bottom, 0px)) !important;
   }
 
+  .main-content:has(.ep-live-nova-panel),
+  .main-content.has-live-nova {
+    padding-bottom: 0 !important;
+  }
+
   /* —— Risque d'oubli : forcer 1 colonne pour éviter la coupe à droite —— */
   .dash-widget-card [style*="grid-template-columns"],
   .dash-widget-card [style*="display: flex"][style*="flex-wrap"] {
     width: 100% !important;
   }
+
   .dash-widget-card [style*="maxWidth: 260"],
   .dash-widget-card [style*="max-width: 260"] {
     max-width: 100% !important;
@@ -476,6 +796,7 @@ img, video, canvas, svg {
   [class*="-side-bar"] {
     display: none !important;
   }
+
   /* Anti-rail générique : div positionnée fixed/absolute, étroite (≤ 14px),
      plein hauteur, sur le bord droit → masquée en mobile. */
   body [style*="position: fixed"][style*="right: 0"][style*="top: 0"][style*="bottom: 0"],
@@ -490,9 +811,48 @@ img, video, canvas, svg {
   grid-template-columns: 1fr 1fr 1fr 1fr;
   gap: 8px;
 }
+
 @media (max-width: 600px) {
   .review-btns-row {
     grid-template-columns: 1fr 1fr;
     gap: 12px;
+  }
+}
+
+/* ── Discussion bêta : stabilité tactile et clavier mobile ─────────────── */
+.beta-chat-header,
+.beta-chat-composer {
+  flex-wrap: nowrap !important;
+}
+
+.beta-chat-input {
+  box-sizing: border-box;
+  min-height: 42px !important;
+  overflow-y: auto;
+}
+
+@media (max-width: 767.98px) {
+  .beta-chat-overlay {
+    align-items: stretch !important;
+  }
+
+  .beta-chat-panel {
+    width: 100% !important;
+    max-width: none !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+  }
+
+  .beta-chat-header {
+    padding-top: max(12px, env(safe-area-inset-top, 0px)) !important;
+  }
+
+  .beta-chat-composer {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  .beta-chat-composer button {
+    flex: 0 0 auto;
   }
 }

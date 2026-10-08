@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { DatabaseProvider } from '@nozbe/watermelondb/DatabaseProvider'
 import { database } from './lib/db'
 import { migrateFromLocalStorage, migrateOrphanSRSData } from './lib/db/migration'
@@ -11,7 +11,7 @@ import {
   getRedirectResult,
   onAuthStateChanged,
 } from 'firebase/auth'
-const MemoMaster = lazy(() => import('./MemoMaster'))
+import MemoMaster from './MemoMaster'
 import ErrorBoundary from './components/ErrorBoundary'
 import OfflineBanner from './components/OfflineBanner'
 import UpdatePrompt from './components/UpdatePrompt'
@@ -61,7 +61,19 @@ function shouldUseRedirect() {
   }
 }
 
+// ── Mode hors-ligne d'abord ──
+// UID du dernier compte autorisé sur CET appareil (posé par setFbUser).
+function getKnownLocalUid() {
+  try { return localStorage.getItem('memo_user_uid') || '' } catch { return '' }
+}
+function isOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
 async function startLogin() {
+  if (!auth || !provider) {
+    throw new Error("Connexion indisponible : configuration du compte manquante.")
+  }
   if (shouldUseRedirect()) {
     await signInWithRedirect(auth, provider)
     return null
@@ -79,6 +91,54 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
+    // ⚠️ BUGFIX — mode local seul.
+    // Si Firebase n'a pas pu s'initialiser, l'app restait bloquée sur
+    // « Vérification de la sécurité… » (ou écran blanc). On démarre alors
+    // directement sur les données locales : rien n'est perdu, seule la
+    // synchro multi-appareils est indisponible.
+    if (!auth) {
+      ;(async () => {
+        try { await migrateFromLocalStorage() } catch (e) { console.warn('Migration KO:', e) }
+        try { await migrateOrphanSRSData() } catch (e) { console.warn('Migration SRS→FSRS KO:', e) }
+        if (cancelled) return
+        initStarted.current = true
+        setAccessDenied(false)
+        setAuthChecking(false)
+        setDbReady(true)
+      })()
+      return () => { cancelled = true }
+    }
+
+    // ⚠️ BUGFIX — plantage hors-ligne (raccourci écran d'accueil iPhone).
+    // Sans réseau, Firebase Auth ne peut pas restaurer/valider la session :
+    // l'app restait bloquée 12 s puis affichait « Connexion requise », sans
+    // aucun moyen de se connecter. L'app est offline-first : si un compte
+    // autorisé a déjà utilisé cet appareil, on démarre directement sur les
+    // données locales. La synchro reprendra dès le retour du réseau.
+    let localModeStarted = false
+    const startLocalMode = async (reason) => {
+      if (localModeStarted || initStarted.current) {
+        setAccessDenied(false)
+        setAuthChecking(false)
+        return
+      }
+      localModeStarted = true
+      console.info(`[auth] Démarrage en mode local (${reason}).`)
+      try { await migrateFromLocalStorage() } catch (e) { console.warn('Migration KO:', e) }
+      try { await migrateOrphanSRSData() } catch (e) { console.warn('Migration SRS→FSRS KO:', e) }
+      if (cancelled) return
+      initStarted.current = true
+      setLoginError(null)
+      setAccessDenied(false)
+      setAuthChecking(false)
+      setDbReady(true)
+    }
+    const canRunLocally = () => Boolean(getKnownLocalUid())
+
+    if (isOffline() && canRunLocally()) {
+      startLocalMode('hors-ligne au démarrage')
+    }
+
     // ── 1) Récupère le résultat d'un éventuel signInWithRedirect précédent ──
     getRedirectResult(auth)
       .then((res) => {
@@ -89,14 +149,31 @@ function App() {
       })
       .catch((e) => {
         console.warn('[auth] getRedirectResult KO:', e)
+        // Hors-ligne : erreur réseau attendue, pas une vraie erreur de connexion.
+        if (isOffline() || e?.code === 'auth/network-request-failed') return
         setLoginError(e?.message || 'Erreur de connexion après redirection')
       })
+
+    // ⚠️ BUGFIX — écran « Vérification de la sécurité… » infini.
+    // Si Firebase Auth ne répond jamais (réseau coupé, domaine non autorisé),
+    // onAuthStateChanged ne se déclenche pas et l'utilisateur restait bloqué
+    // pour toujours. Au bout de 12 s on affiche l'écran de connexion.
+    let authResponded = false
+    const authWatchdog = setTimeout(() => {
+      if (cancelled || authResponded || initStarted.current) return
+      console.warn('[auth] Aucune réponse de Firebase Auth à temps.')
+      if (canRunLocally()) { startLocalMode('Auth injoignable'); return }
+      setAccessDenied(true)
+      setAuthChecking(false)
+    }, isOffline() ? 3000 : 12000)
 
     let unsubscribeRealtime = null;
     let unsubscribeCards = null;
     const unsubAuth = onAuthStateChanged(auth, async (user) => {
       if (cancelled) return
-      setAuthChecking(true)
+      authResponded = true
+      clearTimeout(authWatchdog)
+      if (!initStarted.current) setAuthChecking(true)
       
       // Utilisateur connecté mais NON autorisé (ni propriétaire, ni bêta-testeur) → refus.
       if (user && !isAuthorizedUser(user)) {
@@ -109,10 +186,17 @@ function App() {
 
       // Pas d'utilisateur authentifié → on DOIT afficher l'écran de connexion.
       if (!user) {
+        if (unsubscribeRealtime) { unsubscribeRealtime(); unsubscribeRealtime = null }
+        if (unsubscribeCards) { unsubscribeCards(); unsubscribeCards = null }
+        stopRealtimeExpressions();
+        // Hors-ligne, Firebase peut renvoyer « null » faute de pouvoir
+        // rafraîchir la session : on reste sur les données locales.
+        if (isOffline() && canRunLocally()) {
+          startLocalMode('session non vérifiable hors-ligne')
+          return
+        }
         setAccessDenied(true)
         setAuthChecking(false)
-        if (unsubscribeRealtime) unsubscribeRealtime();
-        stopRealtimeExpressions();
         return
       }
 
@@ -137,7 +221,10 @@ function App() {
       if (unsubscribeCards) unsubscribeCards();
       unsubscribeCards = startRealtimeExpressions(user.uid);
 
-      if (!initStarted.current) {
+      if (initStarted.current) {
+        // Session retrouvée après un démarrage en mode local → on rattrape la synchro.
+        forceSync('session-restaurée')
+      } else {
         initStarted.current = true
         if (localStorage.getItem("memo_db_needs_reset") === "true") {
           try {
@@ -177,6 +264,8 @@ function App() {
     let pendingTimer = null
     const forceSync = (reason) => {
       if (navigator.onLine === false || !initStarted.current) return
+      // Mode local sans session Firebase : rien à synchroniser pour l'instant.
+      if (!auth.currentUser) return
       const now = Date.now()
       const wait = Math.max(0, MIN_SYNC_GAP_MS - (now - lastSyncAt))
       if (pendingTimer) return // déjà planifiée
@@ -217,6 +306,7 @@ function App() {
 
     return () => {
       cancelled = true
+      clearTimeout(authWatchdog)
       unsubAuth()
       if (unsubscribeRealtime) unsubscribeRealtime();
       if (unsubscribeCards) unsubscribeCards();
@@ -250,7 +340,7 @@ function App() {
             setFbUser(result.user.uid)
             window.location.reload()
           } else {
-            await auth.signOut()
+            try { await auth?.signOut() } catch { /* ignore */ }
             setLoginError("Ce compte Google n'est pas autorisé à accéder à l'application.")
           }
         }
@@ -265,6 +355,7 @@ function App() {
           code === 'auth/operation-not-supported-in-this-environment'
         ) {
           try {
+            if (!auth || !provider) throw new Error('Connexion indisponible')
             await signInWithRedirect(auth, provider)
             return
           } catch (e2) {
@@ -315,6 +406,11 @@ function App() {
           <img src="https://www.google.com/favicon.ico" width="18" height="18" alt="Google" />
           Se connecter avec Google
         </button>
+        {isOffline() && (
+          <div style={{ color: '#FBBF24', fontSize: 13, maxWidth: 420 }}>
+            Pas de connexion internet. La première connexion nécessite le réseau ; ensuite l'app fonctionne hors-ligne.
+          </div>
+        )}
         {loginError && (
           <div style={{ color: '#F87171', fontSize: 13, maxWidth: 420 }}>
             {loginError}
@@ -327,12 +423,12 @@ function App() {
   return (
     <DatabaseProvider database={database}>
       <ErrorBoundary>
-        <Suspense fallback={<div style={{ color: 'white', display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center', fontFamily: "'Outfit', sans-serif", fontSize: '18px' }}>🚀 Chargement de l'interface principale…</div>}>
-          <MemoMaster />
-        </Suspense>
-        <OfflineBanner />
-        <UpdatePrompt />
-        <BetaChat />
+        <MemoMaster />
+        {/* Widgets secondaires isolés : leur plantage ne doit jamais
+            emporter l'application entière. */}
+        <ErrorBoundary silent scope="OfflineBanner"><OfflineBanner /></ErrorBoundary>
+        <ErrorBoundary silent scope="UpdatePrompt"><UpdatePrompt /></ErrorBoundary>
+        <ErrorBoundary silent scope="BetaChat"><BetaChat /></ErrorBoundary>
       </ErrorBoundary>
     </DatabaseProvider>
   )

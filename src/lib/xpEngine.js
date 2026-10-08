@@ -195,8 +195,8 @@ export function migrateLegacyPowerLevel(state, legacyPower) {
 }
 
 /** Formule legacy — conservée UNIQUEMENT pour calculer la graine de migration. */
-export function legacyPowerLevel({ cards = 0, streak = 0, examsDone = 0, badges = 0 }) {
-  return cards * 10 + streak * 50 + examsDone * 100 + badges * 200;
+export function legacyPowerLevel({ cards = 0, streak = 0, badges = 0 }) {
+  return cards * 10 + streak * 50 + badges * 200;
 }
 
 /** Somme d'XP sur les N derniers jours. */

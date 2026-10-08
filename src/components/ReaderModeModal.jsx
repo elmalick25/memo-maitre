@@ -157,7 +157,7 @@ export default function ReaderModeModal({
             left: 0,
             height: "3px",
             width: `${scrollProgress}%`,
-            background: "#8B5CF6",
+            background: "var(--mm-primary)",
             transition: "width 0.1s ease-out",
           }}
         />
@@ -183,9 +183,9 @@ export default function ReaderModeModal({
             style={{
               padding: "6px 12px",
               borderRadius: "8px",
-              border: isBionic ? "1px solid #8B5CF6" : `1px solid ${theme.border}`,
-              background: isBionic ? "rgba(139, 92, 246, 0.2)" : "transparent",
-              color: isBionic ? "#8B5CF6" : theme.text,
+              border: isBionic ? "1px solid var(--mm-primary)" : `1px solid ${theme.border}`,
+              background: isBionic ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "transparent",
+              color: isBionic ? "var(--mm-primary)" : theme.text,
               fontSize: "12px",
               fontWeight: "700",
               cursor: "pointer",
@@ -214,28 +214,38 @@ export default function ReaderModeModal({
             </button>
           </div>
 
-          {/* Sélecteur de Thème */}
-          <select
-            value={themeKey}
-            onChange={(e) => setThemeKey(e.target.value)}
-            style={{
-              padding: "6px 10px",
-              borderRadius: "8px",
-              border: `1px solid ${theme.border}`,
-              background: theme.bg,
-              color: theme.text,
-              fontSize: "11px",
-              fontWeight: "600",
-              outline: "none",
-              cursor: "pointer",
-            }}
-          >
-            {Object.values(THEMES).map((t) => (
-              <option key={t.id} value={t.id} style={{ background: t.bg, color: t.text }}>
-                {t.name}
-              </option>
-            ))}
-          </select>
+          {/* Sélecteur de Thème en Pilules Tactiles Liquid Glass */}
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "rgba(0,0,0,0.15)", borderRadius: 10, padding: 3, border: `1px solid ${theme.border}` }}>
+            {Object.values(THEMES).map((t) => {
+              const isSelected = themeKey === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setThemeKey(t.id)}
+                  title={t.name}
+                  aria-label={t.name}
+                  style={{
+                    padding: "5px 9px",
+                    borderRadius: 7,
+                    border: isSelected ? "1px solid var(--mm-primary, #6366f1)" : "1px solid transparent",
+                    background: isSelected ? "var(--mm-primary, #6366f1)" : "transparent",
+                    color: isSelected ? "#FFFFFF" : theme.muted,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <span>{t.name.split(" ")[0]}</span>
+                  <span style={{ fontSize: 11 }}>{t.name.split(" ")[1]}</span>
+                </button>
+              );
+            })}
+          </div>
 
           {/* Synthèse Vocale */}
           <button
@@ -327,7 +337,7 @@ export default function ReaderModeModal({
               href={article.link}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "#8B5CF6", textDecoration: "none", fontWeight: "600" }}
+              style={{ color: "var(--mm-primary)", textDecoration: "none", fontWeight: "600" }}
             >
               🔗 Source originale
             </a>
@@ -375,11 +385,15 @@ export default function ReaderModeModal({
                   front: article.title,
                   back: cleanBody.slice(0, 400),
                   category: "Veille & Actus",
+                  _url: article.url,
+                  _source: article.source,
+                  url: article.url,
+                  source: article.source,
                 });
                 showToast?.("Fiche ajoutée à MemoMaster !", "success");
               }}
               style={{
-                background: "#8B5CF6",
+                background: "var(--mm-primary)",
                 color: "#FFFFFF",
                 border: "none",
                 padding: "8px 16px",

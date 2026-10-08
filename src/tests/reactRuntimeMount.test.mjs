@@ -115,7 +115,6 @@ test("God Tier Runtime — Vérification des signatures et props par défaut de 
   const components = [
     { file: "src/components/BadgesView.jsx", name: "BadgesView" },
     { file: "src/components/CategoriesView.jsx", name: "CategoriesView" },
-    { file: "src/components/ProjectsView.jsx", name: "ProjectsView" },
     { file: "src/components/AddCardView.jsx", name: "AddCardView" },
     { file: "src/components/ReviewEngineView.jsx", name: "ReviewEngineView" },
     { file: "src/components/CardListView.jsx", name: "CardListView" },

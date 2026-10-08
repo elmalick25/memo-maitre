@@ -459,25 +459,7 @@ describe('⚡ GOD MODE 6 : Détecteur Temps Réel & Structure Rétro-Ingénierie
   });
 });
 
-describe('⚡ GOD MODE 7 : Catalogue Phonétique & Dojo Connected Speech', () => {
-
-  test('Intégrité du fichier AccentTraining et présence de toutes les paires phonétiques', () => {
-    const atPath = path.resolve('src/components/AccentTraining.jsx');
-    const content = fs.readFileSync(atPath, 'utf8');
-
-    // Vérification des sons essentiels
-    assert.ok(content.includes('/ð/'), 'Doit contenir le TH voisé /ð/');
-    assert.ok(content.includes('/θ/'), 'Doit contenir le TH sourd /θ/');
-    assert.ok(content.includes('/ɪ/ vs /iː/'), 'Doit contenir l\'opposition I court vs I long');
-    assert.ok(content.includes('/æ/ vs /e/'), 'Doit contenir l\'opposition A ouvert vs E neutre');
-    assert.ok(content.includes('/ə/'), 'Doit contenir le Schwa');
-    assert.ok(content.includes('connected_speech'), 'Doit contenir le module de connected speech');
-
-    // Vérification des contractions clés
-    assert.ok(content.includes("should've known"), 'Doit contenir should\'ve known');
-    assert.ok(content.includes('gonna make it'), 'Doit contenir gonna make it');
-    assert.ok(content.includes('wanna talk about it'), 'Doit contenir wanna talk about it');
-  });
+describe('⚡ GOD MODE 7 : Écoute Rapide & Compréhension', () => {
 
   test('CoachSpeedListening — Intégrité des niveaux et du multiplicateur de vitesse', () => {
     const cslPath = path.resolve('src/components/CoachSpeedListening.jsx');

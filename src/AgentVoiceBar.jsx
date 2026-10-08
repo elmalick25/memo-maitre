@@ -140,8 +140,70 @@ export default function AgentVoiceBar({ agent, onStart, variant = "default" } = 
     }
   }, [agent, isConnected, onStart]);
 
-  const size = variant === "minimal" ? 44 : 56;
-  const label = isConnected ? "Arrêter" : "Parler à NOVA";
+  const size = variant === "minimal" ? 44 : (variant === "chatgpt" ? 48 : 56);
+  const label = isConnected ? "Arrêter la session vocale" : "Démarrer le mode vocal";
+
+  if (variant === "chatgpt") {
+    return (
+      <>
+        <style>{`
+          @keyframes chatGptWave {
+            0% { transform: scaleY(0.4); opacity: 0.6; }
+            50% { transform: scaleY(1.3); opacity: 1; }
+            100% { transform: scaleY(0.7); opacity: 0.8; }
+          }
+        `}</style>
+        <button
+          type="button"
+          onClick={handleClick}
+          aria-label={label}
+          title={label}
+          style={{
+            width: size, height: size, borderRadius: "50%",
+            border: isConnected ? "2px solid #10B981" : "1.5px solid rgba(255, 255, 255, 0.18)",
+            cursor: "pointer",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            background: isConnected
+              ? "linear-gradient(135deg, #10B981, #059669)"
+              : "linear-gradient(135deg, #1E293B, #0F172A)",
+            color: "white",
+            boxShadow: isConnected
+              ? "0 0 0 4px rgba(16,185,129,0.25), 0 0 20px rgba(16,185,129,0.4)"
+              : "0 6px 18px rgba(15, 23, 42, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2)",
+            transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+            flexShrink: 0,
+            outline: "none"
+          }}
+          onMouseDown={(e) => { e.currentTarget.style.transform = "scale(0.94)"; }}
+          onMouseUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+        >
+          {/* Les 4 barres sonores emblématiques de ChatGPT Voice */}
+          <div style={{ display: "flex", alignItems: "center", gap: 3, height: 22 }}>
+            {[
+              { h: 10, delay: "0.2s" },
+              { h: 18, delay: "0.4s" },
+              { h: 14, delay: "0.1s" },
+              { h: 8,  delay: "0.3s" }
+            ].map((bar, i) => (
+              <span
+                key={i}
+                style={{
+                  width: 3.5,
+                  height: bar.h,
+                  borderRadius: 2,
+                  background: "#FFFFFF",
+                  transformOrigin: "center",
+                  animation: isConnected ? `chatGptWave 0.75s ease-in-out infinite alternate ${bar.delay}` : "none",
+                  transition: "all 0.2s ease"
+                }}
+              />
+            ))}
+          </div>
+        </button>
+      </>
+    );
+  }
 
   return (
     <button
@@ -155,12 +217,12 @@ export default function AgentVoiceBar({ agent, onStart, variant = "default" } = 
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         background: isConnected
           ? "linear-gradient(135deg, #10B981, #059669)"
-          : "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
+          : "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
         color: "white",
         fontSize: variant === "minimal" ? 18 : 22,
         boxShadow: isConnected
           ? "0 0 0 4px rgba(16,185,129,0.25), 0 8px 20px rgba(16,185,129,0.35)"
-          : "0 8px 20px rgba(139, 92, 246,0.35)",
+          : "0 8px 20px color-mix(in srgb, var(--mm-primary) 35.0%, transparent)",
         transition: "all 0.2s",
         flexShrink: 0,
       }}

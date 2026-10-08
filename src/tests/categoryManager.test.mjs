@@ -42,3 +42,19 @@ test('reconcileCategoriesWithExpressions — crée les catégories orphelines', 
   assert.equal(dockerCat.targetScore, 80);
   assert.ok(CAT_PALETTE.includes(dockerCat.color));
 });
+
+test('mergeDefaultCategories & reconcileCategoriesWithExpressions — excluent strictement les modules supprimés (deletedNames)', () => {
+  const deleted = ['📊 Data Processing', '☕ Java / Spring Boot'];
+  const merged = mergeDefaultCategories([], deleted);
+  assert.equal(merged.some(c => c.name.includes('Data Processing')), false);
+  assert.equal(merged.some(c => c.name.includes('Java')), false);
+  assert.equal(merged.some(c => c.name.includes('Anglais')), true);
+
+  const expsWithDeleted = [
+    { id: '1', category: '📊 Data Processing' },
+    { id: '2', category: '🐍 Python' },
+  ];
+  const reconciled = reconcileCategoriesWithExpressions([], expsWithDeleted, deleted);
+  assert.equal(reconciled.some(c => c.name.includes('Data Processing')), false);
+  assert.equal(reconciled.some(c => c.name.includes('Python')), true);
+});

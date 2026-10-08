@@ -156,7 +156,7 @@ test('couche9 : fiches supprimées entre deux rendus ⇒ retirées du restant', 
   const a = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
   const deleted = new Set(a.plan.ids.slice(0, 5));
   const b = buildDailyPlan({ plan: a.plan, dueCards: due.filter((c) => !deleted.has(c.id)), todayISO: TODAY });
-  assert.equal(b.remainingCount, 35, 'les places libérées sont recomblées le même jour');
+  assert.equal(b.remainingCount, 30, 'plan scellé : aucune fiche injectée en cours de journée');
   assert.ok(b.plan.ids.every((id) => !deleted.has(id)));
 });
 
@@ -193,8 +193,8 @@ test('couche9 : un plan scellé sans plafond est re-plafonné quand la pile gros
   const big = mkCards(244);
   const b = buildDailyPlan({ plan: a.plan, dueCards: big, todayISO: TODAY });
   assert.equal(b.target, 35);
-  assert.equal(b.remainingCount, 35, 'le compteur ne doit jamais afficher 244');
-  assert.equal(b.plan.ids.length, 35);
+  assert.equal(b.remainingCount, 20, 'plan scellé : ni 244, ni fiches injectées');
+  assert.equal(b.plan.ids.length, 20);
 });
 
 test('couche9 : un plan déjà corrompu en storage (244 ids) est réparé au chargement', () => {
@@ -213,5 +213,19 @@ test('couche9 : le plafond re-borné ne supprime jamais le travail déjà fait',
   const big = mkCards(244);
   const r = buildDailyPlan({ plan, dueCards: big.filter((c) => !plan.doneIds.includes(c.id)), todayISO: TODAY });
   assert.equal(r.doneCount, 12);
-  assert.equal(r.remainingCount, 23, '35 - 12 déjà faites');
+  assert.equal(r.remainingCount, 8, '20 - 12 déjà faites, sans injection');
+});
+
+test('bugfix : réviser un module puis sortir n\'injecte jamais de nouvelles fiches', () => {
+  const due = mkCards(200);
+  let r = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
+  const planIds = new Set(r.plan.ids);
+  let plan = r.plan;
+  for (const id of r.plan.ids.slice(0, 10)) plan = markCardDone(plan, id, TODAY);
+  // Des fiches du plan sortent du pool (budget de neuves qui baisse, pause…)
+  const gone = new Set(r.plan.ids.slice(10, 15));
+  const done = new Set(plan.doneIds);
+  r = buildDailyPlan({ plan, dueCards: due.filter((c) => !done.has(c.id) && !gone.has(c.id)), todayISO: TODAY });
+  assert.ok(r.plan.ids.every((id) => planIds.has(id)), 'aucune fiche hors plan');
+  assert.equal(r.remainingCount, 20);
 });

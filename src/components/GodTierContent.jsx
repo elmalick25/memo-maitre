@@ -11,7 +11,7 @@
 import React from "react";
 import RichText from "./RichText";
 
-export default function GodTierContent({ text, theme, isDarkMode: explicitIsDarkMode }) {
+export default function GodTierContent({ text, theme, isDarkMode: explicitIsDarkMode, showAudio = false }) {
   // 🛡️ Anti-crash : l'IA renvoie parfois un objet/tableau au lieu d'une chaîne.
   // On coerce en chaîne pour éviter que RichText/react-markdown ne plante.
   let safeText = text;
@@ -53,7 +53,7 @@ export default function GodTierContent({ text, theme, isDarkMode: explicitIsDark
   }
   return (
     <div style={{ width: "100%", color: theme?.text || "inherit" }}>
-      <RichText content={safeText} isDarkMode={isDarkMode} style={{ color: theme?.text }} />
+      <RichText content={safeText} isDarkMode={isDarkMode} style={{ color: theme?.text }} showAudio={showAudio} />
     </div>
   );
 }

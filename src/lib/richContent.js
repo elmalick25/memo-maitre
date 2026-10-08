@@ -83,7 +83,7 @@ const inline = (s) => {
   // links
   out = out.replace(
     /\[([^\]]+)\]\(([^)\s]+)\)/g,
-    '<a href="$2" target="_blank" rel="noopener" style="color:#8B5CF6;text-decoration:underline;">$1</a>'
+    '<a href="$2" target="_blank" rel="noopener" style="color:var(--mm-primary);text-decoration:underline;">$1</a>'
   );
   return out;
 };
@@ -156,7 +156,7 @@ const mdToHtml = (text, highlightCode) => {
         i++;
       }
       out.push(
-        `<blockquote style="border-left:3px solid #8B5CF6;padding:6px 12px;margin:8px 0;color:inherit;opacity:0.85;font-style:italic;">${inline(
+        `<blockquote style="border-left:3px solid var(--mm-primary);padding:6px 12px;margin:8px 0;color:inherit;opacity:0.85;font-style:italic;">${inline(
           buf.join(" ")
         )}</blockquote>`
       );

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from "react";
+import { colorMix } from "../lib/colorMix";
 
-const SoundwavePlayer = ({ src, isPlaying, onPlay, onPause, onEnded, color = "#EA580C" }) => {
+const SoundwavePlayer = ({ src, isPlaying, onPlay, onPause, onEnded, color = "var(--mm-primary-deep)" }) => {
   const audioRef = useRef(null);
 
   const handlePlayPause = () => {
@@ -39,12 +40,12 @@ const SoundwavePlayer = ({ src, isPlaying, onPlay, onPause, onEnded, color = "#E
         onClick={handlePlayPause}
         style={{
           width: 36, height: 36, borderRadius: "50%", border: "none",
-          background: isPlaying ? color : `${color}22`,
+          background: isPlaying ? color : `${colorMix(color, 13)}`,
           color: isPlaying ? "white" : color,
           cursor: "pointer", fontSize: 14, flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.2s",
-          boxShadow: isPlaying ? `0 0 14px ${color}60` : "none",
+          boxShadow: isPlaying ? `0 0 14px ${colorMix(color, 38)}` : "none",
         }}
       >
         {isPlaying ? "⏸" : "▶"}

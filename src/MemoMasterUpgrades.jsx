@@ -19,6 +19,7 @@ import {
 } from 'chart.js';
 import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import RadialDuelChart from "./components/RadialDuelChart";
+import { colorMix } from "./lib/colorMix";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, Filler, ArcElement);
 
@@ -67,7 +68,7 @@ export function Minimap({ cards, onPixelClick, theme }) {
   const getColorForCard = (card) => {
     if ((card.level || 0) >= 7) return "#22C55E"; // Mastered - green
     if ((card.nextReview || "") <= localToday()) return "#EF4444"; // Due - red
-    if ((card.level || 0) >= 4) return "#8B5CF6"; // Good - blue
+    if ((card.level || 0) >= 4) return "var(--mm-primary)"; // Good - blue
     if ((card.level || 0) >= 1) return "#F59E0B"; // Learning - yellow
     return "var(--mm-fg-muted)"; // New - gray
   };
@@ -90,7 +91,7 @@ export function Minimap({ cards, onPixelClick, theme }) {
         height: 'calc(100vh - 120px)', background: theme.inputBg,
         borderRadius: '9px', padding: '4px 2px', cursor: 'pointer', zIndex: 100,
         display: 'flex', flexDirection: 'column', gap: '1px',
-        boxShadow: '0 4px 12px rgba(139, 92, 246,0.1)',
+        boxShadow: '0 4px 12px color-mix(in srgb, var(--mm-primary) 10.0%, transparent)',
       }}
     >
       {cards.map(card => (
@@ -208,7 +209,7 @@ export function ResumeCarousel({ items = [], theme }) {
             style={{
               flex: "0 0 220px", scrollSnapAlign: "start",
               padding: 16, borderRadius: 14,
-              background: `linear-gradient(135deg, ${theme.highlight}18, ${theme.highlight}05)`,
+              background: `linear-gradient(135deg, ${colorMix(theme.highlight, 9)}, ${colorMix(theme.highlight, 2)})`,
               border: `1px solid ${theme.border}`, color: theme.text,
               cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: 6,
             }}
@@ -341,7 +342,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
     <div style={{ background: theme.cardBg, borderRadius: 20, padding: 24, border: `2px dashed ${theme.border}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
         <h3 style={{ margin: 0, fontWeight: 800, color: theme.text, fontSize: 16 }}>⚡ Quick Add — colle n'importe quoi</h3>
-        {kind && <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, background: theme.highlight + "22", color: theme.highlight, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>{kind}</span>}
+        {kind && <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 99, background: colorMix(theme.highlight, 13), color: theme.highlight, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>{kind}</span>}
       </div>
       <textarea
         value={value}
@@ -361,7 +362,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
             style={{
               flex: 1, minWidth: 140, padding: "10px 12px", borderRadius: 12,
               border: `2px solid ${style === o.id ? theme.highlight : theme.border}`,
-              background: style === o.id ? theme.highlight + "12" : "transparent",
+              background: style === o.id ? colorMix(theme.highlight, 7) : "transparent",
               color: style === o.id ? theme.highlight : theme.textMuted,
               cursor: "pointer", textAlign: "left",
             }}
@@ -376,8 +377,8 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
           margin: "12px 0",
           padding: "12px 16px",
           borderRadius: 12,
-          background: theme.highlight + "10",
-          border: `1px solid ${theme.highlight}30`,
+          background: colorMix(theme.highlight, 6),
+          border: `1px solid ${colorMix(theme.highlight, 19)}`,
         }}>
           <div style={{ fontWeight: 700, fontSize: 13, color: theme.highlight, marginBottom: 6 }}>
             🔍 {profile.conceptCount} concept{profile.conceptCount > 1 ? "s" : ""} détecté{profile.conceptCount > 1 ? "s" : ""} → {profile.recommendedCardCount} fiches recommandées
@@ -392,7 +393,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
               {profile.concepts.slice(0, 8).map((c, i) => (
                 <span key={i} style={{
                   fontSize: 11, padding: "3px 10px", borderRadius: 99,
-                  background: theme.highlight + "20", color: theme.highlight,
+                  background: colorMix(theme.highlight, 13), color: theme.highlight,
                   fontWeight: 600,
                 }}>{c}</span>
               ))}
@@ -407,7 +408,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
             onClick={analyze} disabled={!value.trim() || profiling} className="hov"
             style={{
               width: "100%", padding: 14, borderRadius: 12,
-              background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white",
+              background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white",
               border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer",
               opacity: !value.trim() || profiling ? 0.5 : 1,
             }}
@@ -430,7 +431,7 @@ export function SmartPasteBox({ onGenerate, theme, isDarkMode, callClaude }) {
           onClick={submit} disabled={!value.trim() || loading} className="hov"
           style={{
             marginTop: 12, width: "100%", padding: 14, borderRadius: 12,
-            background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white",
+            background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white",
             border: "none", fontWeight: 800, fontSize: 14, cursor: "pointer",
             opacity: !value.trim() || loading ? 0.5 : 1,
           }}
@@ -606,7 +607,7 @@ export function CardHealthBadge({ card }) {
   return (
     <span style={{
       fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
-      background: h.color + "22", color: h.color, textTransform: "uppercase", letterSpacing: 0.5,
+      background: colorMix(h.color, 13), color: h.color, textTransform: "uppercase", letterSpacing: 0.5,
     }}>{h.label}</span>
   );
 }
@@ -676,23 +677,26 @@ export function FsrsForecastChart({ expressions, theme, isDarkMode }) {
     const tooltipBg = isDarkMode ? "rgba(15, 23, 42, 0.95)" : "rgba(255, 255, 255, 0.95)";
     const borderColor = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)";
   
+    const chartPrimary = isDarkMode ? "#8b5cf6" : "#2563eb";
+    const chartGlow = isDarkMode ? "#a78bfa" : "#3b82f6";
+
     return (
-      <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `1px solid ${theme.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.1)", position: "relative", overflow: "hidden" }}>
+      <div style={{ background: theme.cardBg, borderRadius: 24, padding: "22px 18px", border: `1px solid ${theme.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.1)", position: "relative", overflow: "hidden" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontWeight: 900, color: theme.text, fontSize: 18 }}>🔮 Charge prévue (7 jours)</h3>
+          <h3 style={{ margin: 0, fontWeight: 900, color: theme.text, fontSize: 17 }}>🔮 Charge prévue (7 jours)</h3>
           <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}><strong style={{ color: theme.highlight, fontWeight: 900, fontSize: 14 }}>{total}</strong> à venir</div>
         </div>
-        <div style={{ height: 220, width: "100%", display: "flex", justifyContent: "center" }}>
+        <div style={{ height: 260, width: "100%", display: "flex", justifyContent: "center" }}>
           <Doughnut 
             data={{
               labels: data.map(d => {
                 const date = new Date(d.date);
-                return date.toLocaleDateString('fr-FR', { weekday: 'long' });
+                return date.toLocaleDateString('fr-FR', { weekday: 'short' });
               }),
               datasets: [{
                 data: data.map(d => d.count),
                 backgroundColor: [
-                  "#8B5CF6", "#8B5CF6", "#EC4899", "#F43F5E", 
+                  chartPrimary, chartGlow, "#EC4899", "#F43F5E", 
                   "#F59E0B", "#10B981", "#14B8A6"
                 ],
                 borderWidth: 2,
@@ -702,12 +706,15 @@ export function FsrsForecastChart({ expressions, theme, isDarkMode }) {
             }}
             options={{
               responsive: true, maintainAspectRatio: false,
-              cutout: '65%',
+              cutout: '68%',
               plugins: {
-                legend: { position: 'right', labels: { color: textMuted, font: { weight: 'bold' } } },
+                legend: { 
+                  position: 'bottom', 
+                  labels: { color: textMuted, font: { weight: 'bold', size: 11 }, boxWidth: 10, padding: 8 } 
+                },
                 tooltip: {
                   backgroundColor: tooltipBg, titleColor: textColor, bodyColor: textColor,
-                  borderColor: borderColor, borderWidth: 1, padding: 12,
+                  borderColor: borderColor, borderWidth: 1, padding: 12, cornerRadius: 10,
                   callbacks: { label: (ctx) => ` ${ctx.raw} révisions` }
                 }
               }
@@ -746,13 +753,13 @@ export function ForgettingCurveChart({ expressions, theme, isDarkMode }) {
             datasets: [{
               label: 'Rétention',
               data: points.map(p => p.retention),
-              borderColor: "#8B5CF6",
+              borderColor: "var(--mm-primary)",
               borderWidth: 3,
-              backgroundColor: "rgba(139, 92, 246, 0.2)",
+              backgroundColor: "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)",
               fill: true,
               tension: 0.4,
               pointBackgroundColor: cardBg,
-              pointBorderColor: "#8B5CF6",
+              pointBorderColor: "var(--mm-primary)",
               pointBorderWidth: 2,
               pointRadius: 4,
               pointHoverRadius: 6,
@@ -837,13 +844,13 @@ export function TopTrappedCards({ expressions, callClaude, showToast, onUpdate, 
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 800, color: theme.text, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.front}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                <span style={{ fontSize: 11, color: c._health.color, fontWeight: 800, background: c._health.color + "15", padding: "2px 8px", borderRadius: 100 }}>{c._health.label}</span>
+                <span style={{ fontSize: 11, color: c._health.color, fontWeight: 800, background: colorMix(c._health.color, 8), padding: "2px 8px", borderRadius: 100 }}>{c._health.label}</span>
                 <span style={{ fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>{c.reviewHistory?.length} rév.</span>
               </div>
             </div>
             <button
               onClick={() => rewrite(c)} disabled={rewriting === c.id} className="hov"
-              style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${theme.highlight}, ${theme.highlight}dd)`, color: "white", fontSize: 12, fontWeight: 800, cursor: "pointer", boxShadow: `0 4px 12px ${theme.highlight}40` }}
+              style={{ padding: "8px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${theme.highlight}, ${colorMix(theme.highlight, 87)})`, color: "white", fontSize: 12, fontWeight: 800, cursor: "pointer", boxShadow: `0 4px 12px ${colorMix(theme.highlight, 25)}` }}
             >
               {rewriting === c.id ? "…" : "✨ Réécrire"}
             </button>
@@ -876,7 +883,7 @@ export function ComparisonVs30Days({ sessionHistory = [], expressions, theme, is
     const trend = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
     const trendColor = trend === "up" ? "#10B981" : trend === "down" ? "#EF4444" : "var(--mm-fg-muted)";
     
-    const recentColor = "#c084fc";
+    const recentColor = "var(--mm-primary-glow)";
 
     return (
       <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `1px solid ${theme.border}`, boxShadow: "0 8px 32px rgba(0,0,0,0.1)", position: "relative", overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -935,10 +942,10 @@ Génère le digest.`
  * ════════════════════════════════════════════════════════════════════════════ */
 export function PomodoroStudy({ theme, onPhaseChange, showToast }) {
   const PHASES = [
-    { id: "read",    label: "📖 Lecture active",   minutes: 5,  color: "#8B5CF6" },
+    { id: "read",    label: "📖 Lecture active",   minutes: 5,  color: "var(--mm-primary)" },
     { id: "summary", label: "✍️ Synthèse",         minutes: 10, color: "#10B981" },
     { id: "quiz",    label: "❓ Auto-quiz",         minutes: 5,  color: "#F59E0B" },
-    { id: "flash",   label: "🃏 Flashcards",       minutes: 5,  color: "#8B5CF6" },
+    { id: "flash",   label: "🃏 Flashcards",       minutes: 5,  color: "var(--mm-primary)" },
   ];
   const [running, setRunning] = useState(false);
   const [phaseIdx, setPhaseIdx] = useState(0);
@@ -1012,7 +1019,7 @@ export function PomodoroStudy({ theme, onPhaseChange, showToast }) {
         {PHASES.map((p, i) => (
           <div key={p.id} style={{
             flex: 1, height: 4, borderRadius: 2,
-            background: i < phaseIdx ? p.color : i === phaseIdx ? p.color + "80" : theme.inputBg,
+            background: i < phaseIdx ? p.color : i === phaseIdx ? colorMix(p.color, 50) : theme.inputBg,
           }} title={p.label} />
         ))}
       </div>
@@ -1223,7 +1230,7 @@ Pose-lui UNE seule question à la fois. Si tu sens qu'il a compris ou qu'il donn
   };
 
   return (
-    <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, border: `2px solid ${theme.highlight}50` }}>
+    <div style={{ background: theme.cardBg, borderRadius: 20, padding: 20, border: `2px solid ${colorMix(theme.highlight, 31)}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
         <h3 style={{ margin: 0, fontWeight: 800, color: theme.highlight, fontSize: 16 }}>🧠 Mode Socratique Activé</h3>
         <span style={{ fontSize: 12, color: theme.textMuted }}>Trouvons la réponse ensemble</span>

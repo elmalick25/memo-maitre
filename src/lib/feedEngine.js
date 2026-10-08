@@ -410,7 +410,7 @@ function extractImageFromXmlNode(node, fullText = "") {
 /**
  * Normalise n'importe quel flux XML/Atom ou JSON en tableau d'articles standardisés
  */
-export function parseUnifiedFeed(rawPayload, { feedUrl = "", defaultSource = "", defaultColor = "#8B5CF6", defaultEmoji = "📰", customCategory = "general" } = {}) {
+export function parseUnifiedFeed(rawPayload, { feedUrl = "", defaultSource = "", defaultColor = "var(--mm-primary)", defaultEmoji = "📰", customCategory = "general" } = {}) {
   if (!rawPayload) return [];
   const text = typeof rawPayload === "string" ? rawPayload.trim() : "";
   const items = [];
@@ -606,18 +606,19 @@ function parseXmlViaRegex(xmlText, { feedUrl, defaultSource, defaultColor, defau
 /**
  * Récupère et unifie un ensemble de flux avec tolérance aux pannes individuelles
  */
-export async function aggregateMultipleFeeds(feedConfigs = [], { maxArticlesPerFeed = 25, totalLimit = 100 } = {}) {
+// EXTREME GOD : 0 (ou null) = aucune limite — on ingère tout le flux disponible.
+export async function aggregateMultipleFeeds(feedConfigs = [], { maxArticlesPerFeed = 0, totalLimit = 0 } = {}) {
   const promises = feedConfigs.map(async (cfg) => {
     try {
       const { text } = await fetchRawFeedContent(cfg.url);
       const parsed = parseUnifiedFeed(text, {
         feedUrl: cfg.url,
         defaultSource: cfg.name || cfg.source,
-        defaultColor: cfg.color || "#8B5CF6",
+        defaultColor: cfg.color || "var(--mm-primary)",
         defaultEmoji: cfg.emoji || "📰",
         customCategory: cfg.category || "general",
       });
-      return parsed.slice(0, maxArticlesPerFeed);
+      return maxArticlesPerFeed > 0 ? parsed.slice(0, maxArticlesPerFeed) : parsed;
     } catch (e) {
       console.warn(`Feed failure for [${cfg.name || cfg.url}]:`, e.message);
       return [];
@@ -653,5 +654,5 @@ export async function aggregateMultipleFeeds(feedConfigs = [], { maxArticlesPerF
   // Tri par date décroissante (les plus récents d'abord)
   uniqueArticles.sort((a, b) => (b.ts || 0) - (a.ts || 0));
 
-  return uniqueArticles.slice(0, totalLimit);
+  return totalLimit > 0 ? uniqueArticles.slice(0, totalLimit) : uniqueArticles;
 }

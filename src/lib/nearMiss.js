@@ -61,10 +61,19 @@ export function computeNearMiss(input = {}) {
       if (quest.done) return;
       const left = quest.max - quest.cur;
       if (left <= Math.max(3, Math.ceil(quest.max * 0.35))) {
+        let msg = "";
+        if (quest.cur === 0) {
+          msg = `Quête : « ${quest.label} » (+${quest.xp} XP)`;
+        } else if (left === 1) {
+          msg = `Plus qu'une étape pour valider « ${quest.label} » (+${quest.xp} XP)`;
+        } else {
+          msg = `Plus que ${left} pour valider « ${quest.label} » (+${quest.xp} XP)`;
+        }
+
         out.push({
           id: `quest:${quest.id}`,
           icon: quest.icon,
-          text: `Plus que ${left} pour boucler « ${quest.label} » (+${quest.xp} XP)`,
+          text: msg,
           remaining: left,
           unit: "pas",
           priority: q.doneCount === q.total - 1 ? 0 : 2, // dernière quête = top priorité
@@ -76,7 +85,7 @@ export function computeNearMiss(input = {}) {
       out.push({
         id: "weekly",
         icon: q.weekly.icon,
-        text: `Quête de la semaine : ${q.weekly.cur}/${q.weekly.max} — ${left} restant`,
+        text: `Quête hebdo : ${q.weekly.cur}/${q.weekly.max} — encore ${left}`,
         remaining: left,
         unit: "pas",
         priority: 5,
@@ -88,11 +97,12 @@ export function computeNearMiss(input = {}) {
   const best = Number(input.bestComboEver) || 0;
   const cur = Number(input.sessionBestCombo) || 0;
   if (best > 0 && cur > 0 && cur < best && best - cur <= 5) {
+    const left = best - cur;
     out.push({
       id: "combo",
       icon: "⚡",
-      text: `Ton meilleur combo de la session était à ${best - cur} de ton record (${best})`,
-      remaining: best - cur,
+      text: left === 1 ? `Plus qu'une bonne réponse pour égaler ton record (${best})` : `Plus que ${left} réponses pour égaler ton record (${best})`,
+      remaining: left,
       unit: "bonnes réponses",
       priority: 3,
     });
@@ -100,7 +110,7 @@ export function computeNearMiss(input = {}) {
     out.push({
       id: "combo_record",
       icon: "🏅",
-      text: `Nouveau record de combo : ${cur} !`,
+      text: `Nouveau record de combo : ${cur} d'affilée !`,
       remaining: 0,
       unit: "",
       priority: 4,
@@ -108,13 +118,21 @@ export function computeNearMiss(input = {}) {
   }
 
   // 4. Badge le plus proche (progression réelle fournie par l'appelant)
+  // RÈGLE DE VÉRIDICITÉ : n'afficher de near-miss QUE si le badge a une progression active (cur > 0)
+  // Ne jamais afficher "plus que 1" sur un badge avec 0 action réalisée.
   (input.badges || []).forEach((b) => {
-    const left = (b.max || 0) - (b.cur || 0);
-    if (left > 0 && left <= Math.max(3, Math.ceil((b.max || 1) * 0.15))) {
+    const cur = b.cur || 0;
+    const max = b.max || 0;
+    const left = max - cur;
+    if (cur > 0 && left > 0 && left <= Math.max(3, Math.ceil(max * 0.2))) {
+      const badgeText = left === 1
+        ? `Badge « ${b.label} » : plus qu'une validation !`
+        : `Badge « ${b.label} » : encore ${left} pour le débloquer`;
+
       out.push({
         id: `badge:${b.id || b.label}`,
         icon: b.icon || "🏆",
-        text: `Badge « ${b.label} » : plus que ${left}`,
+        text: badgeText,
         remaining: left,
         unit: "pas",
         priority: 3,
@@ -122,7 +140,11 @@ export function computeNearMiss(input = {}) {
     }
   });
 
-  return out.sort((a, b) => a.priority - b.priority || a.remaining - b.remaining);
+  return out.sort((a, b) =>
+    (a.priority - b.priority) ||
+    (a.remaining - b.remaining) ||
+    String(a.id).localeCompare(String(b.id))
+  );
 }
 
 /** Le meilleur near-miss (ou null s'il n'y a rien de vrai à annoncer). */

@@ -1,3 +1,4 @@
+import { resolveAll } from "./security/apiKeys.js";
 // mediaTranscribe.js — Récupérer le texte d'une vidéo QUAND YouTube ne fournit
 // aucun sous-titre, notamment quand les sous-titres sont INCRUSTÉS dans l'image
 // (hardcoded / burned-in). Deux moteurs complémentaires :
@@ -6,12 +7,7 @@
 
 // ─────────────────────────── Whisper (audio) ────────────────────────────────
 function groqKeys() {
-  return [
-    import.meta.env.VITE_GROQ_API_KEY,
-    import.meta.env.VITE_GROQ_API_KEY_5,
-    import.meta.env.VITE_GROQ_API_KEY_6,
-    import.meta.env.VITE_GROQ_API_KEY_7,
-  ].filter(Boolean);
+  return resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
 }
 
 // Encode des samples PCM float en WAV 16 kHz mono (format accepté partout).

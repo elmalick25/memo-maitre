@@ -1,6 +1,7 @@
 // src/lib/retroEngineeringRestructurer.js — Service de restructuration en Rétro-Ingénierie Sémantique pour fiches sélectionnées
 
 import { safeParseJSON } from "./jsonRepair.js";
+import { runCardMigration } from "./migrationRunner.js";
 
 function safeJSONParse(raw) {
   if (!raw) return null;
@@ -16,54 +17,50 @@ function toText(raw) {
   return "";
 }
 
+// Exigence pédagogique : au moins 3 exemples ou mini-dialogues immersifs
+import {
+  buildEnglishRestructureSystemPrompt,
+  buildEnglishRestructureUserPayload,
+  parseEnglishRestructureResponse,
+  isEnglishCategory,
+} from "./englishCardEngine.js";
+
 /**
- * Restructure une seule fiche au format Rétro-Ingénierie Sémantique via LLM
+ * Restructure une seule fiche au format d'élite English Coach via LLM
  */
 export async function upgradeCardToRetroEngineering(card, callClaude) {
   if (!card || !callClaude) return card;
 
-  const systemPrompt = `Tu es un ingénieur en rétro-ingénierie linguistique. Ton rôle est de restructurer cette fiche d'anglais au format RÉTRO-INGÉNIERIE SÉMANTIQUE.
-Pas de blabla. Longueur maximale : ~30-40 lignes.
-
-RÈGLE DE STRUCTURE STRICTE DU CHAMP "back" :
-
-Traduction : <traduction courte et naturelle>
-
-### ⚙️ 1. Décomposition & Transition Métaphorique
-* **<Mot 1> :** Sens physique : *<sens brut>* ➔ **Glissement sémantique :** <explication du sens figuré>
-* **Le Modèle Mental :** <l'image mécanique globale en 1 phrase>
-
-### 🔍 2. Comparatif (Pourquoi A et pas B ?)
-* **Option A (<front>) :** <ce que le native visualise>
-* **Option B (<Alternative faux-ami>) :** <pourquoi le sens dévie>
-
-### ⚠️ 3. Anti-Pattern (Le piège)
-* **Erreur :** <erreur commise> ➔ **Problème :** <sens perçu par un anglophone>
-
-### 💻 4. Exemples (Format court)
-* **Exemple 1 (Quotidien) :** \`<phrase EN 1>\` ↳ *<traduction 1>*
-* **Exemple 2 (Tech/Workflow) :** \`<phrase EN 2>\` ↳ *<traduction 2>*
-* **Exemple 3 (Professionnel/Nuance) :** \`<phrase EN 3>\` ↳ *<traduction 3>*
-
-EXIGENCE STRICTE : Fournis OBLIGATOIREMENT au moins 3 exemples de phrases anglaises naturelles (chacune en backticks \`...\`) accompagnés de leur traduction. Réponds UNIQUEMENT avec le contenu du champ "back" au format Markdown exact ci-dessus. Pas de blabla, aucun texte superflu.`;
-
-  const userPayload = `FICHE À RESTRUCTURER :
-Front: "${card.front || ""}"
-Back actuel: "${card.back || ""}"
-Exemple actuel: "${card.example || ""}"`;
+  const systemPrompt = buildEnglishRestructureSystemPrompt();
+  const userPayload = buildEnglishRestructureUserPayload(card);
 
   try {
     const raw = await callClaude(systemPrompt, userPayload, {
       task: "pedagogy",
       maxTokens: 2000,
-      temperature: 0.4,
+      temperature: 0.3,
     });
-    const rawText = toText(raw);
-    let newBack = "";
 
-    const parsed = safeJSONParse(rawText);
-    if (parsed && parsed.back) {
-      newBack = String(parsed.back).trim();
+    const rawText = toText(raw);
+    const parsed = parseEnglishRestructureResponse(raw, card);
+
+    if (parsed && (parsed.back !== card.back || (parsed.front && parsed.front !== card.front))) {
+      return {
+        ...card,
+        front: parsed.front || card.front,
+        back: parsed.back,
+        example: parsed.example || card.example,
+        _retroEngineered: true,
+        _englishCoachTransformed: true,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    // Fallback: extraction markdown brute si l'IA renvoie du texte ou un objet non-standard
+    let newBack = "";
+    const parsedSimple = safeJSONParse(rawText);
+    if (parsedSimple && parsedSimple.back) {
+      newBack = String(parsedSimple.back).trim();
     } else if (rawText.trim().length > 20) {
       newBack = rawText.replace(/```markdown|```/gi, "").trim();
     }
@@ -105,46 +102,70 @@ export async function restructureSelectedCards({
   callClaude,
   onProgress,
   showToast,
+  concurrency = 3,
 }) {
   const cards = resolveCards(selectedCards, allCards);
 
-  if (!cards.length || !setExpressions || !callClaude) {
-    if (!cards.length) showToast?.("Aucune fiche valide à restructurer.", "info");
+  if (!cards.length) {
+    showToast?.("Aucune fiche valide à restructurer.", "info");
+    return 0;
+  }
+  if (!setExpressions || !callClaude) {
+    showToast?.("Restructuration indisponible : assistant IA injoignable.", "error");
     return 0;
   }
 
-  let completed = 0;
-  const total = cards.length;
-  const updatedMap = new Map();
-
-  const processCard = async (card) => {
-    const upgraded = await upgradeCardToRetroEngineering(card, callClaude);
-    if (upgraded && upgraded.back && upgraded.back !== card.back) {
-      updatedMap.set(card.id, upgraded);
-    }
-    completed++;
-    onProgress?.(completed, total);
-  };
-
-  const CONCURRENCY = 3;
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(CONCURRENCY, total) }, async () => {
-    while (cursor < total) {
-      const idx = cursor++;
-      await processCard(cards[idx]);
-    }
+  // Même moteur que les deux autres rénovations : réessai automatique,
+  // aucune fiche perdue, aucun écrasement croisé, message clair à la fin.
+  const { migrated } = await runCardMigration({
+    cards,
+    selectCard: () => true,
+    transformCard: (c) => upgradeCardToRetroEngineering(c, callClaude),
+    isMigrated: (c) => Boolean(c && c._retroEngineered),
+    setExpressions,
+    onProgress,
+    showToast,
+    concurrency,
+    labels: {
+      nothingToDo: "Aucune fiche valide à restructurer.",
+      success: (n) => `⚡ ${n} fiche(s) restructurée(s) en Rétro-Ingénierie Sémantique !`,
+      partial: (ok, ko) =>
+        `⚡ ${ok} fiche(s) restructurée(s) · ⚠️ ${ko} n'ont pas pu l'être. Relance sur les fiches restantes.`,
+      allFailed: (n) =>
+        `❌ La restructuration a échoué pour ${n} fiche(s). Vérifie ta connexion internet puis réessaie.`,
+      skippedOnly: (n) => `⚠️ ${n} fiche(s) sont vides : rien à restructurer dedans.`,
+    },
   });
 
-  await Promise.all(workers);
+  return migrated;
+}
 
-  if (updatedMap.size > 0) {
-    setExpressions(prev =>
-      prev.map(c => (updatedMap.has(c.id) ? updatedMap.get(c.id) : c))
-    );
-    showToast?.(`⚡ ${updatedMap.size} fiche(s) restructurée(s) en Rétro-Ingénierie Sémantique !`, "success");
-  } else {
-    showToast?.("Aucune fiche n'a pu être restructurée (IA indisponible ou fiches déjà au bon format).", "info");
+/**
+ * Restructure TOUTES les fiches d'anglais du deck avec parallélisation haute performance
+ */
+export async function restructureAllEnglishCards({
+  allCards = [],
+  setExpressions,
+  callClaude,
+  onProgress,
+  showToast,
+  concurrency = 4,
+}) {
+  const englishCards = (allCards || []).filter(c => isEnglishCategory(c?.category));
+  if (!englishCards.length) {
+    showToast?.("Aucune fiche d'anglais trouvée dans la collection.", "info");
+    return 0;
   }
 
-  return updatedMap.size;
+  showToast?.(`⚡ Lancement de la métamorphose de ${englishCards.length} fiches d'anglais...`, "info");
+
+  return restructureSelectedCards({
+    selectedCards: englishCards,
+    allCards,
+    setExpressions,
+    callClaude,
+    onProgress,
+    showToast,
+    concurrency,
+  });
 }

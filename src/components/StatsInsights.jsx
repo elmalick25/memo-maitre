@@ -13,11 +13,11 @@ import { getMasteryBreakdown, computeMasteryStage } from "../lib/masteryStages";
 import { isCardMastered } from "../lib/cardStatus";
 
 const CARD_COLORS = {
-  positive: { bg: "rgba(16,185,129,0.12)", border: "#10B981", icon: "🚀" },
-  warning:  { bg: "rgba(245,158,11,0.12)", border: "#F59E0B", icon: "⚠️" },
-  info:     { bg: "rgba(139,92,246,0.12)", border: "#8B5CF6", icon: "💡" },
-  goal:     { bg: "rgba(168,85,247,0.12)", border: "#A855F7", icon: "🎯" },
-  streak:   { bg: "rgba(239,68,68,0.12)",  border: "#EF4444", icon: "🔥" },
+  positive: { border: "var(--mm-primary-glow)", icon: "🚀" },
+  warning:  { border: "var(--mm-warning, #b3822f)", icon: "⚠️" },
+  info:     { border: "var(--mm-primary)", icon: "💡" },
+  goal:     { border: "var(--mm-primary)", icon: "🎯" },
+  streak:   { border: "var(--mm-primary-deep)", icon: "🔥" },
 };
 
 function daysBetween(a, b) {
@@ -42,119 +42,124 @@ function computeInsights({ expressions = [], sessionHistory = [], stats = {}, ma
   const velocity30 = in30 / 30;
   const velocity7  = in7 / 7;
   if (in7 > 0) {
-    if (velocity7 > velocity30 * 1.3) {
+    if (velocity7 > velocity30 * 1.3 && velocity30 > 0) {
       out.push({
         kind: "positive",
-        title: "Tu accélères 📈",
-        body: `${in7} fiches ajoutées cette semaine — ${Math.round((velocity7/velocity30 - 1)*100)}% au-dessus de ta moyenne 30j. Continue sur cette lancée.`
+        title: "Accélération nette 📈",
+        body: `${in7} fiches créées cette semaine (+${Math.round((velocity7/velocity30 - 1)*100)}% vs ta moyenne 30j). Excellent élan d'enrichissement.`
       });
     } else if (velocity7 < velocity30 * 0.6 && in30 >= 5) {
       out.push({
         kind: "warning",
-        title: "Rythme en baisse",
-        body: `Seulement ${in7} fiches ces 7 derniers jours vs ~${Math.round(velocity30*7)} en moyenne. Une session vocale de 10 min suffit à rattraper.`
+        title: "Rythme de création ralenti",
+        body: `${in7} fiches ces 7 derniers jours (vs ~${Math.round(velocity30*7)} d'habitude). Une session express de 5 min permet de relancer la dynamique.`
       });
     } else {
       out.push({
         kind: "info",
-        title: "Rythme régulier",
-        body: `Tu ajoutes ~${velocity30.toFixed(1)} fiches / jour. Sur un an, ça fait ${Math.round(velocity30*365)} expressions maîtrisées.`
+        title: "Rythme de croisière",
+        body: `Tu crées ~${velocity30.toFixed(1)} fiches / jour. À cette cadence, tu consolideras ${Math.round(velocity30*365)} notions en un an.`
       });
     }
   }
 
-  // ── 2. Streak ────────────────────────────────────────────────────────────
+  // ── 2. Ancrage Long Terme FSRS (Stabilité >= 21 jours) ───────────────────
+  const anchoredCount = expressions.filter(e => {
+    const s = Number(e.fsrs?.stability || e.stability || e.fsrs_stability || 0);
+    const interval = Number(e.interval || 0);
+    return s >= 21 || interval >= 21 || isCardMastered(e);
+  }).length;
+
+  if (total >= 5 && anchoredCount > 0) {
+    const anchorPct = Math.round((anchoredCount / total) * 100);
+    out.push({
+      kind: anchorPct >= 40 ? "positive" : "info",
+      title: `Mémoire profonde : ${anchoredCount} fiches`,
+      body: `${anchorPct}% de ton deck a franchi le cap des 3 semaines de stabilité FSRS. Ces notions sont désormais ancrées dans ta mémoire à long terme.`
+    });
+  }
+
+  // ── 3. Précision de Rappel FSRS (Dernières révisions) ─────────────────────
+  let recentTotal = 0;
+  let recentSuccess = 0;
+  expressions.forEach(e => {
+    (e.reviewHistory || []).forEach(h => {
+      recentTotal++;
+      // Rating 3 = Good, 4 = Easy, ou rating >= 3
+      const r = Number(h.rating ?? h.grade ?? (h.success ? 3 : 1));
+      if (r >= 3) recentSuccess++;
+    });
+  });
+  if (recentTotal >= 8) {
+    const accuracy = Math.round((recentSuccess / recentTotal) * 100);
+    if (accuracy >= 85) {
+      out.push({
+        kind: "positive",
+        title: `Précision de rappel : ${accuracy}% 🎯`,
+        body: `Calibrage idéal proche des 90% cibles de l'algorithme FSRS. Tu apprends sans sur-apprentissage inutile.`
+      });
+    } else {
+      out.push({
+        kind: "warning",
+        title: `Précision de rappel : ${accuracy}% ⚡`,
+        body: `Légèrement en-dessous de l'optimum FSRS (90%). Conseil : raccourcis tes sessions et espace les révisions difficiles.`
+      });
+    }
+  }
+
+  // ── 4. Streak & Discipline ───────────────────────────────────────────────
   const streak = stats.currentStreak ?? stats.streak ?? 0;
   if (streak >= 7) {
     out.push({
       kind: "streak",
-      title: `${streak} jours d'affilée 🔥`,
-      body: `Ta constance est ton super-pouvoir. Les 3 prochains jours te font atteindre ${streak+3} — un cap symbolique.`
+      title: `${streak} jours consécutifs 🔥`,
+      body: `Régularité exemplaire. Dans 3 jours, tu franchis le palier des ${streak+3} jours sans rupture.`
     });
   } else if (streak >= 1) {
     out.push({
       kind: "streak",
-      title: `Jour ${streak} de streak`,
-      body: `Encore ${7-streak} jour(s) pour débloquer le palier hebdo. Une seule fiche par jour suffit à ne pas casser la série.`
+      title: `Série active : ${streak} jour${streak > 1 ? "s" : ""}`,
+      body: `Encore ${7-streak} jour${7-streak > 1 ? "s" : ""} pour verrouiller le cap hebdomadaire. Même 1 seule carte maintient la flamme.`
     });
   }
 
-  // ── 3. Taux de rétention / mastered ─────────────────────────────────────
-  if (total >= 10) {
-    const pct = Math.round((masteredCount / total) * 100);
-    if (pct >= 60) {
-      out.push({
-        kind: "positive",
-        title: `Rétention solide : ${pct}%`,
-        body: `${masteredCount} des ${total} fiches sont ancrées. Ta courbe d'oubli est mieux gérée que celle de 80% des apprenants autodidactes.`
-      });
-    } else if (pct < 25) {
-      out.push({
-        kind: "warning",
-        title: `Trop de fiches jeunes (${pct}% maîtrisées)`,
-        body: `Tu crées vite, tu révises peu. Objectif : ${Math.min(15, total - masteredCount)} révisions FSRS aujourd'hui pour rééquilibrer.`
-      });
-    }
-  }
-
-  // ── 4. Heure et créneau préférés ───────────────────────────────────────
-  const hourBuckets = new Array(24).fill(0);
-  // Priorité aux timestamps réels des révisions dans les fiches
-  expressions.forEach(e => {
-    (e?.reviewHistory || []).forEach(h => {
-      const ts = h?.timestamp || (typeof h?.date === "string" && h.date.length > 10 ? h.date : null);
-      if (ts) {
-        const t = new Date(ts);
-        if (!isNaN(t.getTime())) hourBuckets[t.getHours()]++;
-      }
-    });
-  });
-  if (hourBuckets.every(v => v === 0)) {
-    sessionHistory.forEach(s => {
-      const ts = s?.timestamp || (typeof s?.date === "string" && s.date.length > 10 ? s.date : null);
-      if (ts) {
-        const t = new Date(ts);
-        if (!isNaN(t.getTime())) hourBuckets[t.getHours()]++;
-      }
-    });
-  }
-  const bestHour = hourBuckets.reduce((best, v, i) => v > best.v ? { i, v } : best, { i: -1, v: 0 });
-  if (bestHour.v >= 3) {
-    out.push({
-      kind: "info",
-      title: `Ta zone d'or : ${bestHour.i}h`,
-      body: `${bestHour.v} révisions effectuées vers ${bestHour.i}h. Bloque ce créneau comme un rendez-vous — c'est là que tu apprends le mieux.`
-    });
-  }
-
-  // ── 5. Prochain palier ──────────────────────────────────────────────────
+  // ── 5. Prochain palier sans bug de projection ──────────────────────────
   const nextMilestone = [10, 25, 50, 100, 250, 500, 1000, 2000, 5000].find(m => m > total);
   if (nextMilestone) {
     const missing = nextMilestone - total;
+    const pace = Math.max(velocity7, velocity30, 0.5);
+    const daysEst = Math.ceil(missing / pace);
+    let timeStr = `${daysEst} jours`;
+    if (daysEst > 60) {
+      timeStr = `environ ${Math.round(daysEst / 30)} mois`;
+    } else if (daysEst > 14) {
+      timeStr = `environ ${Math.round(daysEst / 7)} semaines`;
+    }
+
     out.push({
       kind: "goal",
-      title: `${missing} fiches avant ${nextMilestone}`,
-      body: `Au rythme actuel (${velocity7.toFixed(1)}/jour), tu y seras dans ~${Math.max(1, Math.ceil(missing / Math.max(0.5, velocity7)))} jours.`
+      title: `Objectif ${nextMilestone} fiches (-${missing})`,
+      body: `Au rythme actuel, cap franchi d'ici ${timeStr}. Ajoute 2 fiches de plus par jour pour diviser ce délai par deux.`
     });
   }
 
-  // ── 6. Catégorie la plus faible ─────────────────────────────────────────
+  // ── 6. Matière prioritaire & action ciblée ──────────────────────────────
   const perCat = {};
   expressions.forEach(e => {
-    const cat = e.category || "Autre";
+    const cat = e.category || "Général";
     perCat[cat] = perCat[cat] || { total: 0, mastered: 0 };
     perCat[cat].total++;
     if (isCardMastered(e)) perCat[cat].mastered++;
   });
   const weakest = Object.entries(perCat)
-    .filter(([, v]) => v.total >= 5)
-    .map(([k, v]) => ({ cat: k, ratio: v.mastered / v.total, total: v.total }))
+    .filter(([, v]) => v.total >= 4)
+    .map(([k, v]) => ({ cat: k, ratio: v.mastered / v.total, total: v.total, unmastered: v.total - v.mastered }))
     .sort((a, b) => a.ratio - b.ratio)[0];
-  if (weakest && weakest.ratio < 0.4) {
+  if (weakest && weakest.ratio < 0.5) {
     out.push({
       kind: "warning",
-      title: `Zone à renforcer : ${weakest.cat}`,
-      body: `Seulement ${Math.round(weakest.ratio*100)}% des ${weakest.total} fiches de cette catégorie sont maîtrisées. Une session ciblée peut débloquer.`
+      title: `Focus recommandé : ${weakest.cat}`,
+      body: `${weakest.unmastered} fiches sur ${weakest.total} demandent encore un renforcement. Lance 5 révisions ciblées dans cette catégorie aujourd'hui.`
     });
   }
 
@@ -206,12 +211,12 @@ export default function StatsInsights({
         padding: 24,
         borderRadius: 24,
         background: isDarkMode
-          ? "linear-gradient(135deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9))"
-          : "linear-gradient(135deg, #FFFFFF, #F8FAFF)",
-        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.12)"}`,
+          ? "var(--mm-bg-card, #171233)"
+          : "var(--mm-bg-card, #ffffff)",
+        border: `1px solid var(--mm-border)`,
         boxShadow: isDarkMode
-          ? "0 12px 32px rgba(0,0,0,0.25)"
-          : "0 12px 32px rgba(139, 92, 246,0.08)",
+          ? "0 12px 32px rgba(0,0,0,0.3)"
+          : "0 12px 32px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 12 }}>
@@ -239,7 +244,8 @@ export default function StatsInsights({
               style={{
                 padding: 16,
                 borderRadius: 16,
-                background: c.bg,
+                background: isDarkMode ? "var(--mm-bg-elev, #110e22)" : "color-mix(in srgb, var(--mm-primary) 3%, white)",
+                border: "1px solid var(--mm-border)",
                 borderLeft: `4px solid ${c.border}`,
               }}
             >
@@ -259,8 +265,8 @@ export default function StatsInsights({
       {productionSummary.total > 0 && (
         <div style={{
           marginTop: 18, padding: 16, borderRadius: 16,
-          background: isDarkMode ? "rgba(16,185,129,0.08)" : "rgba(16,185,129,0.06)",
-          border: `1px solid rgba(16,185,129,0.25)`,
+          background: isDarkMode ? "var(--mm-bg-elev, #110e22)" : "color-mix(in srgb, var(--mm-primary) 3%, white)",
+          border: `1px solid var(--mm-border)`,
         }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
             <strong style={{ color: theme?.text, fontSize: 15, fontWeight: 800 }}>
@@ -268,7 +274,7 @@ export default function StatsInsights({
             </strong>
             <span style={{ color: theme?.textMuted, fontSize: 13 }}>
               <strong style={{ color: theme?.text }}>{productionSummary.learned}</strong> expressions apprises ·{" "}
-              <strong style={{ color: "#10B981" }}>{productionSummary.usedInConversation}</strong> déjà utilisées en conversation
+              <strong style={{ color: "var(--mm-primary-glow)" }}>{productionSummary.usedInConversation}</strong> déjà utilisées en conversation
               {productionSummary.learned > 0 && (
                 <> ({productionSummary.usedInConversation}/{productionSummary.learned})</>
               )}
@@ -279,11 +285,11 @@ export default function StatsInsights({
             const b = productionSummary.breakdown;
             const total = Math.max(1, productionSummary.total);
             const segs = [
-              { key: "discovered", label: "Découvertes", color: "#94A3B8", n: b.discovered },
-              { key: "recognized", label: "Reconnues",   color: "#C084FC", n: b.recognized },
-              { key: "recalled",   label: "Rappelées",   color: "#8B5CF6", n: b.recalled },
-              { key: "produced",   label: "Produites",   color: "#10B981", n: b.produced },
-              { key: "mastered",   label: "Maîtrisées",  color: "#F59E0B", n: b.mastered },
+              { key: "discovered", label: "Découvertes", color: "var(--mm-fg-faint, #8b7fb5)", n: b.discovered },
+              { key: "recognized", label: "Reconnues",   color: "var(--mm-primary-glow)", n: b.recognized },
+              { key: "recalled",   label: "Rappelées",   color: "var(--mm-primary)", n: b.recalled },
+              { key: "produced",   label: "Produites",   color: "var(--mm-accent, #4a7c74)", n: b.produced },
+              { key: "mastered",   label: "Maîtrisées",  color: "var(--mm-warning, #b3822f)", n: b.mastered },
             ];
             return (
               <>

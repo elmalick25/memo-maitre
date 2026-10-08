@@ -12,7 +12,6 @@ export default function AppTopNav({
   sessionRemainingCount = 0,
   sessionPlannedToday = 0,
   duePileSize = 0,
-  projectConflicts = [],
 }) {
   if (isMobile) return null;
 
@@ -20,9 +19,7 @@ export default function AppTopNav({
     <nav
       className="nav-top"
       style={{
-        background: isScrolled
-          ? (isDarkMode ? "rgba(7,13,31,0.85)" : "rgba(124, 58, 237,0.85)")
-          : (isDarkMode ? "rgba(7,13,31,0.97)" : "#8B5CF6"),
+        background: isDarkMode ? "#070D1F" : "var(--mm-primary)",
         backdropFilter: isScrolled ? "blur(32px)" : "blur(24px)",
         WebkitBackdropFilter: isScrolled ? "blur(32px)" : "blur(24px)",
         padding: isScrolled ? "0 20px" : "0 28px",
@@ -35,7 +32,7 @@ export default function AppTopNav({
         right: 0,
         zIndex: 100,
         minHeight: isScrolled ? 54 : 68,
-        borderBottom: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.2)" : "rgba(255,255,255,0.15)"}`,
+        borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "rgba(255,255,255,0.15)"}`,
         transform: zenFocusMode ? "translateY(-100%)" : "translateY(0)",
         opacity: zenFocusMode ? 0 : 1,
         pointerEvents: zenFocusMode ? "none" : "auto",
@@ -73,7 +70,7 @@ export default function AppTopNav({
             fontWeight: 900,
             color: "white",
             fontFamily: "'Fira Code', monospace",
-            boxShadow: "0 2px 12px rgba(139, 92, 246,0.2)",
+            boxShadow: "0 2px 12px color-mix(in srgb, var(--mm-primary) 20.0%, transparent)",
             transition: "all 0.3s",
           }}
         >
@@ -101,7 +98,7 @@ export default function AppTopNav({
             alignItems: "center",
             gap: 12,
             background: toast
-              ? (toast.type === "error" ? "rgba(239,68,68,0.95)" : "rgba(139, 92, 246,0.95)")
+              ? (toast.type === "error" ? "rgba(239,68,68,0.95)" : "color-mix(in srgb, var(--mm-primary) 95.0%, transparent)")
               : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.2)"),
             border: toast
               ? "1px solid transparent"
@@ -128,7 +125,7 @@ export default function AppTopNav({
                 Chercher un concept, demander à l'IA...
               </span>
               <span className="show-mobile-only" style={{ flex: 1, fontSize: 13, color: isDarkMode ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.8)" }}>Rechercher...</span>
-              <kbd style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", background: "rgba(139, 92, 246,0.2)", padding: "3px 6px", borderRadius: 6, color: "white", fontWeight: 800 }}>⌘K</kbd>
+              <kbd style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", background: "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)", padding: "3px 6px", borderRadius: 6, color: "white", fontWeight: 800 }}>⌘K</kbd>
             </>
           )}
         </div>
@@ -136,36 +133,6 @@ export default function AppTopNav({
 
       {/* Droite : Badges de statuts HUD */}
       <div style={{ width: "30%", display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", transition: "opacity 0.3s", opacity: isScrolled ? 0.6 : 1 }}>
-        <button
-          onClick={() => {
-            if (window.confirm("🔄 Lancer la synchronisation God-Tier (Deep Sync) ? Cela va scanner et réparer les fiches fantômes entre tes appareils.")) {
-              showToast("Deep Sync lancé...", "info");
-              import("../lib/db/sync").then(({ syncWithFirebase }) => {
-                syncWithFirebase(true)
-                  .then((changed) => {
-                    showToast(changed ? "✨ Deep Sync terminé ! Fiches réparées." : "Deep Sync terminé. Tout est à jour.");
-                  })
-                  .catch((e) => showToast("Erreur Deep Sync: " + e.message, "error"));
-              });
-            }
-          }}
-          style={{
-            background: "rgba(255,255,255,0.15)",
-            border: "none",
-            color: "white",
-            borderRadius: 20,
-            padding: "4px 10px",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-          }}
-          title="Force Deep Sync"
-        >
-          🔄 Sync
-        </button>
         {sessionRemainingCount > 0 && (
           <span
             style={{
@@ -180,11 +147,6 @@ export default function AppTopNav({
             title={`Plan du jour : ${sessionRemainingCount} fiche(s) restante(s) sur ${sessionPlannedToday} prévues — ${duePileSize} dues au total`}
           >
             ⚡ {sessionRemainingCount}
-          </span>
-        )}
-        {projectConflicts.filter((c) => c.severity === "critique").length > 0 && (
-          <span style={{ background: "#EF4444", color: "white", borderRadius: 20, padding: "4px 10px", fontSize: 12, fontWeight: 900, boxShadow: "0 0 12px rgba(239,68,68,0.5)" }}>
-            🚨
           </span>
         )}
       </div>

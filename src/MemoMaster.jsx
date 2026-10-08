@@ -1,3 +1,4 @@
+import { resolveAll } from "./lib/security/apiKeys.js";
 // MemoMaster.jsx – GOD LEVEL v10.1 (Audit & hardening pass — div/0 guards, safer JSON parsing, SSR-safe init)
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, startTransition, forwardRef } from "react";
@@ -50,25 +51,27 @@ import useHighlight from "./hooks/useHighlight";
 import useMermaid from "./hooks/useMermaid";
 const EnglishPractice = lazy(() => import("./EnglishPractice"));
 const Lab = lazy(() => import("./Lab"));
-import CertificationsDashboard from "./components/CertificationsDashboard";
-import OpenSourceRadar from "./components/OpenSourceRadar";
+const CertificationsDashboard = lazy(() => import("./components/CertificationsDashboard"));
+const OpenSourceRadar = lazy(() => import("./components/OpenSourceRadar"));
 import SoundwavePlayer from "./components/SoundwavePlayer";
 import BulkRestructureBar from "./components/BulkRestructureBar";
-import { restructureSelectedCards } from "./lib/retroEngineeringRestructurer";
+import { restructureSelectedCards, upgradeCardToRetroEngineering } from "./lib/retroEngineeringRestructurer";
+import { isEnglishCategory } from "./lib/englishCardEngine";
+import { isNovaCard, isNovaV8Format } from "./lib/novaCardMigrator";
+import { isUnmodernizedEnglishCard } from "./lib/retroCardMigrator";
 
 
-import PhantomRecruiter from "./components/PhantomRecruiter";
-import TechOracle from "./components/TechOracle";
+const PhantomRecruiter = lazy(() => import("./components/PhantomRecruiter"));
+const TechOracle = lazy(() => import("./components/TechOracle"));
 import { YearHeatmap, ResumeCarousel, getSmartSessionRecommendation, CommandPalette, useCommandPaletteShortcut, SmartPasteBox, generateCardsFromSmartPaste, findSimilarCards, Minimap, getCardHealth, useSavedViews, generateWeeklyDigest, PomodoroStudy, AskMyDocs, SocraticChat, RabbitHoleViewer, gradeSemanticVoice, generatePrerequisiteCard } from "./MemoMasterUpgrades";
-import GodTierContent from "./components/GodTierContent";
-import GodTierStats from "./components/GodTierStats";
+const GodTierStats = lazy(() => import("./components/GodTierStats"));
 // ── Helpers & composants extraits (refactor — ex-MemoMaster.jsx) ───────────
 import { BADGES, getArchetype, RETIRED_BADGE_IDS } from "./constants/gamification";
 // ── Refonte gamification (chantiers 1, 2, 5, 7) ───────────────────────────
 import useXPLedger from "./hooks/useXPLedger";
-import BadgesView from "./components/BadgesView";
-import CategoriesView from "./components/CategoriesView";
-import ProjectsView from "./components/ProjectsView";
+const BadgesView = lazy(() => import("./components/BadgesView"));
+// import CategoriesView from "./components/CategoriesView";
+const CategoriesView = lazy(() => import("./components/CategoriesView"));
 import AddCardView from "./components/AddCardView";
 import ReviewEngineView from "./components/ReviewEngineView";
 import CardListView from "./components/CardListView";
@@ -99,7 +102,6 @@ import { safeHTML } from "./lib/htmlSanitizer";
 import { callGeminiGenerateContent, getGeminiKeyCount, isGeminiLikelyUnavailable } from "./lib/geminiClient";
 import { aiCall } from "./lib/aiRouter.js";
 import { buildHeatmap, getLast12Weeks, parseImport } from "./lib/dataHelpers";
-import KnowledgeGraph from "./components/KnowledgeGraph";
 import HoloCard from "./components/HoloCard";
 import RichText from "./components/RichText";
 import MobileSpeedDial from "./components/MobileSpeedDial";
@@ -107,10 +109,9 @@ import MobileAddSheet from "./components/MobileAddSheet";
 import MobileHomeV2 from "./components/MobileHomeV2";
 import AgentPanel from "./components/AgentPanel";
 
-import DailyRoutineTracker from "./components/DailyRoutineTracker";
-import RoutineAlertCard from "./components/RoutineAlertCard";
 import NotificationCenter from "./components/NotificationCenter";
-import useDailyRoutine from "./hooks/useDailyRoutine";
+import WeeklyDigestModal from "./components/WeeklyDigestModal";
+import { computeWeeklyDigest, isWeeklyDigestTime } from "./lib/weeklyDigest";
 import usePerfTier, { PERF_LITE_CSS } from "./lib/perfTier";
 import { haptic } from "./lib/haptics";
 import { CATEGORIES_DEFAULT, mergeDefaultCategories, reconcileCategoriesWithExpressions } from "./lib/categoryManager";
@@ -148,10 +149,20 @@ export default function MemoMaster() {
   const setAddSubView = (sv) => navigate(`add/${sv}`);
   const labSubView = view === "lab" && navState.subView ? navState.subView : "home";
   const setLabSubView = (sv) => navigate(`lab/${sv}`);
-  const projectSubView = view === "projects" && navState.subView ? navState.subView : "hub";
-  const setProjectSubView = (sv) => navigate(`projects/${sv}`);
-  const examSubView = view === "exam" && navState.subView ? navState.subView : "home";
-  const setExamSubView = (sv) => navigate(`exam/${sv}`);
+
+  // ── Auto scroll-to-top systématique à chaque changement de vue ─────────────
+  useEffect(() => {
+    const resetScroll = () => {
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+        if (document.documentElement) document.documentElement.scrollTop = 0;
+        if (document.body) document.body.scrollTop = 0;
+      }
+    };
+    resetScroll();
+    const rafId = requestAnimationFrame(resetScroll);
+    return () => cancelAnimationFrame(rafId);
+  }, [view, navState.subView]);
 
   const [expressions, setExpressionsState] = useState([]);
   const setExpressions = useCallback((action) => {
@@ -195,15 +206,14 @@ export default function MemoMaster() {
   }, []);
   const [categories, setCategories] = useState(CATEGORIES_DEFAULT);
   const [sessions, setSessions] = useState([]);
-  const [stats, setStats] = useState({ streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
+  const [stats, setStats] = useState({ streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 });
   const [unlockedBadges, setUnlockedBadges] = useState([]);
   const [lastViewedBadgesCount, setLastViewedBadgesCount] = useState(0);
   const [videos, setVideos] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [projects, setProjects] = useState([]);
-  const [projectsLoaded, setProjectsLoaded] = useState(false);
 
   const [oneHanded, setOneHanded] = useState(false);
+  const [weeklyDigestOpen, setWeeklyDigestOpen] = useState(false);
 
   const toastRef = useRef(null);
   const emitToast = useCallback((msg, type) => { toastRef.current?.(msg, type); }, []);
@@ -241,15 +251,6 @@ export default function MemoMaster() {
       haptic("quest"); // CHANTIER 17 — quête bouclée : pulse court et net
     },
   });
-  // ── CHANTIERS 24-28 : la routine quotidienne, état partagé mobile/desktop ──
-  // Une seule instance ici : la vue Routine ET l'alerte d'accueil (mobile comme
-  // desktop) consomment le même objet, donc ne peuvent pas diverger.
-  const routine = useDailyRoutine({
-    awardSource: (src, opts) => awardSource(src, opts),
-    awardBonusXP,
-    grantChest,
-    showToast: emitToast,
-  });
 
   // ── CHANTIER 21 : budget de performance par palier d'appareil ──
   // Sur un Android d'entrée de gamme, backdrop-filter + conic-gradient animé
@@ -266,16 +267,14 @@ export default function MemoMaster() {
 
   const levelRef = useRef(null);
   useEffect(() => {
+    if (!xpLoaded) return;
     const lvl = getArchetype(powerLevel).level;
     if (levelRef.current !== null && lvl > levelRef.current) {
       haptic("levelup");
       emitToast(`🎚️ Niveau ${lvl} atteint !`, "success");
     }
     levelRef.current = lvl;
-  }, [powerLevel, emitToast]);
-
-  const routineRef = useRef(routine);
-  routineRef.current = routine;
+  }, [powerLevel, xpLoaded, emitToast]);
 
   const xpRef = useRef(xpState);
   useEffect(() => { xpRef.current = xpState; }, [xpState]);
@@ -300,12 +299,7 @@ export default function MemoMaster() {
   const [agentSheetOpen, setAgentSheetOpen] = useState(false);
 
   const getNextGroqKey = useCallback(() => {
-    return [
-      import.meta.env.VITE_GROQ_API_KEY,
-      import.meta.env.VITE_GROQ_API_KEY_5,
-      import.meta.env.VITE_GROQ_API_KEY_6,
-      import.meta.env.VITE_GROQ_API_KEY_7
-    ].filter(Boolean);
+    return resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
   }, []);
   const [newBadge, setNewBadge] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -321,7 +315,13 @@ export default function MemoMaster() {
         (exp.front && exp.front.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (exp.back && exp.back.toLowerCase().includes(searchQuery.toLowerCase())) ||
         (exp.example && exp.example.toLowerCase().includes(searchQuery.toLowerCase()));
-      const matchesCat = filterCat === "Toutes" || exp.category === filterCat;
+      const matchesCat =
+        filterCat === "Toutes" ||
+        (filterCat === "🎙️ Live Nova"
+          ? (isNovaCard(exp) && !isNovaV8Format(exp))
+          : filterCat === "🔄 Anciennes fiches"
+          ? isUnmodernizedEnglishCard(exp)
+          : exp.category === filterCat);
       const matchesLevel =
         filterLevel === "Tous" ||
         (filterLevel === "Appris" ? (exp.level || 0) >= 4 : (exp.level || 0) < 4);
@@ -343,21 +343,35 @@ export default function MemoMaster() {
     setExpressions((prev) => prev.map((e) => (e.id === id ? { ...e, paused: false } : e)));
   }, [setExpressions]);
 
+  const deleteCategory = useCallback((catName) => {
+    if (!catName) return;
+    const catExps = (expressions || []).filter((e) => e.category === catName);
+    const confirmMsg = catExps.length > 0
+      ? `Supprimer le module "${catName}" et ses ${catExps.length} fiche(s) ? Cette action est irréversible.`
+      : `Supprimer le module "${catName}" ?`;
+    if (typeof window !== "undefined" && window.confirm && !window.confirm(confirmMsg)) {
+      return;
+    }
+    if (catExps.length > 0) {
+      setExpressions((prev) => prev.filter((e) => e.category !== catName));
+    }
+    setCategories((prev) => prev.filter((c) => c.name !== catName));
+    try {
+      const stored = JSON.parse(localStorage.getItem("mm_deleted_categories") || "[]");
+      if (!stored.includes(catName)) {
+        stored.push(catName);
+        localStorage.setItem("mm_deleted_categories", JSON.stringify(stored));
+      }
+    } catch {}
+    showToast?.(`Module "${catName}" supprimé.`);
+  }, [expressions, setExpressions, setCategories, showToast]);
+
   // (États de session de révision FSRS gérés par useReviewSession)
   const [evalLoading, setEvalLoading] = useState(false);
   const [semanticLoading, setSemanticLoading] = useState(false);
   const [mnemonicLoading, setMnemonicLoading] = useState(false);
   const [mnemonicSaved, setMnemonicSaved] = useState(false);
 
-  // Examens
-  const [examConfig, setExamConfig] = useState({ category: "Toutes", count: 10, timePerCard: 30, mode: "standard", difficulty: "adaptative" });
-  const [examActive, setExamActive] = useState(false);
-  const [examQueue, setExamQueue] = useState([]);
-  const [examIndex, setExamIndex] = useState(0);
-  const [examAnswers, setExamAnswers] = useState([]);
-  const [examTimer, setExamTimer] = useState(0);
-  const [examRevealed, setExamRevealed] = useState(false);
-  const examTimerRef = useRef(null);
   const [swipeX, setSwipeX] = useState(0); // position horizontale du swipe
   const [swipeY, setSwipeY] = useState(0); // position verticale du swipe
   const touchStartX = useRef(0);
@@ -365,13 +379,7 @@ export default function MemoMaster() {
   const [qcmChoices, setQcmChoices] = useState([]);
   const [qcmSelected, setQcmSelected] = useState(null);
   const [qcmLoading, setQcmLoading] = useState(false);
-  const [customExams, setCustomExams] = useState([]);
 
-  const [selectedCustomExam, setSelectedCustomExam] = useState(null);
-  const [newCustomExam, setNewCustomExam] = useState({ title: "", description: "", questions: [] });
-  const [customExamEditQ, setCustomExamEditQ] = useState({ question: "", answer: "", choices: ["", "", "", ""], isQcm: false });
-  const [examStreak, setExamStreak] = useState(0);
-  const [examStartTime, setExamStartTime] = useState(null);
 
   // Fiches Add/Edit
   const [addForm, setAddForm] = useState({ front: "", back: "", example: "", category: "", imageUrl: null, type: "qa" });
@@ -481,7 +489,7 @@ export default function MemoMaster() {
 
 
 
-  const [newCat, setNewCat] = useState({ name: "", examDate: "", targetScore: 80, priority: "normale", color: "#8B5CF6" });
+  const [newCat, setNewCat] = useState({ name: "", targetScore: 80, priority: "normale", color: "var(--mm-primary)" });
   const [importText, setImportText] = useState("");
   // ── CATEGORIES GOD LEVEL v10 ──
   const [catsViewMode, setCatsViewMode] = useState("cards"); // cards | table | timeline | graph
@@ -490,7 +498,7 @@ export default function MemoMaster() {
   const [catsPrerequisites, setCatsPrerequisites] = useState({}); // { [catName]: ["ModuleA", "ModuleB"] }
   const [catsMergeSource, setCatsMergeSource] = useState(null);
   const [catsMergeTarget, setCatsMergeTarget] = useState(null);
-  const [catsTimelineData, setCatsTimelineData] = useState([]); // [{date, module, exam}]
+  const [catsTimelineData, setCatsTimelineData] = useState([]); // [{date, module}]
   const [catsAlerts, setCatsAlerts] = useState([]); // [{module, message, type}]
   const [catsLearningCurve, setCatsLearningCurve] = useState({}); // { [catName]: [{week, level}] }
   const [catsFavorites, setCatsFavorites] = useState([]); // noms des modules favoris
@@ -577,33 +585,6 @@ export default function MemoMaster() {
   const [labImpactReport, setLabImpactReport] = useState(null);    // rapport d'impact
   const [labMultiFileMode, setLabMultiFileMode] = useState(false);  // mode multi-fichiers
 
-  // ── GOD LEVEL EXAM v8 — Nouveaux états ────────────────────────────────────
-  const [examLives, setExamLives] = useState(3);              // Mode Survie
-  const [examMaxLives] = useState(3);
-  const [examDeathrunBest, setExamDeathrunBest] = useState(0); // Mode Deathrun
-  const [examDeathrunCurrent, setExamDeathrunCurrent] = useState(0);
-  const [examHistory, setExamHistory] = useState([]);          // Historique complet
-  const [examHistoryLoaded, setExamHistoryLoaded] = useState(false);
-  const [examShowHistory, setExamShowHistory] = useState(false);
-  const [examAiReport, setExamAiReport] = useState(null);      // Rapport IA post-exam
-  const [examAiReportLoading, setExamAiReportLoading] = useState(false);
-  const [examPrecisionErrors, setExamPrecisionErrors] = useState([]); // Faux positifs
-  const [examRedactionInput, setExamRedactionInput] = useState(""); // Mode rédaction
-  const [examRedactionScore, setExamRedactionScore] = useState(null);
-  const [examRedactionLoading, setExamRedactionLoading] = useState(false);
-  const [examMatchingPairs, setExamMatchingPairs] = useState([]); // Mode connexion
-  const [examMatchingLeft, setExamMatchingLeft] = useState(null);
-  const [examMatchingDone, setExamMatchingDone] = useState([]);
-  const [examMatchingWrong, setExamMatchingWrong] = useState([]);
-  const [examMatchingComplete, setExamMatchingComplete] = useState(false);
-  const [examMatchingTime, setExamMatchingTime] = useState(0);
-  const examMatchingTimerRef = useRef(null);
-  const [examIaDuelScore, setExamIaDuelScore] = useState({ user: 0, ia: 0 }); // Duel IA
-  const [examIaDuelIaAnswer, setExamIaDuelIaAnswer] = useState(null);
-  const [examRecurringTraps, setExamRecurringTraps] = useState(null); // Pièges récurrents
-  const [examRecurringLoading, setExamRecurringLoading] = useState(false);
-  const [examScheduled, setExamScheduled] = useState(null);    // Examen programmé
-  const [examScheduleInput, setExamScheduleInput] = useState("");
   const [prepLoading, setPrepLoading] = useState({});
 
   // ── GOD LEVEL – Nouveaux états (v6) ────────────────────────────────────────
@@ -654,9 +635,8 @@ export default function MemoMaster() {
   const [dashWeeklyRetro, setDashWeeklyRetro] = useState(null);
   const [dashWeeklyRetroLoading, setDashWeeklyRetroLoading] = useState(false);
   const [dashUrgentCards, setDashUrgentCards] = useState([]);
-  const [dashNextExam, setDashNextExam] = useState(null); // { name, daysLeft }
   const [dashFocusMode, setDashFocusMode] = useState(false);
-  const [dashWeeklyGoals, setDashWeeklyGoals] = useState(["Réviser 50 cartes", "Créer 10 fiches", "Faire 1 examen blanc"]);
+  const [dashWeeklyGoals, setDashWeeklyGoals] = useState(["Réviser 50 cartes", "Créer 10 fiches", "Réviser 3 modules"]);
   const [dashWeeklyGoalsInput, setDashWeeklyGoalsInput] = useState("");
   const [stamina, setStamina] = useState(100);
   const [xpBurst, setXpBurst] = useState(null); // { amount: number, key: number }
@@ -786,16 +766,14 @@ export default function MemoMaster() {
 
   const touchMainStartX = useRef(0);
   const touchMainStartY = useRef(0);
-  const mainViewOrder = ["dashboard", "list", "add", "projects", "certifications", "opensource", "practice"];
+  const mainViewOrder = ["dashboard", "list", "add", "certifications", "opensource", "practice"];
   useEffect(() => {
     // Un seul et même seuil pour le JS, le matchMedia du home et le CSS.
     const mql = window.matchMedia(MOBILE_MQ);
-    const handleResize = () => setIsMobile(mql.matches);
-    mql.addEventListener?.("change", handleResize);
-    window.addEventListener("resize", handleResize);
+    const handleMediaChange = () => setIsMobile(prev => (prev === mql.matches ? prev : mql.matches));
+    mql.addEventListener?.("change", handleMediaChange);
     return () => {
-      mql.removeEventListener?.("change", handleResize);
-      window.removeEventListener("resize", handleResize);
+      mql.removeEventListener?.("change", handleMediaChange);
     };
   }, []);
 
@@ -1040,8 +1018,10 @@ export default function MemoMaster() {
     publishDayState(uid, currentDate, merged);
   }, [dailyPlanResult, newCardIntake, currentDate]);
 
+  const reviewModeRef = useRef("standard");
   /** Marque une fiche comme traitée aujourd'hui (appelé à chaque notation). */
   const consumeDailyPlanCard = useCallback((cardId) => {
+    if (reviewModeRef.current === "module") return;
     setDailyPlanState((prev) => {
       const next = markCardDone(prev, cardId, today());
       try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
@@ -1127,6 +1107,10 @@ export default function MemoMaster() {
     handleEnterFlow,
     startReview,
     handleReveal,
+    reviewMode,
+    reviewCategory,
+    saveModuleSession,
+    clearModuleSession,
   } = useReviewSession({
     expressions,
     setExpressions,
@@ -1146,6 +1130,10 @@ export default function MemoMaster() {
     haptic,
     playSound,
   });
+
+  useEffect(() => {
+    reviewModeRef.current = reviewMode;
+  }, [reviewMode]);
 
 
   const {
@@ -1186,7 +1174,7 @@ export default function MemoMaster() {
 
   // Stamina regeneration
   useEffect(() => {
-    if (view !== 'review' && view !== 'exam') {
+    if (view !== 'review') {
       const timer = setInterval(() => {
         setStamina(s => Math.min(100, s + 1));
       }, 4000); // Regenerate 1 stamina every 4 seconds
@@ -1196,7 +1184,7 @@ export default function MemoMaster() {
 
   // Keyboard shortcuts 1-9 pour naviguer dans la sidebar
   useEffect(() => {
-    const NAV_IDS = ["dashboard", "projects", "certifications", "opensource", "add", "list", "categories", "practice", "stats", "badges", "lab"];
+    const NAV_IDS = ["dashboard", "certifications", "opensource", "add", "list", "categories", "practice", "stats", "badges", "lab"];
     const handleKey = (e) => {
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
       if (e.altKey && e.key >= "1" && e.key <= "9") {
@@ -1226,13 +1214,8 @@ export default function MemoMaster() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [view, cardsActionMode]);
 
-  // ── PROJECTS GOD MODE ─────────────────────────────────────────────────────
   const [lessonCache, setLessonCache] = useState({});
   const [livingMemory, setLivingMemory] = useState(null);
-  const [projectPomodoroActive, setProjectPomodoroActive] = useState(false);
-  const [projectPomodoroTime, setProjectPomodoroTime] = useState(25 * 60);
-  const [projectPomodoroMode, setProjectPomodoroMode] = useState("study"); // study | project | break
-  const pomodoroRef = useRef(null);
 
   // Refs & Effects Initiaux
   const statsRef = useRef(stats);
@@ -1250,11 +1233,9 @@ export default function MemoMaster() {
           st,
           badges,
           storedVids,
-          storedCustomExams,
           storedLogs,
           storedRoadmap,
           storedLessonCache,
-          storedProjects,
           storedLivingMemory,
           viewedBadges,
         ] = await Promise.all([
@@ -1264,11 +1245,9 @@ export default function MemoMaster() {
           storage.get("stats_v3"),
           storage.get("badges_v3"),
           storage.get("videos_v3"),
-          storage.get("customExams_v1"),
           storage.get("devLogs_v1"),
           storage.get("roadmap_v1"),
           storage.get("lessonCache_v1"),
-          storage.get("projects_v1"),
           storage.get("livingMemory_v1"),
           storage.get("badges_viewed_count"),
         ]);
@@ -1279,19 +1258,24 @@ export default function MemoMaster() {
         const expsRepaired = expsRepairedRaw.map(ensureMasteryStage);
         if (dateFixCount > 0) console.info(`[dateRepair] ${dateFixCount} fiches avec dates anormales corrigées.`);
         setExpressions(expsRepaired);
-        setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats), expsRepaired));
+        const readDeletedCats = () => {
+          try {
+            return JSON.parse(localStorage.getItem("mm_deleted_categories") || "[]");
+          } catch {
+            return [];
+          }
+        };
+        const deletedCats = readDeletedCats();
+        setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats, deletedCats), expsRepaired, deletedCats));
         setSessions(sess || []);
-        setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
+        setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 });
         setUnlockedBadges(badges || []);
         setVideos(storedVids || []);
-        setCustomExams(storedCustomExams || []);
         setDevLogs(storedLogs || []);
         setRoadmap(storedRoadmap || roadmap);
         setLessonCache(storedLessonCache || {});
-        setProjects(storedProjects || []);
-        setProjectsLoaded(true);
         if (storedLivingMemory) setLivingMemory(storedLivingMemory);
-        const resolvedCats = mergeDefaultCategories(cats);
+        const resolvedCats = mergeDefaultCategories(cats, deletedCats);
         setAddForm((f) => ({ ...f, category: resolvedCats[0]?.name || "" }));
         setDocCategory(resolvedCats[0]?.name || "");
         // New Badges Notification Logic
@@ -1318,25 +1302,28 @@ export default function MemoMaster() {
       (async () => {
         try {
           // ⚡ Rechargement après changement d'utilisateur — aussi en parallèle
-          const [exps, cats, sess, st, badges, storedProjects, viewedBadges] = await Promise.all([
+          const [exps, cats, sess, st, badges, viewedBadges] = await Promise.all([
             loadInitialExpressionsFromWatermelon(),
             storage.get("categories_v3"),
             storage.get("sessions_v3"),
             storage.get("stats_v3"),
             storage.get("badges_v3"),
-            storage.get("projects_v1"),
             storage.get("badges_viewed_count"),
           ]);
           const expsRepaired2 = repairCardDates(exps || []).repaired.map(ensureMasteryStage);
           setExpressions(expsRepaired2);
           // FIX : ne jamais passer `undefined` à setCategories — sinon les
           // composants qui appellent categories.map / .filter plantent.
-          setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats), expsRepaired2));
+          const readDeletedCats2 = () => {
+            try { return JSON.parse(localStorage.getItem("mm_deleted_categories") || "[]"); }
+            catch { return []; }
+          };
+          const deletedCats2 = readDeletedCats2();
+          setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats, deletedCats2), expsRepaired2, deletedCats2));
           setSessions(sess || []);
-          setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0, examsDone: 0 });
+          setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 });
           setUnlockedBadges(badges || []);
           setLastViewedBadgesCount(viewedBadges || 0);
-          setProjects(storedProjects || []);
           setTimeout(() => setLoaded(true), 100);
         } catch (e) {
           console.error("[onAuthReady] Rechargement échoué:", e);
@@ -1348,18 +1335,25 @@ export default function MemoMaster() {
 
   // ─── 🔄 iOS/Cross-device : recharge les fiches quand la sync Firebase pull du nouveau ───
   useEffect(() => {
-    const onCardsSynced = async () => {
-      try {
-        const exps = await loadInitialExpressionsFromWatermelon();
-        const { repaired } = repairCardDates(exps || []);
-        setExpressions(repaired.map(ensureMasteryStage));
-        console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
-      } catch (e) {
-        console.warn('[sync] reload après cards_synced KO:', e);
-      }
+    let debounceTimer = null;
+    const onCardsSynced = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        try {
+          const exps = await loadInitialExpressionsFromWatermelon();
+          const { repaired } = repairCardDates(exps || []);
+          setExpressions(repaired.map(ensureMasteryStage));
+          console.info('[sync] Fiches rechargées après sync Firebase →', repaired.length);
+        } catch (e) {
+          console.warn('[sync] reload après cards_synced KO:', e);
+        }
+      }, 350);
     };
     window.addEventListener('cards_synced', onCardsSynced);
-    return () => window.removeEventListener('cards_synced', onCardsSynced);
+    return () => {
+      clearTimeout(debounceTimer);
+      window.removeEventListener('cards_synced', onCardsSynced);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleMinimapClick = (index) => {
@@ -1387,7 +1381,6 @@ export default function MemoMaster() {
     migrateOnce({
       cards: expressions.length,
       streak: stats.streak || 0,
-      examsDone: stats.examsDone || 0,
       badges: unlockedBadges.length,
     });
   }, [loaded, xpLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1420,12 +1413,10 @@ export default function MemoMaster() {
   const categoriesRef = useRef(categories);
   const sessionsRef = useRef(sessions);
   const badgesRef = useRef(unlockedBadges);
-  const projectsRef = useRef(projects);
 
   useEffect(() => { categoriesRef.current = categories; }, [categories]);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
   useEffect(() => { badgesRef.current = unlockedBadges; }, [unlockedBadges]);
-  useEffect(() => { projectsRef.current = projects; }, [projects]);
 
   // ✅ Sauvegarde immédiate avant que l'utilisateur quitte / actualise la page
   useEffect(() => {
@@ -1435,7 +1426,6 @@ export default function MemoMaster() {
       storage.set("sessions_v3", sessionsRef.current);
       storage.set("stats_v3", statsRef.current);
       storage.set("badges_v3", badgesRef.current);
-      storage.set("projects_v1", projectsRef.current);
     };
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
@@ -1479,10 +1469,8 @@ export default function MemoMaster() {
   useEffect(() => { if (loaded) debouncedSave("sessions_v3", sessions); }, [sessions, loaded]);
   useEffect(() => { if (loaded) debouncedSave("stats_v3", stats); }, [stats, loaded]);
   useEffect(() => { if (loaded) debouncedSave("badges_v3", unlockedBadges); }, [unlockedBadges, loaded]);
-  useEffect(() => { if (loaded) debouncedSave("customExams_v1", customExams); }, [customExams, loaded]);
   useEffect(() => { if (loaded) debouncedSave("devLogs_v1", devLogs); }, [devLogs, loaded]);
   useEffect(() => { if (loaded) debouncedSave("roadmap_v1", roadmap); }, [roadmap, loaded]);
-  useEffect(() => { if (projectsLoaded) debouncedSave("projects_v1", projects); }, [projects, projectsLoaded]);
   useEffect(() => { if (loaded) debouncedSave("videos_v3", videos); }, [videos, loaded]);
 
   // ── CHANTIER 4 : construction de l'état des badges avec une maîtrise
@@ -1516,9 +1504,8 @@ export default function MemoMaster() {
       modulesCount: categoriesRef.current?.length || 0,
       totalXP: xp.totalXP || 0,
       bestCombo: xp.bestCombo || 0,
-      // CHANTIER 26 — les badges « Discipline » lisent le streak de routine.
-      routinePerfectDays: routineRef.current?.routineStats?.perfectDays || 0,
-      routineStreak: routineRef.current?.routineStreak || 0,
+      routinePerfectDays: 0,
+      routineStreak: 0,
       level,
     };
   }, []);
@@ -1714,6 +1701,10 @@ export default function MemoMaster() {
   }, [view, showSessionSummary]);
 
   // ── GOD LEVEL – Feedback audio & confetti intégré ──────────────────────
+  // Chrono de réponse : remis à zéro à chaque nouvelle fiche affichée.
+  const cardShownAtRef = useRef(0);
+  useEffect(() => { cardShownAtRef.current = Date.now(); }, [reviewIndex, reviewQueue.length]);
+
   const handleAnswerWithFeedback = useCallback((q, exp) => {
     // CHANTIER 10 : signature sonore DIFFÉRENCIÉE par note (Again/Hard/Good/Easy).
     playRating(q);
@@ -1725,7 +1716,8 @@ export default function MemoMaster() {
     // FIX D1 — on passe lastReviewDate dans fsrs() pour que elapsedDays soit
     // calculé depuis la date de révision réelle (pas depuis nextReview).
     // elapsedDays: null → fsrs.js sélectionne le meilleur chemin de calcul.
-    const updated = fsrs({ ...exp, elapsedDays: null }, q);
+    const responseMs = cardShownAtRef.current ? Date.now() - cardShownAtRef.current : undefined;
+    const updated = fsrs({ ...exp, elapsedDays: null }, q, { responseMs });
     // newLevel : q=0 → retour à 0 | q=1 (Hard) → reste au niveau actuel | q=5 → +1
     const newLevel = q === 0 ? 0 : q === 1 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
     // FIX D5 — reviewHistoryEntry retourné par fsrs() est enrichi de newLevel
@@ -1765,37 +1757,22 @@ export default function MemoMaster() {
       awardSource("CARD_MASTERED", { streak: statsRef.current?.streak || 0, silent: true });
     }
 
-    // ── COUCHE 9 : la fiche est consommée dans le plan du jour ────────────
-    // Même notée « Again » (elle reste due, mais elle a été TRAVAILLÉE
-    // aujourd'hui) : c'est ce qui fait réellement descendre le compteur.
-    consumeDailyPlanCard(exp.id);
+    // ── Consommation dans le plan du jour ──────────────────────────────────
+    // Si la fiche est réussie (q > 0), elle est validée pour la journée.
+    // Si elle est oubliée (q === 0), elle reste due pour le jour même (intervalle 0)
+    // et réapparaîtra au compteur après la session sans rallonger la file en cours.
+    if (q > 0) {
+      consumeDailyPlanCard(exp.id);
+    }
 
     const done = reviewSessionDone + 1;
     setReviewSessionDone(done);
     updateStreakAfterSession(1);
 
-    // ── COUCHE 9 bis : étape de RÉAPPRENTISSAGE dans la session ───────────
-    // Une fiche ratée (« Again ») ne doit pas simplement disparaître jusqu'à
-    // demain : on la replace quelques cartes plus loin DANS la session en
-    // cours (comme les learning steps d'Anki). Elle ne recompte PAS dans le
-    // plan du jour (déjà consommée), donc le compteur continue de descendre.
-    if (q === 0 && !exp._relearn) {
-      const nq = [...reviewQueue];
-      nq.splice(Math.min(nq.length, reviewIndex + 4), 0, { ...exp, _relearn: true });
-      setReviewQueue(nq);
-      setReviewIndex(i => i + 1);
-      setRevealed(false);
-      setUserAnswer("");
-      setSocraticHint("");
-      setSocraticMode(false);
-      setRabbitHoleOpen(false);
-      setMnemonicText("");
-      setMnemonicSaved(false);
-      setCardStartTime(Date.now());
-      return;
-    }
-
     if (reviewIndex + 1 >= reviewQueue.length) {
+      if (reviewMode === "module" && reviewCategory) {
+        clearModuleSession(reviewCategory);
+      }
       setExpressions(prevExps => {
         // Utiliser statsRef.current mis à jour dans updateStreakAfterSession
         // + fusion avec les stats locales pour le count
@@ -1850,7 +1827,11 @@ export default function MemoMaster() {
       setShowSessionSummary(true);
       setView("review");
     } else {
-      setReviewIndex(i => i + 1);
+      const nextIdx = reviewIndex + 1;
+      setReviewIndex(nextIdx);
+      if (reviewMode === "module" && reviewCategory) {
+        saveModuleSession(reviewCategory, reviewQueue, nextIdx);
+      }
       setRevealed(false);
       setUserAnswer("");
       setSocraticHint("");
@@ -1860,7 +1841,7 @@ export default function MemoMaster() {
       setMnemonicSaved(false);
       setCardStartTime(Date.now());
     }
-  }, [playRating, playCombo, playChest, trackQuest, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast, consumeDailyPlanCard]);
+  }, [playRating, playCombo, playChest, trackQuest, fireConfetti, reviewIndex, reviewQueue, reviewSessionDone, sessionTimer, expressions, sessions, unlockedBadges, updateStreakAfterSession, checkBadges, showToast, consumeDailyPlanCard, reviewMode, reviewCategory, saveModuleSession, clearModuleSession]);
 
   const handleAnswer = useCallback((q) => {
     const exp = reviewQueue[reviewIndex];
@@ -2363,9 +2344,31 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
     });
   };
 
-  // ✨ Optimise UNE seule fiche (viser 100% rétention FSRS) — bouton par fiche
+  // ✨ Optimise UNE seule fiche — bouton par fiche (IA Coach Élite pour l'anglais, FSRS atomique sinon)
   const handleOptimizeOneCard = async (exp) => {
     if (!exp) return;
+
+    if (isEnglishCategory(exp.category) || isNovaCard(exp)) {
+      if (!window.confirm(`Optimiser cette fiche d'anglais avec l'IA Coach Élite ?\nElle sera restructurée avec la Règle Réflexe, un mini-dialogue et le piège à éviter. L'original est sauvegardé.`)) return;
+      playSound("whoosh");
+      try {
+        try { saveVersion(exp.id); } catch (_) { }
+        showToast("⏳ IA English Coach en cours d'optimisation...", "info");
+        const transformed = await upgradeCardToRetroEngineering(exp, callClaude);
+        setExpressions(prev => prev.map(e => e.id === exp.id ? transformed : e));
+        setReviewQueue(prev => prev.map(e => e.id === exp.id ? transformed : e));
+        if (expandedCard && expandedCard.id === exp.id) {
+          setExpandedCard(transformed);
+        }
+        playSound("chime");
+        showToast("✨ Fiche anglais métamorphosée avec l'IA Coach !", "success");
+      } catch (err) {
+        console.error("[handleOptimizeOneCard] English error:", err);
+        showToast("Erreur lors de l'optimisation de la fiche.", "error");
+      }
+      return;
+    }
+
     if (!window.confirm(`Optimiser cette fiche pour viser 100% de rétention ?\nL'IA va la resserrer / scinder si besoin. L'original est sauvegardé (version).`)) return;
     playSound("whoosh");
     const systemPrompt = `Tu es un expert FSRS/SuperMemo. Pour la fiche fournie, produis 1 à N fiches ATOMIQUES optimisées pour tendre vers 100% de rétention. Scinde si nécessaire, resserre les formulations. Réponds UNIQUEMENT en JSON strict :\n{"cards":[{"front":"...","back":"...","example":"..."}]}\n\n${ATOMIC_CARD_RULES}`;
@@ -2629,31 +2632,6 @@ Données utilisateur :
     }
   }, [statsAiReportLoading, expressions, stats, callClaude, showToast]);
 
-  // ── Pomodoro Fusion ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (projectPomodoroActive) {
-      pomodoroRef.current = setInterval(() => {
-        setProjectPomodoroTime(t => {
-          if (t <= 1) {
-            clearInterval(pomodoroRef.current);
-            setProjectPomodoroActive(false);
-            const nextMode = projectPomodoroMode === "study" ? "project" : projectPomodoroMode === "project" ? "break" : "study";
-            setProjectPomodoroMode(nextMode);
-            setProjectPomodoroTime(nextMode === "break" ? 15 * 60 : 25 * 60);
-            showToast(nextMode === "break" ? "☕ Pause 15min !" : nextMode === "project" ? "🗂️ Passage au projet !" : "📚 Retour aux révisions !");
-            return 0;
-          }
-          return t - 1;
-        });
-      }, 1000);
-    } else {
-      clearInterval(pomodoroRef.current);
-    }
-    return () => clearInterval(pomodoroRef.current);
-  }, [projectPomodoroActive, projectPomodoroMode]);
-
-  const formatPomodoro = (secs) => `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
-
   const theme = isDarkMode
     ? { bg: "var(--mm-bg)", text: "var(--mm-fg)", textMuted: "var(--mm-fg-muted)", cardBg: "var(--mm-bg-card)", border: "var(--mm-border)", inputBg: "var(--mm-bg-elev)", highlight: "var(--mm-primary)", nav: "var(--mm-bg-overlay)", gradient: "var(--mm-grad-primary)" }
     : { bg: "var(--mm-bg)", text: "var(--mm-fg)", textMuted: "var(--mm-fg-muted)", cardBg: "var(--mm-bg-card)", border: "var(--mm-border)", inputBg: "var(--mm-bg-elev)", highlight: "var(--mm-primary)", nav: "var(--mm-grad-primary)", gradient: "var(--mm-grad-primary)" };
@@ -2684,12 +2662,19 @@ Données utilisateur :
       isDarkMode,
       zen: zenFocusMode,
       lofi: lofiPlaying,
+      isMobile,
+      device: isMobile ? "mobile" : "desktop",
     };
-  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying]);
+  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying, isMobile]);
 
-  // ══ CENTRE DE NOTIFICATIONS ═══════════════════════════════════════════════
-  // Tout ce qui saturait l'accueil (routine, quêtes, fiches qui bloquent) est
-  // agrégé ici et consultable via la cloche de la topbar.
+  const weeklyDigestData = useMemo(
+    () => computeWeeklyDigest(expressions, sessions),
+    [expressions, sessions]
+  );
+
+  // ══ CENTRE DE NOTIFICATIONS & MOTEUR D'INSIGHTS ═══════════════════════════
+  // Détecte les insights de haute valeur : métacognition stats, immersion anglaise,
+  // hygiène du deck et révisions critiques, en excluant tout bruit de gamification.
   const notifContext = useMemo(() => {
     const t = today();
     const due = expressions.filter((e) => isDue(e.nextReview, t) && (e.level || 0) < 7 && !e.paused);
@@ -2698,31 +2683,63 @@ Données utilisateur :
       .map((e) => ({ card: e, prog: incubationProgress(e) }))
       .filter((x) => x.prog.active)
       .map((x) => ({ id: x.card.id, front: x.card.front, remaining: x.prog.remaining }));
-    const reviewedToday = (sessions || [])
-      .filter((s) => String(s.date || "").slice(0, 10) === t)
-      .reduce((a, s) => a + (s.count || 0), 0);
-    const newCardsToday = expressions.filter(
-      (e) => String(e.createdAt || "").slice(0, 10) === t
-    ).length;
+
+    // Fiches dormantes (créées mais jamais révisées, level 0 sans lastReview)
+    const dormant = expressions.filter(
+      (e) => !e.lastReview && (e.level === 0 || e.level === undefined) && !e.paused
+    );
+
+    // Calcul de la rétention globale estimée sur les cartes actives testées
+    const testedCards = expressions.filter((e) => (e.repetitions || 0) > 0 || (e.level || 0) > 0);
+    const retainedCards = testedCards.filter((e) => (e.level || 0) >= 2 || (e.interval || 0) >= 3);
+    const retentionRate = testedCards.length >= 5
+      ? Math.round((retainedCards.length / testedCards.length) * 100)
+      : null;
+
+    // Détection d'un module déséquilibré avec un taux d'échec / de rechute notable
+    const categoryStats = {};
+    expressions.forEach((e) => {
+      const cat = e.category || "Général";
+      if (!categoryStats[cat]) categoryStats[cat] = { name: cat, total: 0, lapses: 0, tested: 0 };
+      categoryStats[cat].total += 1;
+      if ((e.repetitions || 0) > 0 || (e.level || 0) > 0) {
+        categoryStats[cat].tested += 1;
+        categoryStats[cat].lapses += (e.lapses || 0);
+      }
+    });
+    const weakCategory = Object.values(categoryStats)
+      .filter((c) => c.tested >= 4 && c.lapses > 0)
+      .map((c) => ({
+        name: c.name,
+        count: c.total,
+        errorRate: Math.min(100, Math.round((c.lapses / (c.tested * 2)) * 100)),
+      }))
+      .sort((a, b) => b.errorRate - a.errorRate)[0] || null;
+
+    // Opportunité de pratique orale en anglais
+    const englishCards = expressions.filter((e) =>
+      (e.category && /anglais|english/i.test(e.category)) || (e.lang && String(e.lang).startsWith("en"))
+    );
+    const englishOralOpportunity = englishCards.filter((e) => !e.audioRecorded && (e.level || 0) < 4).length;
+
+    const isDigestTime = isWeeklyDigestTime();
+
     return {
       dueCount: due.length,
       overdueCount: overdue.length,
-      routineSummary: routine?.summary || null,
-      routineFraming: routine?.framing || null,
-      questBoard,
       leeches: proactiveLeeches,
       incubating,
-      streak: stats?.streak || 0,
-      reviewedToday,
-      newCardsToday,
-      energy: { value: stamina, low: 25 },
+      totalCards: expressions.length,
+      retentionRate,
+      dormantCount: dormant.length,
+      weakCategory,
+      englishOralOpportunity,
+      weeklyDigest: isDigestTime ? weeklyDigestData : null,
     };
-  }, [expressions, routine, questBoard, proactiveLeeches, stats, stamina, sessions]);
+  }, [expressions, proactiveLeeches, weeklyDigestData, sessions]);
 
   // ── Raccourcis clavier & Synchronisation ──
   const {
-    projectConflicts,
-    detectConflicts,
     manualSyncing,
     handleManualSync,
     repairSyncNow,
@@ -2732,16 +2749,10 @@ Données utilisateur :
     revealed,
     handleReveal,
     handleAnswer,
-    examActive,
-    examRevealed,
-    setExamRevealed,
-    handleExamAnswer: undefined,
-    examConfig,
     setCmdOpen,
     setAgentSheetOpen,
     setShowAgentPanel,
     MOBILE_MQ,
-    projects,
     categories,
     expressions,
     storage,
@@ -2751,23 +2762,47 @@ Données utilisateur :
     getFbUser,
   });
 
-  const handleNotifAction = useCallback((action) => {
+  const handleNotifAction = useCallback((action, notif) => {
     switch (action) {
       case "review": startReview(); break;
+      case "stats": setView("stats"); break;
+      case "weekly_digest": setWeeklyDigestOpen(true); break;
       case "english": {
         const ids = new Set((notifContext.incubating || []).map((c) => c.id));
         const queue = expressions.filter((e) => ids.has(e.id));
-        if (queue.length) startReview(null, "standard", queue);
+        if (queue.length) {
+          startReview(null, "standard", queue);
+        } else {
+          const eng = expressions.filter((e) => (e.category && /anglais|english/i.test(e.category)) || (e.lang && String(e.lang).startsWith("en")));
+          if (eng.length) startReview(null, "standard", eng.slice(0, 15));
+          else startReview();
+        }
+        break;
+      }
+      case "review_category": {
+        const catName = notif?.payload || notif?.meta?.category;
+        if (catName) {
+          const catCards = expressions.filter((e) => e.category === catName);
+          if (catCards.length) startReview(catName, "standard", catCards);
+          else startReview(catName);
+        } else {
+          startReview();
+        }
+        break;
+      }
+      case "dormant": {
+        const dormant = expressions.filter(
+          (e) => !e.lastReview && (e.level === 0 || e.level === undefined) && !e.paused
+        );
+        if (dormant.length) startReview(null, "standard", dormant.slice(0, 15));
         else startReview();
         break;
       }
       case "leeches": startReview(null, "standard", proactiveLeeches); break;
-      case "routine": setView("routine"); break;
-      case "quests": setView("quests"); break;
       case "sync": handleManualSync?.(); break;
       default: break;
     }
-  }, [startReview, proactiveLeeches, handleManualSync, notifContext, expressions]);
+  }, [startReview, proactiveLeeches, handleManualSync, notifContext, expressions, setView]);
 
   // Les commandes du CommandPalette exposées comme "tools" exécutables.
   const runAgentTool = useCallback((tool, args = {}) => {
@@ -2781,6 +2816,30 @@ Données utilisateur :
       case "start_review":
         startReview(args.module || null, "standard"); closeMobile();
         return args.module ? `Révision lancée : ${args.module}` : "Révision lancée";
+      case "create_card": {
+        const front = String(args.front || "").trim();
+        const back = String(args.back || "").trim();
+        if (!front || !back) return "Recto ou verso manquant pour la fiche";
+        const cat = String(args.module || "Général").trim();
+        const newExp = {
+          id: Date.now().toString(),
+          front,
+          back,
+          example: "",
+          category: cat,
+          type: "qa",
+          level: 0,
+          nextReview: today(),
+          createdAt: today(),
+          easeFactor: 2.5,
+          interval: 1,
+          repetitions: 0,
+          reviewHistory: [],
+        };
+        setExpressions((prev) => [newExp, ...prev]);
+        showToast("✅ Fiche créée par l'Assistant IA !");
+        return `Fiche créée dans « ${cat} »`;
+      }
       case "toggle_lofi":
         setLofiPlaying((p) => !p);
         return "Radio focus basculée";
@@ -2791,15 +2850,15 @@ Données utilisateur :
         setZenFocusMode((z) => !z);
         return "Mode Zen basculé";
       case "start_pomodoro":
-        navigate("lab/pomodoro"); closeMobile();
-        return "Pomodoro 25 min ouvert";
+        setIsPomoActive(true); closeMobile();
+        return "Pomodoro 25 min lancé";
       case "open_command_palette":
         setCmdOpen(true); closeMobile();
         return "Palette de commandes ouverte";
       default:
         return null;
     }
-  }, [navigate]);
+  }, [setView, startReview, setExpressions, showToast, setLofiPlaying, setIsDarkMode, setZenFocusMode, setIsPomoActive, setCmdOpen, setAgentSheetOpen]);
 
   const agentAsk = useCallback(
     (systemPrompt, userMessage) =>
@@ -2825,11 +2884,11 @@ Données utilisateur :
     return currentCard.facets[idx];
   }, [reviewIndex, currentCard]);
 
-  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#070D1F", color: "#C084FC", fontFamily: "'Outfit', sans-serif", gap: 16 }}><div style={{ fontSize: 48, animation: "pulse 1s infinite", filter: "drop-shadow(0 0 20px rgba(249,115,22,0.8))" }}>🧠</div><h2 style={{ fontWeight: 800, letterSpacing: "-0.5px", background: "linear-gradient(135deg, #7C3AED, #C084FC)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Initialisation du Second Cerveau...</h2></div>;
+  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#070D1F", color: "var(--mm-primary-glow)", fontFamily: "'Outfit', sans-serif", gap: 16 }}><div style={{ fontSize: 48, animation: "pulse 1s infinite", filter: "drop-shadow(0 0 20px rgba(249,115,22,0.8))" }}>🧠</div><h2 style={{ fontWeight: 800, letterSpacing: "-0.5px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Initialisation du Second Cerveau...</h2></div>;
 
   return (
     <div style={{ minHeight: "100vh", width: "100%", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
-      {/* Topbar flottante : synchro + centre de notifications (Desktop uniquement) */}
+      {/* Topbar flottante : centre de notifications (Desktop uniquement) */}
       {!isMobile && (
         <div
           style={{
@@ -2837,23 +2896,6 @@ Données utilisateur :
             display: "flex", alignItems: "center", gap: 8,
           }}
         >
-          {getFbUser() && (
-            <button
-              onClick={handleManualSync}
-              disabled={manualSyncing}
-              title="Forcer une synchronisation avec le serveur (utile après avoir modifié tes données sur un autre appareil)"
-              style={{
-                width: 34, height: 34, borderRadius: "50%", border: "none",
-                background: "rgba(30,30,40,0.55)", color: "#fff", fontSize: 15,
-                cursor: manualSyncing ? "default" : "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                animation: manualSyncing ? "pulse 0.8s ease-in-out infinite" : "none",
-                backdropFilter: "blur(6px)",
-              }}
-            >
-              🔄
-            </button>
-          )}
           <NotificationCenter
             context={notifContext}
             onAction={handleNotifAction}
@@ -2887,12 +2929,11 @@ Données utilisateur :
         sessionRemainingCount={sessionRemainingCount}
         sessionPlannedToday={sessionPlannedToday}
         duePileSize={duePileSize}
-        projectConflicts={projectConflicts}
       />
 
       {/* ── LAYOUT PRINCIPAL : Sidebar + Content ── */}
       <div style={{ height: zenFocusMode || isMobile ? 0 : 68, transition: "height 0.3s cubic-bezier(0.4,0,0.2,1)" }} />{/* spacer nav fixe */}
-      <div style={{ display: "flex", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", width: "100%", maxWidth: "100%", boxSizing: "border-box", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
 
         {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) ═══ */}
         <AppSidebar
@@ -2903,7 +2944,6 @@ Données utilisateur :
           theme={theme}
           powerLevel={powerLevel}
           expressions={expressions}
-          projects={projects}
           categories={categories}
           sessionRemainingCount={sessionRemainingCount}
           sessionPlannedToday={sessionPlannedToday}
@@ -2914,14 +2954,11 @@ Données utilisateur :
           editingId={editingId}
           view={view}
           setView={setView}
-          setProjectSubView={setProjectSubView}
           navigate={navigate}
-          projectPomodoroTime={projectPomodoroTime}
-          projectPomodoroActive={projectPomodoroActive}
-          setProjectPomodoroActive={setProjectPomodoroActive}
-          projectPomodoroMode={projectPomodoroMode}
-          projectConflicts={projectConflicts}
           sidebarClock={sidebarClock}
+          projectPomodoroTime={pomoTime}
+          projectPomodoroActive={isPomoActive}
+          setProjectPomodoroActive={setIsPomoActive}
         />
 
         {/* ═══ NAVIGATION MOBILE (SpeedDial, Drawer, AddSheet) ═══ */}
@@ -2943,23 +2980,24 @@ Données utilisateur :
           navigate={navigate}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
-          setProjectSubView={setProjectSubView}
           unlockedBadges={unlockedBadges}
           lastViewedBadgesCount={lastViewedBadgesCount}
-          projectPomodoroTime={projectPomodoroTime}
-          projectPomodoroActive={projectPomodoroActive}
-          setProjectPomodoroActive={setProjectPomodoroActive}
-          projectPomodoroMode={projectPomodoroMode}
+          projectPomodoroTime={pomoTime}
+          projectPomodoroTotal={50 * 60}
+          projectPomodoroActive={isPomoActive}
+          setProjectPomodoroActive={setIsPomoActive}
+          projectPomodoroMode="study"
         />
 
         <main
-          className="main-content"
+          className={`main-content${view === "practice" ? " has-live-nova" : ""}`}
           style={{
-            flex: 1, width: 0, minWidth: 0, boxSizing: "border-box", marginTop: oneHanded ? '45vh' : 0, transition: 'margin-top 0.3s ease', padding: "32px 36px 80px", paddingBottom: isMobile ? "calc(var(--nav-h, 92px) + 24px + env(safe-area-inset-bottom, 0px))" : "106px", position: "relative", zIndex: 1,
+            flex: 1, width: 0, minWidth: 0, boxSizing: "border-box", marginTop: oneHanded ? '45vh' : 0, transition: 'margin-top 0.3s ease', padding: isMobile ? (view === "practice" ? "12px 12px 0" : "12px 12px calc(var(--nav-h, 92px) + 24px + env(safe-area-inset-bottom, 0px))") : "32px 36px 106px", position: "relative", zIndex: 1,
 
             touchAction: 'auto',
           }}
         >
+          <Suspense fallback={<div style={{ padding: 40, textAlign: "center", color: theme.textMuted }}>Chargement…</div>}>
           {/* ══════════════════════════════════════════════════════════════════
             VUE TABLEAU DE BORD (Bento Hub / Mobile Home V2)
           ══════════════════════════════════════════════════════════════════ */}
@@ -2984,7 +3022,6 @@ Données utilisateur :
               handleEnterFlow={handleEnterFlow}
               hour={new Date().getHours()}
               greeting={new Date().getHours() >= 18 ? "Bonsoir" : "Bonjour"}
-              dashNextExam={dashNextExam}
               dashQuote={dashQuote}
               dashQuoteLoading={dashQuoteLoading}
               dashSelfCompare={dashSelfCompare}
@@ -3091,6 +3128,9 @@ Données utilisateur :
               showToast={showToast}
               activeFacet={activeFacet}
               setCardStartTime={setCardStartTime}
+              handleOptimizeOneCard={handleOptimizeOneCard}
+              reviewMode={reviewMode}
+              reviewCategory={reviewCategory}
             />
           )}
 
@@ -3250,6 +3290,10 @@ Données utilisateur :
                 categories={categories}
                 theme={theme}
                 isDarkMode={isDarkMode}
+                setView={setView}
+                navigate={navigate}
+                setFilterCat={setFilterCat}
+                setSearchQuery={setSearchQuery}
               />
             </ErrorBoundary>
           )}
@@ -3307,14 +3351,16 @@ Données utilisateur :
           )}
 
           {(view === "veille" || view === "bourses") && (
-            <div className="view-slide-up" style={{ padding: "0 20px" }}>
+            <div className="view-slide-up mm-veille-container">
               <Suspense fallback={<div style={{ padding: 40, textAlign: "center", color: theme.textMuted }}>Chargement des actualités & bourses...</div>}>
                 <ErrorBoundary scope="TechIntelView">
                   <TechIntelView
                     initialTab={view === "bourses" ? "scholarships" : undefined}
+                    onBack={() => setView("dashboard")}
                     callClaude={callClaude}
                     isDarkMode={isDarkMode}
                     theme={theme}
+                    showToast={showToast}
                     onPickArticle={(item) => {
                       if (item?.url && typeof window !== "undefined") {
                         window.open(item.url, "_blank", "noopener,noreferrer");
@@ -3323,17 +3369,17 @@ Données utilisateur :
                     onCreateCard={(item) => {
                       try {
                         const card = {
-                          id: `veille_${Date.now()}`,
-                          front: item.title,
-                          back: item.summary || item.title,
-                          example: item.url || "",
-                          category: "📰 Veille tech",
+                          id: item.id || `veille_${Date.now()}`,
+                          front: item.front || item.title,
+                          back: item.back || item.summary || item.title,
+                          example: item.example || item.url || "",
+                          category: item.category || "📰 Veille tech",
                           level: 0,
                           nextReview: today(),
                           easeFactor: 2.5,
                           interval: 1,
-                          _source: item.source,
-                          _url: item.url,
+                          _source: item._source || item.source,
+                          _url: item._url || item.url,
                         };
                         setExpressions(prev => [card, ...prev]);
                         notifyCardsCreated(1); // couche 7 — combler la fuite de comptage
@@ -3387,6 +3433,7 @@ Données utilisateur :
               generateStatsAiReport={generateStatsAiReport}
               statsAiReportLoading={statsAiReportLoading}
               generateWeeklyDigest={generateWeeklyDigest}
+              onOpenWeeklyDigest={() => setWeeklyDigestOpen(true)}
               statsAiReport={statsAiReport}
               setStatsAiReport={setStatsAiReport}
               showToast={showToast}
@@ -3419,40 +3466,13 @@ Données utilisateur :
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-            VUE PROJETS — GOD MODE COMPLET
-          ══════════════════════════════════════════════════════════════════ */}
-          {view === "projects" && (
-            <ProjectsView
-              projects={projects}
-              setProjects={setProjects}
-              categories={categories}
-              expressions={expressions}
-              setExpressions={setExpressions}
-              todayReviews={todayReviews}
-              theme={theme}
-              isDarkMode={isDarkMode}
-              showToast={showToast}
-              callClaude={callClaude}
-              today={today}
-              projectSubView={projectSubView}
-              setProjectSubView={setProjectSubView}
-              projectConflicts={projectConflicts}
-              projectPomodoroActive={projectPomodoroActive}
-              setProjectPomodoroActive={setProjectPomodoroActive}
-              projectPomodoroTime={projectPomodoroTime}
-              setProjectPomodoroTime={setProjectPomodoroTime}
-              projectPomodoroMode={projectPomodoroMode}
-              setProjectPomodoroMode={setProjectPomodoroMode}
-            />
-          )}
-
-          {/* ══════════════════════════════════════════════════════════════════
             VUE CATEGORIES
           ══════════════════════════════════════════════════════════════════ */}
           {view === "categories" && (
             <CategoriesView
               categories={categories}
               setCategories={setCategories}
+              deleteCategory={deleteCategory}
               expressions={expressions}
               setExpressions={setExpressions}
               theme={theme}
@@ -3468,32 +3488,9 @@ Données utilisateur :
               setSelectionMode={setSelectionMode}
               setSelectedCards={setSelectedCards}
               setAddBatchQueue={setAddBatchQueue}
-              setExamConfig={setExamConfig}
-              examHistory={examHistory}
               today={today}
               isDue={isDue}
             />
-          )}
-
-          {view === "routine" && (
-            <div style={{ maxWidth: 800, margin: "0 auto", padding: "16px 0", animation: "fadeUp 0.3s ease" }}>
-              <DailyRoutineTracker
-                routine={routine}
-                theme={theme}
-                isDarkMode={isDarkMode}
-                onBack={() => setView("dashboard")}
-                onAction={(actionId, duration, label, stepId) => {
-                  if (stepId && routine?.checkStep) routine.checkStep(stepId);
-                  if (actionId === "review") startReview(null, "standard");
-                  else if (actionId === "add") setView("add");
-                  else if (actionId === "practice") setView("practice");
-                  else if (actionId === "veille") setView("veille");
-                  else if (actionId === "lab") setView("lab");
-                  else if (actionId === "stats") setView("stats");
-                  else setView(actionId);
-                }}
-              />
-            </div>
           )}
 
           {view === "quests" && (
@@ -3503,8 +3500,8 @@ Données utilisateur :
                   type="button"
                   onClick={() => setView("dashboard")}
                   style={{
-                    background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.08)",
-                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(139, 92, 246,0.2)"}`,
+                    background: isDarkMode ? "rgba(255,255,255,0.08)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)"}`,
                     color: theme.text || "#0F172A",
                     fontSize: 13, fontWeight: 800,
                     padding: "7px 16px", borderRadius: 12,
@@ -3521,6 +3518,7 @@ Données utilisateur :
             </div>
           )}
 
+          </Suspense>
         </main>
       </div>
 
@@ -3590,6 +3588,15 @@ Données utilisateur :
         setIsDarkMode={setIsDarkMode}
         setLofiPlaying={setLofiPlaying}
         MOBILE_MQ={MOBILE_MQ}
+      />
+
+      <WeeklyDigestModal
+        isOpen={weeklyDigestOpen}
+        onClose={() => setWeeklyDigestOpen(false)}
+        onOpenStats={() => setView("stats")}
+        digestData={weeklyDigestData}
+        isDarkMode={isDarkMode}
+        theme={theme}
       />
     </div>
   );

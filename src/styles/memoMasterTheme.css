@@ -45,7 +45,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(to bottom, #7c3aed, #c084fc);
+  background: linear-gradient(to bottom, var(--mm-primary), var(--mm-primary-glow));
   border-radius: 99px;
 }
 
@@ -89,11 +89,11 @@ body {
 
   0%,
   100% {
-    box-shadow: 0 0 20px rgba(139, 92, 246, 0.45);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--mm-primary) 45.0%, transparent);
   }
 
   50% {
-    box-shadow: 0 0 45px rgba(139, 92, 246, 0.85);
+    box-shadow: 0 0 45px color-mix(in srgb, var(--mm-primary) 85.0%, transparent);
   }
 }
 
@@ -258,12 +258,12 @@ body {
   0%,
   100% {
     transform: scale(1);
-    box-shadow: 0 0 24px #a855f760;
+    box-shadow: 0 0 24px color-mix(in srgb, var(--mm-primary) 38%, transparent);
   }
 
   50% {
     transform: scale(1.08);
-    box-shadow: 0 0 36px #a855f790;
+    box-shadow: 0 0 36px color-mix(in srgb, var(--mm-primary) 56%, transparent);
   }
 }
 
@@ -320,11 +320,11 @@ body {
 
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.7);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--mm-primary) 70.0%, transparent);
   }
 
   50% {
-    box-shadow: 0 0 0 6px rgba(168, 85, 247, 0);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--mm-primary) 0.0%, transparent);
   }
 }
 
@@ -447,8 +447,8 @@ textarea {
 input:focus,
 textarea:focus,
 select:focus {
-  border-color: #8b5cf6 !important;
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15) !important;
+  border-color: var(--mm-primary) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mm-primary) 15.0%, transparent) !important;
 }
 
 .tab-active {
@@ -533,7 +533,7 @@ body.perf-lite .mhv2-ritual {
   left: -120px;
   width: 580px;
   height: 580px;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.08) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 8.0%, transparent) 0%, transparent 65%);
   border-radius: 50%;
   pointer-events: none;
   z-index: 0;
@@ -546,7 +546,7 @@ body.perf-lite .mhv2-ritual {
   right: -100px;
   width: 500px;
   height: 500px;
-  background: radial-gradient(circle, rgba(139, 92, 246, 0.06) 0%, transparent 65%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 6.0%, transparent) 0%, transparent 65%);
   border-radius: 50%;
   pointer-events: none;
   z-index: 0;
@@ -598,7 +598,10 @@ body.perf-lite .mhv2-ritual {
   }
 
   .main-content {
-    padding: 12px 12px 110px !important;
+    padding-top: calc(env(safe-area-inset-top, 24px) + 12px) !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    padding-bottom: 110px !important;
     touch-action: auto !important;
   }
 
@@ -1047,4 +1050,16 @@ body.perf-lite .mhv2-ritual {
   background: rgba(255, 255, 255, 0.2) !important;
   color: #ffffff !important;
   border: 1px solid rgba(255, 255, 255, 0.35) !important;
+}
+
+/* ── Container Veille / Bourses Responsive Padding ── */
+.mm-veille-container {
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+
+@media (max-width: 640px) {
+  .mm-veille-container {
+    padding: 0 6px !important;
+  }
 }

@@ -28,20 +28,20 @@ export const RARITY_STYLES = {
   },
   rare: {
     label: "Rare",
-    color: "#8B5CF6",
+    color: "var(--mm-primary)",
     bgLight: "#EDE9FE",
-    bgDark: "rgba(139,92,246,0.14)",
-    glow: "0 0 14px rgba(139,92,246,0.35)",
-    gradient: "linear-gradient(135deg,#A78BFA,#7C3AED)",
+    bgDark: "rgba(37, 99, 235,0.14)",
+    glow: "0 0 14px rgba(37, 99, 235,0.35)",
+    gradient: "linear-gradient(135deg,var(--mm-primary-glow),var(--mm-primary))",
     animated: false,
   },
   epique: {
     label: "Épique",
-    color: "#A855F7",
+    color: "var(--mm-primary)",
     bgLight: "#F3E8FF",
-    bgDark: "rgba(168,85,247,0.16)",
-    glow: "0 0 20px rgba(168,85,247,0.45)",
-    gradient: "linear-gradient(135deg,#C084FC,#7E22CE)",
+    bgDark: "rgba(37, 99, 235,0.16)",
+    glow: "0 0 20px rgba(37, 99, 235,0.45)",
+    gradient: "linear-gradient(135deg,var(--mm-primary-glow),#7E22CE)",
     animated: false,
   },
   legendaire: {
@@ -57,8 +57,7 @@ export const RARITY_STYLES = {
 
 export const RARITY_ORDER = { legendaire: 0, epique: 1, rare: 2, commun: 3 };
 
-// Catégories réellement utilisées (plus de catégorie fantôme "Examens",
-// plus de catégorie morte "Héritage").
+// Catégories réellement utilisées (plus de catégorie morte "Héritage").
 export const BADGE_CATEGORIES = [
   "Création",
   "Streak",

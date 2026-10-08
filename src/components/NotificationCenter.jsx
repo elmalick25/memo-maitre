@@ -17,6 +17,7 @@ import {
   countUnread,
   groupNotifications,
   isSnoozed,
+  isExpiredInsight,
   loadNotifState,
   saveNotifState,
 } from "../lib/notifications";
@@ -24,8 +25,8 @@ import {
 const TONE = {
   danger: "#EF4444",
   warn: "#F59E0B",
-  accent: "#8B5CF6",
-  info: "#A855F7",
+  accent: "var(--mm-primary)",
+  info: "var(--mm-primary)",
   success: "#10B981",
 };
 
@@ -48,11 +49,12 @@ export default function NotificationCenter({
 
   const all = useMemo(() => buildNotifications(context), [context]);
   const visible = useMemo(
-    () => all.filter((n) => !isSnoozed(n, state)),
+    () => all.filter((n) => !isSnoozed(n, state) && !isExpiredInsight(n, state)),
     [all, state]
   );
   const unread = useMemo(() => countUnread(all, state), [all, state]);
   const urgentCount = visible.filter((n) => n.group === "urgent").length;
+  const insightsCount = visible.filter((n) => n.group === "insights").length;
   const todayCount = visible.filter((n) => n.group === "today").length;
 
   const shown = filter === "all" ? visible : visible.filter((n) => n.group === filter);
@@ -97,6 +99,12 @@ export default function NotificationCenter({
   const snooze = (id) =>
     patch((prev) => ({ ...prev, snoozed: { ...prev.snoozed, [id]: tomorrowISO() } }));
 
+  const dismissInsight = (id) =>
+    patch((prev) => ({
+      ...prev,
+      dismissedInsights: { ...(prev.dismissedInsights || {}), [id]: Date.now() },
+    }));
+
   const handleAction = (notif) => {
     markRead(notif.id);
     setOpen(false);
@@ -127,7 +135,7 @@ export default function NotificationCenter({
           height: 38,
           borderRadius: 12,
           border: `1px solid ${border}`,
-          background: open ? "rgba(139, 92, 246,0.18)" : surfaceAlt,
+          background: open ? "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)" : surfaceAlt,
           color: fg,
           cursor: "pointer",
           display: "inline-flex",
@@ -156,7 +164,7 @@ export default function NotificationCenter({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: `0 0 0 2px ${surface}, 0 0 12px ${urgentCount > 0 ? "rgba(239,68,68,.7)" : "rgba(139, 92, 246,.6)"}`,
+              boxShadow: `0 0 0 2px ${surface}, 0 0 12px ${urgentCount > 0 ? "rgba(239,68,68,.7)" : "color-mix(in srgb, var(--mm-primary) 60.0%, transparent)"}`,
               animation: urgentCount > 0 ? "mmNotifPulse 1.8s ease-in-out infinite" : "none",
             }}
           >
@@ -213,10 +221,11 @@ export default function NotificationCenter({
             </div>
             <div style={{ fontSize: 11.5, color: muted, marginTop: 3, fontWeight: 600 }}>
               {visible.length === 0
-                ? "Rien à signaler"
+                ? "Esprit libre : aucun signal critique"
                 : [
                     urgentCount ? `${urgentCount} urgente${urgentCount > 1 ? "s" : ""}` : null,
-                    todayCount ? `${todayCount} à faire` : null,
+                    insightsCount ? `${insightsCount} insight${insightsCount > 1 ? "s" : ""}` : null,
+                    todayCount ? `${todayCount} à réviser` : null,
                   ]
                     .filter(Boolean)
                     .join(" · ") || `${visible.length} info${visible.length > 1 ? "s" : ""}`}
@@ -241,7 +250,7 @@ export default function NotificationCenter({
                       fontWeight: 800,
                       cursor: "pointer",
                       border: `1px solid ${active ? "transparent" : border}`,
-                      background: active ? "linear-gradient(135deg,#8B5CF6,#7c3aed)" : surfaceAlt,
+                      background: active ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : surfaceAlt,
                       color: active ? "#fff" : muted,
                     }}
                   >
@@ -256,12 +265,12 @@ export default function NotificationCenter({
           <div style={{ overflowY: "auto", padding: "8px 10px 12px", flex: 1 }}>
             {shown.length === 0 && (
               <div style={{ textAlign: "center", padding: "34px 18px", color: muted }}>
-                <div style={{ fontSize: 30 }} aria-hidden="true">🌙</div>
-                <div style={{ fontSize: 13, fontWeight: 700, marginTop: 8, color: fg }}>
-                  Boîte vide
+                <div style={{ fontSize: 32 }} aria-hidden="true">🌱</div>
+                <div style={{ fontSize: 13.5, fontWeight: 700, marginTop: 8, color: fg }}>
+                  Aucun signal critique
                 </div>
-                <div style={{ fontSize: 11.5, marginTop: 4 }}>
-                  Tout est à jour. Profites-en pour créer une fiche.
+                <div style={{ fontSize: 11.5, marginTop: 4, maxWidth: 280, marginInline: "auto", lineHeight: 1.45 }}>
+                  Tes révisions et tes statistiques sont équilibrées. Aucune anomalie ni alerte à signaler.
                 </div>
               </div>
             )}
@@ -311,9 +320,26 @@ export default function NotificationCenter({
                             display: "flex",
                             alignItems: "center",
                             gap: 6,
+                            flexWrap: "wrap",
                           }}
                         >
                           <span style={{ flex: 1, minWidth: 0 }}>{n.title}</span>
+                          {n.group === "insights" && (
+                            <span
+                              style={{
+                                fontSize: 9.5,
+                                fontWeight: 900,
+                                textTransform: "uppercase",
+                                padding: "2px 7px",
+                                borderRadius: 6,
+                                background: "rgba(139, 92, 246, 0.15)",
+                                color: "#8B5CF6",
+                                letterSpacing: 0.5,
+                              }}
+                            >
+                              Insight
+                            </span>
+                          )}
                           {!isRead && (
                             <span
                               aria-hidden="true"
@@ -377,11 +403,29 @@ export default function NotificationCenter({
                               Lu
                             </button>
                           )}
-                          {!n.sticky && (
+                          {n.group === "insights" ? (
                             <button
                               type="button"
-                              onClick={() => snooze(n.id)}
+                              onClick={() => dismissInsight(n.id)}
                               style={{
+                                padding: "5px 10px",
+                                borderRadius: 999,
+                                border: `1px solid ${border}`,
+                                background: "transparent",
+                                color: muted,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                cursor: "pointer",
+                              }}
+                            >
+                              Ignorer
+                            </button>
+                          ) : (
+                            !n.sticky && (
+                              <button
+                                type="button"
+                                onClick={() => snooze(n.id)}
+                                style={{
                                 padding: "5px 10px",
                                 borderRadius: 999,
                                 border: `1px solid ${border}`,
@@ -394,6 +438,7 @@ export default function NotificationCenter({
                             >
                               Demain
                             </button>
+                            )
                           )}
                         </div>
                       </div>

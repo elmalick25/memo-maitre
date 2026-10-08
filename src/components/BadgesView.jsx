@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // HAUTS FAITS & TROPHÉES — GOD TIER EXPERIENCE
 // ═══════════════════════════════════════════════════════════════════════════
-import React, { useMemo, useState, memo } from "react";
+import React, { useMemo, useState, memo, forwardRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BADGES,
@@ -11,6 +11,7 @@ import {
   RARITY_ORDER,
 } from "../constants/gamification";
 import { UNLOCKS, getUnlocks, getNextUnlock } from "../lib/unlocks";
+import { colorMix } from "../lib/colorMix";
 
 const PAGE_SIZE = 48;
 
@@ -28,19 +29,22 @@ const CATEGORY_ICONS = {
 };
 
 // ── Badge Card Component ────────────────────────────────────────────────────
-const BadgeCard = memo(function BadgeCard({
+// forwardRef requis : AnimatePresence (mode popLayout) attache une ref à
+// l'enfant. Sans cela React émet un warning et l'animation de sortie casse.
+const BadgeCard = memo(forwardRef(function BadgeCard({
   badge,
   isUnlocked,
   prog,
   theme,
   isDarkMode,
   onSelect,
-}) {
+}, ref) {
   const rar = RARITY_STYLES[badge.rarity] || RARITY_STYLES.commun;
   const pct = prog && prog.max ? Math.min(100, Math.round((prog.cur / prog.max) * 100)) : (isUnlocked ? 100 : 0);
 
   return (
     <motion.div
+      ref={ref}
       layout
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
@@ -52,7 +56,7 @@ const BadgeCard = memo(function BadgeCard({
         background: isUnlocked
           ? (isDarkMode
               ? `linear-gradient(135deg, rgba(30, 41, 59, 0.75), rgba(15, 23, 42, 0.9))`
-              : `linear-gradient(135deg, #FFFFFF, #FAF5FF)`)
+              : `linear-gradient(135deg, #FFFFFF, color-mix(in srgb, var(--mm-primary) 4%, white))`)
           : (isDarkMode
               ? "rgba(15, 23, 42, 0.4)"
               : "rgba(248, 250, 252, 0.8)"),
@@ -63,7 +67,7 @@ const BadgeCard = memo(function BadgeCard({
         filter: isUnlocked ? "none" : "grayscale(85%) opacity(0.7)",
         position: "relative",
         boxShadow: isUnlocked
-          ? (isDarkMode ? `0 8px 24px ${rar.color}22` : `0 8px 20px ${rar.color}15`)
+          ? (isDarkMode ? `0 8px 24px ${colorMix(rar.color, 13)}` : `0 8px 20px ${colorMix(rar.color, 8)}`)
           : "none",
         overflow: "hidden",
         cursor: "pointer",
@@ -100,7 +104,7 @@ const BadgeCard = memo(function BadgeCard({
               letterSpacing: 0.5,
               textTransform: "uppercase",
               color: rar.color,
-              background: `${rar.color}18`,
+              background: `${colorMix(rar.color, 9)}`,
               padding: "2px 8px",
               borderRadius: 99,
             }}
@@ -147,7 +151,7 @@ const BadgeCard = memo(function BadgeCard({
                 style={{
                   height: "100%",
                   width: `${pct}%`,
-                  background: `linear-gradient(90deg, ${rar.color}88, ${rar.color})`,
+                  background: `linear-gradient(90deg, ${colorMix(rar.color, 53)}, ${rar.color})`,
                   borderRadius: 4,
                   transition: "width 0.4s ease",
                 }}
@@ -155,7 +159,7 @@ const BadgeCard = memo(function BadgeCard({
             </div>
           </div>
         ) : isUnlocked ? (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: rar.color, background: `${rar.color}15`, padding: "3px 10px", borderRadius: 99 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: rar.color, background: `${colorMix(rar.color, 8)}`, padding: "3px 10px", borderRadius: 99 }}>
             <span>✔ Débloqué</span>
           </div>
         ) : (
@@ -166,7 +170,7 @@ const BadgeCard = memo(function BadgeCard({
       </div>
     </motion.div>
   );
-});
+}));
 
 // ── Detail Modal Component ──────────────────────────────────────────────────
 function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
@@ -213,7 +217,7 @@ function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
           padding: "32px 28px 24px",
           maxWidth: 440,
           width: "100%",
-          boxShadow: `0 24px 60px rgba(0,0,0,0.4), 0 0 40px ${rar.color}25`,
+          boxShadow: `0 24px 60px rgba(0,0,0,0.4), 0 0 40px ${colorMix(rar.color, 15)}`,
           textAlign: "center",
           position: "relative",
           overflow: "hidden",
@@ -245,7 +249,7 @@ function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
               position: "absolute",
               inset: -14,
               borderRadius: "50%",
-              background: `radial-gradient(circle, ${rar.color}40 0%, transparent 70%)`,
+              background: `radial-gradient(circle, ${colorMix(rar.color, 25)} 0%, transparent 70%)`,
               filter: "blur(8px)",
               pointerEvents: "none",
             }}
@@ -261,7 +265,7 @@ function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
               fontWeight: 800,
               textTransform: "uppercase",
               color: rar.color,
-              background: `${rar.color}20`,
+              background: `${colorMix(rar.color, 13)}`,
               padding: "3px 10px",
               borderRadius: 99,
             }}
@@ -313,7 +317,7 @@ function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
                   style={{
                     height: "100%",
                     width: `${pct}%`,
-                    background: `linear-gradient(90deg, ${rar.color}88, ${rar.color})`,
+                    background: `linear-gradient(90deg, ${colorMix(rar.color, 53)}, ${rar.color})`,
                     borderRadius: 99,
                   }}
                 />
@@ -332,14 +336,14 @@ function BadgeDetailModal({ data, onClose, theme, isDarkMode, showToast }) {
             style={{
               flex: 1,
               padding: "12px 18px",
-              background: `linear-gradient(135deg, ${rar.color}, ${rar.color}cc)`,
+              background: `linear-gradient(135deg, ${rar.color}, ${colorMix(rar.color, 80)})`,
               color: "#FFFFFF",
               border: "none",
               borderRadius: 14,
               fontWeight: 800,
               fontSize: 13,
               cursor: "pointer",
-              boxShadow: `0 6px 18px ${rar.color}35`,
+              boxShadow: `0 6px 18px ${colorMix(rar.color, 21)}`,
             }}
           >
             📢 Partager / Copier
@@ -383,7 +387,7 @@ function getUnlockCategory(u) {
 
 function getCategoryBadgeInfo(catId) {
   switch (catId) {
-    case "themes": return { label: "Thème", color: "#8B5CF6", bg: "rgba(139,92,246,0.14)" };
+    case "themes": return { label: "Thème", color: "var(--mm-primary)", bg: "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" };
     case "visuals": return { label: "Effet Visuel", color: "#EC4899", bg: "rgba(236,72,153,0.14)" };
     case "bonus": return { label: "Bonus Jeu", color: "#10B981", bg: "rgba(16,185,129,0.14)" };
     default: return { label: "Système", color: "#F59E0B", bg: "rgba(245,158,11,0.14)" };
@@ -391,7 +395,7 @@ function getCategoryBadgeInfo(catId) {
 }
 
 // ── Chip Component ──────────────────────────────────────────────────────────
-const FilterChip = ({ active, onClick, children, accent = "#8B5CF6", theme, isDarkMode }) => (
+const FilterChip = ({ active, onClick, children, accent = "var(--mm-primary)", theme, isDarkMode }) => (
   <button
     onClick={onClick}
     style={{
@@ -521,11 +525,11 @@ export default function BadgesView({
           overflow: "hidden",
           background: isDarkMode
             ? "linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.98))"
-            : "linear-gradient(135deg, #FAF5FF, #F3E8FF)",
-          border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.2)"}`,
+            : "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 4%, white), color-mix(in srgb, var(--mm-primary) 10%, white))",
+          border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)"}`,
           boxShadow: isDarkMode
             ? "0 20px 50px rgba(0,0,0,0.4)"
-            : "0 20px 50px rgba(139,92,246,0.15)",
+            : "0 20px 50px color-mix(in srgb, var(--mm-primary) 15.0%, transparent)",
         }}
       >
         <div
@@ -562,7 +566,7 @@ export default function BadgesView({
                   initial={{ width: 0 }}
                   animate={{ width: `${completionPct}%` }}
                   transition={{ duration: 1.2, ease: "easeOut" }}
-                  style={{ height: "100%", background: "linear-gradient(90deg, #8B5CF6, #F59E0B)", borderRadius: 99 }}
+                  style={{ height: "100%", background: "linear-gradient(90deg, var(--mm-primary), #F59E0B)", borderRadius: 99 }}
                 />
               </div>
             </div>
@@ -630,10 +634,10 @@ export default function BadgesView({
             gap: 10,
             transition: "all 0.25s ease",
             background: activeTab === "badges"
-              ? (isDarkMode ? "linear-gradient(135deg, #8B5CF6, #6D28D9)" : "linear-gradient(135deg, #8B5CF6, #7C3AED)")
+              ? (isDarkMode ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))" : "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))")
               : "transparent",
             color: activeTab === "badges" ? "#FFFFFF" : (theme?.textMuted || "#64748B"),
-            boxShadow: activeTab === "badges" ? "0 6px 20px rgba(139,92,246,0.35)" : "none",
+            boxShadow: activeTab === "badges" ? "0 6px 20px color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "none",
           }}
         >
           <span>🏆</span>
@@ -704,7 +708,7 @@ export default function BadgesView({
                   key={r}
                   style={{
                     background: isDarkMode ? st.bgDark : st.bgLight,
-                    border: `1.5px solid ${st.color}40`,
+                    border: `1.5px solid ${colorMix(st.color, 25)}`,
                     borderRadius: 20,
                     padding: "16px 20px",
                     display: "flex",
@@ -775,7 +779,7 @@ export default function BadgesView({
           <FilterChip
             theme={theme}
             isDarkMode={isDarkMode}
-            accent="#8B5CF6"
+            accent="var(--mm-primary)"
             active={cat === "Toutes"}
             onClick={() => { setCat("Toutes"); setLimit(PAGE_SIZE); }}
           >
@@ -786,7 +790,7 @@ export default function BadgesView({
               key={c}
               theme={theme}
               isDarkMode={isDarkMode}
-              accent="#8B5CF6"
+              accent="var(--mm-primary)"
               active={cat === c}
               onClick={() => { setCat(c); setLimit(PAGE_SIZE); }}
             >
@@ -824,7 +828,7 @@ export default function BadgesView({
           <FilterChip
             theme={theme}
             isDarkMode={isDarkMode}
-            accent="#A855F7"
+            accent="var(--mm-primary)"
             active={status === "tous"}
             onClick={() => { setStatus("tous"); setLimit(PAGE_SIZE); }}
           >
@@ -902,15 +906,15 @@ export default function BadgesView({
               <button
                 onClick={() => setLimit((v) => v + PAGE_SIZE)}
                 style={{
-                  background: isDarkMode ? "#1E293B" : "#EDE9FE",
-                  color: "#8B5CF6",
+                  background: isDarkMode ? "#1E293B" : "color-mix(in srgb, var(--mm-primary) 10%, white)",
+                  color: "var(--mm-primary)",
                   border: "none",
                   padding: "14px 28px",
                   borderRadius: 999,
                   fontWeight: 800,
                   fontSize: 14,
                   cursor: "pointer",
-                  boxShadow: "0 4px 16px rgba(139,92,246,0.15)",
+                  boxShadow: "0 4px 16px color-mix(in srgb, var(--mm-primary) 15.0%, transparent)",
                 }}
               >
                 Afficher {Math.min(PAGE_SIZE, filtered.length - limit)} de plus ({filtered.length - limit} restants)

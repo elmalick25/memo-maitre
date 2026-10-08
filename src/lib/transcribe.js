@@ -1,10 +1,6 @@
+import { resolveAll } from "./security/apiKeys.js";
 export async function transcribeAudio(audioBlob, language = "fr") {
-  const keys = [
-    import.meta.env.VITE_GROQ_API_KEY,
-    import.meta.env.VITE_GROQ_API_KEY_5,
-    import.meta.env.VITE_GROQ_API_KEY_6,
-    import.meta.env.VITE_GROQ_API_KEY_7,
-  ].filter(Boolean);
+  const keys = resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
 
   if (keys.length === 0) throw new Error("Clé Groq manquante");
 

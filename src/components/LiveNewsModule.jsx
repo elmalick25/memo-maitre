@@ -7,18 +7,19 @@ import {
 } from "../lib/offlineArticles";
 import { getNetworkStatus, onNetworkChange } from "../lib/networkStatus";
 import { fetchViaProxies, fetchReadableArticle, extractReadableFromHtml } from "../lib/articleExtractor";
+import { extremeGodNewsPipeline } from "../lib/extremeGod";
 
 // 🇫🇷 Sources d'actualités françaises uniquement
 const RSS_FEEDS = [
-  { name: "Le Monde",    url: "https://www.lemonde.fr/rss/une.xml",       color: "#4C1D95", emoji: "🗞️" },
-  { name: "France Info", url: "https://www.francetvinfo.fr/titres.rss",   color: "#A855F7", emoji: "📡" },
+  { name: "Le Monde",    url: "https://www.lemonde.fr/rss/une.xml",       color: "var(--mm-primary-deep)", emoji: "🗞️" },
+  { name: "France Info", url: "https://www.francetvinfo.fr/titres.rss",   color: "var(--mm-primary)", emoji: "📡" },
   { name: "RFI",         url: "https://www.rfi.fr/fr/rss",                color: "#16A34A", emoji: "🌍" },
   { name: "Le Figaro",   url: "https://www.lefigaro.fr/rss/figaro_actualites.xml", color: "#0F172A", emoji: "📰" },
   { name: "Libération",  url: "https://www.liberation.fr/arc/outboundfeeds/rss-all/?outputType=xml", color: "#DC2626", emoji: "📣" },
 ];
 
 const DEFAULT_THEME = {
-  primary: "#8B5CF6",
+  primary: "var(--mm-primary)",
   text: "#0f172a",
   textMuted: "#64748b",
   border: "var(--mm-border, rgba(15,23,42,0.12))",
@@ -107,9 +108,10 @@ export default function LiveNewsModule({ callClaude, theme: themeProp, isDarkMod
         }
       });
 
-      // Tri par date décroissante (les plus récents en haut) et on garde 20 articles
+      // 🔱 EXTREME GOD : aucune limite de volume, mais uniquement des infos
+      // riches et sûres (fiabilité de la source + corroboration multi-sources).
       allArticles.sort((a, b) => b.pubDate - a.pubDate);
-      const top = allArticles.slice(0, 20);
+      const top = extremeGodNewsPipeline(allArticles);
       setArticles(top);
       // 💾 Persister la liste pour la lecture hors ligne
       saveArticleList(top).catch(() => {});
@@ -300,8 +302,8 @@ ${textToAnalyze}
   const bgElev      = theme?.bgElev     || (isDarkMode ? "rgba(255,255,255,0.04)" : "#F8FAFC");
   const borderColor = theme?.border     || "var(--mm-border)";
   const gradHeader  = isDarkMode
-    ? "linear-gradient(135deg, rgba(139, 92, 246,0.18), rgba(168,85,247,0.10))"
-    : "linear-gradient(135deg, rgba(139, 92, 246,0.10), rgba(168,85,247,0.06))";
+    ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 18.0%, transparent), color-mix(in srgb, var(--mm-primary) 10.0%, transparent))"
+    : "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 10.0%, transparent), color-mix(in srgb, var(--mm-primary) 6.0%, transparent))";
 
   return (
     <div style={{ display: "flex", gap: 24, height: "100%", flexWrap: "wrap" }}>
@@ -441,7 +443,7 @@ ${textToAnalyze}
                 {/* Summary & Audio */}
                 {analysisData && (
                 <div style={{
-                  background: isDarkMode ? "rgba(139, 92, 246,0.1)" : "rgba(139, 92, 246,0.05)",
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)",
                   padding: 24, borderRadius: 16, border: `1px solid ${theme.primary}40`
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
@@ -507,7 +509,7 @@ ${textToAnalyze}
                       }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                           <strong style={{ fontSize: 16, color: theme.primary }}>{v.word}</strong>
-                          <span style={{ fontSize: 10, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)", padding: "2px 6px", borderRadius: 4 }}>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", background: isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)", padding: "2px 6px", borderRadius: 4 }}>
                             {v.frequency === "high" ? "fréquent" : v.frequency === "medium" ? "moyen" : "rare"}
                           </span>
                         </div>

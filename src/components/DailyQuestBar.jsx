@@ -4,6 +4,7 @@
 // toujours visibles sur le dashboard.
 // ═══════════════════════════════════════════════════════════════════════════
 import React from "react";
+import { colorMix } from "../lib/colorMix";
 
 function Row({ quest, theme, accent }) {
   return (
@@ -30,7 +31,7 @@ function Row({ quest, theme, accent }) {
   );
 }
 
-export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = null, accent = "#8B5CF6" }) {
+export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = null, accent = "var(--mm-primary)" }) {
   if (!summary || !summary.daily?.length) return null;
   const { daily, weekly, doneCount, total, allDone } = summary;
 
@@ -50,7 +51,7 @@ export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = n
           🎯 Quêtes du jour <span style={{ color: accent }}>{doneCount}/{total}</span>
         </div>
         {dailyMultiplier && (
-          <div style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 999, background: `${accent}18`, color: accent }}>
+          <div style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 999, background: `${colorMix(accent, 9)}`, color: accent }}>
             {dailyMultiplier.icon} {dailyMultiplier.label}
           </div>
         )}
@@ -69,7 +70,7 @@ export default function DailyQuestBar({ summary, theme = {}, dailyMultiplier = n
           <div style={{ fontWeight: 900, fontSize: 13, color: theme.text || "#0F172A", marginBottom: 2 }}>
             🏔️ Quête de la semaine
           </div>
-          <Row quest={weekly} theme={theme} accent="#A855F7" />
+          <Row quest={weekly} theme={theme} accent="var(--mm-primary)" />
         </div>
       )}
     </div>

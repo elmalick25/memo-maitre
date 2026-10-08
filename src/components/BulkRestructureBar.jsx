@@ -62,10 +62,10 @@ export default function BulkRestructureBar({
         padding: "14px 20px",
         borderRadius: 16,
         background: isDarkMode
-          ? "linear-gradient(135deg, rgba(139, 92, 246,0.18) 0%, rgba(139,92,246,0.12) 100%)"
-          : "linear-gradient(135deg, rgba(139, 92, 246,0.10) 0%, rgba(139,92,246,0.06) 100%)",
-        border: `1.5px solid ${isDarkMode ? "rgba(139, 92, 246,0.35)" : "rgba(139, 92, 246,0.25)"}`,
-        boxShadow: "0 6px 20px rgba(139, 92, 246,0.12)",
+          ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 18.0%, transparent) 0%, color-mix(in srgb, var(--mm-primary) 12.0%, transparent) 100%)"
+          : "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 10.0%, transparent) 0%, color-mix(in srgb, var(--mm-primary) 6.0%, transparent) 100%)",
+        border: `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)"}`,
+        boxShadow: "0 6px 20px color-mix(in srgb, var(--mm-primary) 12.0%, transparent)",
         marginBottom: 16,
       }}
     >
@@ -79,7 +79,7 @@ export default function BulkRestructureBar({
             gap: 6,
             background: "none",
             border: "none",
-            color: isDarkMode ? "#DDD6FE" : "#8B5CF6",
+            color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
             fontWeight: 700,
             fontSize: 13,
             cursor: "pointer",
@@ -100,7 +100,7 @@ export default function BulkRestructureBar({
 
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         {isProcessing ? (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: "#8B5CF6" }}>
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 800, color: "var(--mm-primary)" }}>
             <RefreshCw size={15} className="animate-spin" />
             <span>Restructuration Rétro-Ingénierie… ({progress.current}/{progress.total})</span>
           </div>
@@ -118,12 +118,12 @@ export default function BulkRestructureBar({
               border: "none",
               background: !selectedCount
                 ? (isDarkMode ? "#1F1F2E" : "#E5E7EB")
-                : "linear-gradient(135deg, #8B5CF6 0%, #C084FC 100%)",
+                : "linear-gradient(135deg, var(--mm-primary) 0%, var(--mm-primary-glow) 100%)",
               color: !selectedCount ? "#6B7280" : "#FFFFFF",
               fontWeight: 800,
               fontSize: 13,
               cursor: !selectedCount ? "not-allowed" : "pointer",
-              boxShadow: !selectedCount ? "none" : "0 4px 14px rgba(139, 92, 246,0.35)",
+              boxShadow: !selectedCount ? "none" : "0 4px 14px color-mix(in srgb, var(--mm-primary) 35.0%, transparent)",
               transition: "all 0.2s cubic-bezier(0.23, 1, 0.32, 1)",
             }}
           >

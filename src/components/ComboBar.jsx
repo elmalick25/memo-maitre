@@ -9,11 +9,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { COMBO_STEPS, comboMultiplier, comboLabel } from "../lib/xpEngine";
 import { haptic } from "../lib/haptics";
 import { isLiteMode } from "../lib/perfTier";
+import { colorMix } from "../lib/colorMix";
 
 const TIER_COLORS = [
   { min: 20, color: "#F59E0B", glow: "0 0 22px rgba(245,158,11,0.55)", tag: "EN FUSION" },
-  { min: 10, color: "#A855F7", glow: "0 0 18px rgba(168,85,247,0.5)",  tag: "EN FEU" },
-  { min: 5,  color: "#8B5CF6", glow: "0 0 14px rgba(139, 92, 246,0.45)", tag: "LANCÉ" },
+  { min: 10, color: "var(--mm-primary)", glow: "0 0 18px color-mix(in srgb, var(--mm-primary) 50.0%, transparent)",  tag: "EN FEU" },
+  { min: 5,  color: "var(--mm-primary)", glow: "0 0 14px color-mix(in srgb, var(--mm-primary) 45.0%, transparent)", tag: "LANCÉ" },
   { min: 3,  color: "#10B981", glow: "0 0 10px rgba(16,185,129,0.4)",  tag: "SÉRIE" },
 ];
 
@@ -85,7 +86,7 @@ export default function ComboBar({ combo = 0, theme = {}, compact = false, hapti
               height: "100%",
               width: `${pct}%`,
               borderRadius: 3,
-              background: `linear-gradient(90deg, ${color}, ${color}99)`,
+              background: `linear-gradient(90deg, ${color}, ${colorMix(color, 60)})`,
               transition: "width .35s ease, background .3s ease",
             }}
           />

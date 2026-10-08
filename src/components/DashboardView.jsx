@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import HoloCard from "./HoloCard";
 import MobileHomeV2 from "./MobileHomeV2";
 import KnowledgeGraph from "./KnowledgeGraph";
@@ -30,7 +30,6 @@ export default function DashboardView({
   handleEnterFlow,
   hour = 12,
   greeting = "Bonjour",
-  dashNextExam = null,
   dashQuote = "",
   dashQuoteLoading = false,
   loadDailyQuote,
@@ -63,6 +62,14 @@ export default function DashboardView({
   const canReview = dueCount > 0;
 
   // ── MOBILE : Home V2 simplifiée ──
+  const memoNearMissInput = useMemo(() => ({
+    totalXP: powerLevel,
+    questState,
+    sessionBestCombo,
+    bestComboEver,
+    badges: badgeProgressForHooks,
+  }), [powerLevel, questState, sessionBestCombo, bestComboEver, badgeProgressForHooks]);
+
   const isMobileHome = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;
   if (isMobileHome) {
     const dueModules = categories
@@ -88,7 +95,6 @@ export default function DashboardView({
         stats={{
           forme: dashFormIndex,
           mastery: mastPct,
-          nextExamDays: null,
         }}
         quests={(questBoard?.daily || []).map((q) => ({
           id: q.id,
@@ -101,15 +107,7 @@ export default function DashboardView({
         }}
         onOpenQuests={() => setView?.("stats")}
         streakIcon={unlockedStreakIcon(getArchetype(powerLevel).level)}
-        nearMissInput={{
-          totalXP: powerLevel,
-          questState,
-          sessionBestCombo,
-          bestComboEver,
-          badges: badgeProgressForHooks,
-        }}
-        routine={null}
-        onOpenRoutine={() => setView?.("routine")}
+        nearMissInput={memoNearMissInput}
         onOpenVeille={() => setView?.("veille")}
         onOpenPractice={() => setView?.("practice")}
         shortcuts={[]}
@@ -124,16 +122,16 @@ export default function DashboardView({
       pointerEvents: isEnteringFlow ? "none" : "auto"
     }}>
       {/* ══ HERO HEADER BENTO ══════════════════════════════════════════════════════ */}
-      <HoloCard holo={holoLevel} className="dash-hero-card" glowColor={theme?.highlight || "#8B5CF6"} style={{
+      <HoloCard holo={holoLevel} className="dash-hero-card" glowColor={theme?.highlight || "var(--mm-primary)"} style={{
         position: "relative", borderRadius: 20, overflow: "hidden",
-        background: theme?.gradient || "linear-gradient(135deg, #4C1D95, #7C3AED)",
+        background: theme?.gradient || "linear-gradient(135deg, var(--mm-primary-deep), var(--mm-primary))",
         padding: "20px 24px 18px",
         boxShadow: isDarkMode
           ? "0 16px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.07)"
           : "0 12px 40px rgba(76,29,149,0.35)",
       }}>
         {/* Orbes décoratifs */}
-        <div style={{ position: "absolute", top: -60, right: -40, width: 240, height: 240, borderRadius: "50%", background: "radial-gradient(circle, rgba(139,92,246,0.25) 0%, transparent 70%)", pointerEvents: "none", animation: "orb1 8s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", top: -60, right: -40, width: 240, height: 240, borderRadius: "50%", background: "radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 25.0%, transparent) 0%, transparent 70%)", pointerEvents: "none", animation: "orb1 8s ease-in-out infinite" }} />
         <div style={{ position: "absolute", bottom: -80, left: 60, width: 200, height: 200, borderRadius: "50%", background: "radial-gradient(circle, rgba(192,132,252,0.15) 0%, transparent 70%)", pointerEvents: "none", animation: "orb2 10s ease-in-out infinite" }} />
 
         {/* Ligne supérieure : salutation + forme */}
@@ -144,7 +142,7 @@ export default function DashboardView({
             </div>
             <h1 className="dash-hero-title" style={{ margin: 0, fontSize: "clamp(20px, 3.2vw, 28px)", fontWeight: 800, color: "white", letterSpacing: "-0.6px", lineHeight: 1.1 }}>
               {greeting},{" "}
-              <span style={{ fontWeight: 900, background: "linear-gradient(90deg,#FFFFFF,#DDD6FE)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>El Hadji Malick</span>
+              <span style={{ fontWeight: 900, background: "linear-gradient(90deg,#FFFFFF,color-mix(in srgb, var(--mm-primary) 22%, white))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>El Hadji Malick</span>
             </h1>
             {(() => {
               const archetype = getArchetype(powerLevel);
@@ -162,14 +160,14 @@ export default function DashboardView({
             <br />
 
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-              <div onClick={() => setView?.("phantom")} style={{ background: "rgba(139, 92, 246, 0.15)", border: "1px solid rgba(139, 92, 246, 0.4)", borderRadius: 10, padding: "5px 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", backdropFilter: "blur(10px)" }}>
+              <div onClick={() => setView?.("phantom")} style={{ background: "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)", border: "1px solid color-mix(in srgb, var(--mm-primary) 40.0%, transparent)", borderRadius: 10, padding: "5px 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", backdropFilter: "blur(10px)" }}>
                 <span style={{ fontSize: 13 }}>🕵️</span>
                 <div>
-                  <div style={{ color: "#C084FC", fontSize: 11, fontWeight: 800 }}>Recruteur Fantôme</div>
+                  <div style={{ color: "var(--mm-primary-glow)", fontSize: 11, fontWeight: 800 }}>Recruteur Fantôme</div>
                   <div style={{ color: "white", fontSize: 10, opacity: 0.8 }}>Préparer tes dossiers</div>
                 </div>
               </div>
-              <div onClick={() => setView?.("oracle")} style={{ background: "rgba(139, 92, 246, 0.15)", border: "1px solid rgba(139, 92, 246, 0.4)", borderRadius: 10, padding: "5px 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", backdropFilter: "blur(10px)" }}>
+              <div onClick={() => setView?.("oracle")} style={{ background: "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)", border: "1px solid color-mix(in srgb, var(--mm-primary) 40.0%, transparent)", borderRadius: 10, padding: "5px 10px", display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer", backdropFilter: "blur(10px)" }}>
                 <span style={{ fontSize: 13 }}>🔮</span>
                 <div>
                   <div style={{ color: "#C4B5FD", fontSize: 11, fontWeight: 800 }}>Tech Oracle</div>
@@ -189,12 +187,6 @@ export default function DashboardView({
               <div style={{ fontSize: 18, fontWeight: 900, color: "#FCD34D", lineHeight: 1 }}>{stats.streak}</div>
               <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginTop: 3 }}>{unlockedStreakIcon(getArchetype(powerLevel).level)} Jours</div>
             </div>
-            {dashNextExam && (
-              <div style={{ background: dashNextExam.daysLeft <= 7 ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)", backdropFilter: "blur(12px)", borderRadius: 12, padding: "8px 14px", textAlign: "center", border: dashNextExam.daysLeft <= 7 ? "1px solid rgba(239,68,68,0.5)" : "1px solid rgba(255,255,255,0.12)" }}>
-                <div style={{ fontSize: 18, fontWeight: 900, color: dashNextExam.daysLeft <= 7 ? "#F87171" : "#C084FC", lineHeight: 1 }}>J-{dashNextExam.daysLeft}</div>
-                <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 1, marginTop: 3, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dashNextExam.name}</div>
-              </div>
-            )}
           </div>
         </div>
 
@@ -289,7 +281,7 @@ export default function DashboardView({
               }
             }}
             className="hov"
-            style={{ padding: 16, borderRadius: 16, background: `linear-gradient(135deg, ${theme?.highlight || "#8B5CF6"}, color-mix(in srgb, ${theme?.highlight || "#8B5CF6"} 50%, transparent))`, color: "white", border: "none", textAlign: "left", cursor: "pointer" }}
+            style={{ padding: 16, borderRadius: 16, background: `linear-gradient(135deg, ${theme?.highlight || "var(--mm-primary)"}, color-mix(in srgb, ${theme?.highlight || "var(--mm-primary)"} 50%, transparent))`, color: "white", border: "none", textAlign: "left", cursor: "pointer" }}
           >
             <div style={{ fontSize: 20, fontWeight: 800 }}>{reco.icon} {reco.label}</div>
             <div style={{ fontSize: 13, opacity: 0.9, marginTop: 4 }}>{reco.reason}</div>
@@ -299,10 +291,10 @@ export default function DashboardView({
 
       {/* Mode Focus ou Mission du Jour */}
       {dashFocusMode ? (
-        <div className="dash-widget-card" style={{ background: isDarkMode ? "rgba(124,58,237,0.12)" : "#FAF5FF", borderRadius: 24, padding: "28px 32px", border: "2px solid #7C3AED", animation: "fadeUp 0.3s ease" }}>
+        <div className="dash-widget-card" style={{ background: isDarkMode ? "rgba(158, 71, 36,0.12)" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 24, padding: "28px 32px", border: "2px solid var(--mm-primary)", animation: "fadeUp 0.3s ease" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
             <div>
-              <div style={{ fontSize: 18, fontWeight: 900, color: isDarkMode ? "#C084FC" : "#581C87" }}>🎯 Mode Focus</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: isDarkMode ? "var(--mm-primary-glow)" : "#581C87" }}>🎯 Mode Focus</div>
               <div style={{ fontSize: 13, color: theme?.textMuted || "#64748B", marginTop: 2 }}>Fiches urgentes uniquement</div>
             </div>
             <button onClick={() => setDashFocusMode?.(false)} style={{ background: "none", border: `1px solid ${theme?.border || "#E2E8F0"}`, borderRadius: 10, padding: "6px 14px", color: theme?.textMuted || "#64748B", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Quitter</button>
@@ -319,18 +311,18 @@ export default function DashboardView({
               ))
             )}
           </div>
-          <button onClick={() => startReview?.(null, "standard")} className="btn-glow" style={{ padding: "14px 28px", background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
+          <button onClick={() => startReview?.(null, "standard")} className="btn-glow" style={{ padding: "14px 28px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer", fontSize: 15 }}>
             🚀 Lancer révision urgente
           </button>
         </div>
       ) : (
         <>
           {/* Mission du jour */}
-          <HoloCard holo={holoLevel} theme={theme} glowColor={canReview ? "#C084FC" : "#4ADE80"} style={{
+          <HoloCard holo={holoLevel} theme={theme} glowColor={canReview ? "var(--mm-primary-glow)" : "#4ADE80"} style={{
             borderRadius: 24, overflow: "hidden",
             background: isDarkMode ? "linear-gradient(135deg, #0f172a, #111827)" : "linear-gradient(135deg, #f8faff, #ffffff)",
             border: `1px solid ${theme?.border || "#E2E8F0"}`,
-            boxShadow: isDarkMode ? "0 8px 32px rgba(0,0,0,0.3)" : "0 4px 24px rgba(139,92,246,0.08)",
+            boxShadow: isDarkMode ? "0 8px 32px rgba(0,0,0,0.3)" : "0 4px 24px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
           }}>
             {stamina < 20 && (
               <div style={{ padding: '10px 14px', background: '#FEF2F2', color: '#DC2626', borderRadius: 12, border: '1px solid #FCA5A5', fontSize: 13, fontWeight: 700, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -338,12 +330,12 @@ export default function DashboardView({
                 <div>Ton énergie cognitive est basse. Une pause ou une session Lofi serait une bonne idée !</div>
               </div>
             )}
-            <div style={{ height: 4, background: canReview ? "linear-gradient(90deg, #8B5CF6, #C084FC, #C084FC)" : "linear-gradient(90deg, #4ADE80, #34D399)" }} />
+            <div style={{ height: 4, background: canReview ? "linear-gradient(90deg, var(--mm-primary), var(--mm-primary-glow), var(--mm-primary-glow))" : "linear-gradient(90deg, #4ADE80, #34D399)" }} />
             <div className="dash-mission-card" style={{ padding: "28px 28px 24px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: canReview ? "#C084FC" : "#4ADE80", animation: "pulse 2s infinite" }} />
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: canReview ? "var(--mm-primary-glow)" : "#4ADE80", animation: "pulse 2s infinite" }} />
                 <span style={{ fontSize: 12, fontWeight: 800, color: theme?.textMuted || "#64748B", textTransform: "uppercase", letterSpacing: 1.5 }}>Mission du jour</span>
-                <button onClick={() => setDashFocusMode?.(true)} style={{ marginLeft: "auto", background: isDarkMode ? "rgba(139, 92, 246,0.1)" : "#FAF5FF", border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.3)" : "#DDD6FE"}`, borderRadius: 8, padding: "4px 12px", color: "#8B5CF6", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                <button onClick={() => setDashFocusMode?.(true)} style={{ marginLeft: "auto", background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, white)", border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, white)"}`, borderRadius: 8, padding: "4px 12px", color: "var(--mm-primary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                   🎯 Focus
                 </button>
               </div>
@@ -351,8 +343,8 @@ export default function DashboardView({
               {/* Stats principales */}
               <div className="dash-stat-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 16, marginBottom: 24 }}>
                 {[
-                  { val: dueCount, label: "À réviser", sub: `~${estMinutes} min`, color: canReview ? "#C084FC" : "#4ADE80" },
-                  { val: newCards.length, label: "Nouvelles", sub: "à découvrir", color: "#C084FC" },
+                  { val: dueCount, label: "À réviser", sub: `~${estMinutes} min`, color: canReview ? "var(--mm-primary-glow)" : "#4ADE80" },
+                  { val: newCards.length, label: "Nouvelles", sub: "à découvrir", color: "var(--mm-primary-glow)" },
                   { val: masteredCount, label: "Maîtrisées", sub: `${mastPct}% du total`, color: "#34D399" },
                   { val: stats.totalReviews, label: "Total", sub: "révisions vie", color: "#FBBF24" },
                 ].map(({ val, label, sub, color }) => (
@@ -372,14 +364,14 @@ export default function DashboardView({
                   className="dash-flow-btn"
                   style={{
                     width: "100%", padding: "20px",
-                    background: canReview ? "linear-gradient(270deg, #8B5CF6, #7C3AED, #EC4899, #8B5CF6)" : (theme?.inputBg || "#F8FAFC"),
+                    background: canReview ? "linear-gradient(270deg, var(--mm-primary), var(--mm-primary), #EC4899, var(--mm-primary))" : (theme?.inputBg || "#F8FAFC"),
                     backgroundSize: "300% 300%",
                     animation: canReview ? "gradientPulseFlow 4s ease infinite" : "none",
                     color: canReview ? "white" : (theme?.textMuted || "#64748B"),
                     border: "none", borderRadius: 20,
                     cursor: canReview ? "pointer" : "default",
                     opacity: canReview ? 1 : 0.45,
-                    boxShadow: canReview ? "0 10px 40px rgba(124, 58, 237, 0.3)" : "none",
+                    boxShadow: canReview ? "0 10px 40px rgba(158, 71, 36, 0.3)" : "none",
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 8
                   }}
                 >
@@ -408,7 +400,7 @@ export default function DashboardView({
                   <span style={{ fontWeight: 800, color: isDarkMode ? "#F87171" : "#DC2626", fontSize: 14 }}>Risque d'oubli — {dashUrgentCards.length} fiches</span>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={startWeakSpotsSession} title="Points faibles" style={{ padding: "8px 14px", background: "linear-gradient(135deg, #7C3AED, #6D28D9)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                  <button onClick={startWeakSpotsSession} title="Points faibles" style={{ padding: "8px 14px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
                     🎯 Points faibles
                   </button>
                   <button onClick={() => startReview?.(null, "standard", dashUrgentCards)} style={{ padding: "8px 18px", background: "#EF4444", color: "white", border: "none", borderRadius: 10, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
@@ -429,7 +421,7 @@ export default function DashboardView({
 
           {/* Constellation des Connaissances */}
           {categories.length > 0 && (
-            <HoloCard holo={holoLevel} className="dash-widget-card" theme={theme} style={{ background: theme?.cardBg || "#FFFFFF", borderRadius: 20, padding: "22px 24px", border: `1px solid ${theme?.border || "#E2E8F0"}` }} glowColor="#C084FC">
+            <HoloCard holo={holoLevel} className="dash-widget-card" theme={theme} style={{ background: theme?.cardBg || "#FFFFFF", borderRadius: 20, padding: "22px 24px", border: `1px solid ${theme?.border || "#E2E8F0"}` }} glowColor="var(--mm-primary-glow)">
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18 }}>
                 <span style={{ fontSize: 16 }}>⚡</span>
                 <span style={{ fontWeight: 800, color: theme?.text || "#0F172A", fontSize: 15 }}>Constellation des Connaissances</span>

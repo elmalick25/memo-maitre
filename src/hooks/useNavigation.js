@@ -10,6 +10,11 @@ export function useNavigation(initialView = "dashboard") {
   const navigate = useCallback((path, params = {}) => {
     const [view, subView = null] = path.split("/");
     setNavState({ view, subView, params });
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      if (document.documentElement) document.documentElement.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+    }
   }, []);
 
   return { navState, navigate };

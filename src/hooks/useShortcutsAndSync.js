@@ -7,16 +7,10 @@ export default function useShortcutsAndSync({
   revealed = false,
   handleReveal = () => {},
   handleAnswer = () => {},
-  examActive = false,
-  examRevealed = false,
-  setExamRevealed = () => {},
-  handleExamAnswer = () => {},
-  examConfig = {},
   setCmdOpen = () => {},
   setAgentSheetOpen = () => {},
   setShowAgentPanel = () => {},
   MOBILE_MQ = "(max-width: 767.98px)",
-  projects = [],
   categories = [],
   expressions = [],
   storage = null,
@@ -25,51 +19,7 @@ export default function useShortcutsAndSync({
   fullDeepSync = null,
   getFbUser = () => null,
 }) {
-  const [projectConflicts, setProjectConflicts] = useState([]);
   const [manualSyncing, setManualSyncing] = useState(false);
-
-  // ── DÉTECTION DES CONFLITS PROJETS / EXAMENS ─────────────────────────────
-  const detectConflicts = useCallback(() => {
-    const conflicts = [];
-    const getDaysUntil = (d) => {
-      if (!d) return null;
-      return Math.ceil((new Date(d) - new Date()) / (1000 * 60 * 60 * 24));
-    };
-    const examDates = (categories || [])
-      .filter((c) => c.examDate)
-      .map((c) => ({ name: c.name, date: c.examDate, daysLeft: getDaysUntil(c.examDate) }));
-
-    (projects || [])
-      .filter((p) => p.status !== "terminé" && p.dueDate)
-      .forEach((proj) => {
-        const projDays = getDaysUntil(proj.dueDate);
-        if (projDays === null) return;
-        examDates.forEach((exam) => {
-          if (exam.daysLeft === null) return;
-          const diff = Math.abs(projDays - exam.daysLeft);
-          if (diff <= 5 && projDays >= 0 && exam.daysLeft >= 0) {
-            conflicts.push({
-              type: "collision",
-              project: proj.title,
-              exam: exam.name,
-              projectDate: proj.dueDate,
-              examDate: exam.date,
-              severity: diff <= 2 ? "critique" : "avertissement",
-              advice:
-                diff <= 2
-                  ? `⚠️ Rendu "${proj.title}" et examen "${exam.name}" sont à ${diff} jour(s) d'écart ! Avance le projet.`
-                  : `📅 "${proj.title}" (J-${projDays}) et examen "${exam.name}" (J-${exam.daysLeft}) se chevauchent cette semaine.`,
-            });
-          }
-        });
-      });
-    setProjectConflicts(conflicts);
-    return conflicts;
-  }, [projects, categories]);
-
-  useEffect(() => {
-    detectConflicts();
-  }, [projects, categories, detectConflicts]);
 
   // ── SYNCHRONISATION MANUELLE & RÉPARATION ─────────────────────────────────
   const handleManualSync = useCallback(async () => {
@@ -131,14 +81,14 @@ export default function useShortcutsAndSync({
       if (e.altKey && !isNaN(Number(e.key)) && Number(e.key) >= 1 && Number(e.key) <= 9) {
         const navMap = [
           "dashboard",
-          "list",
-          "review",
           "add",
-          "stats",
+          "list",
           "categories",
-          "projects",
-          "badges",
-          "lab",
+          "certifications",
+          "practice",
+          "veille",
+          "opensource",
+          "stats",
         ];
         const targetView = navMap[Number(e.key) - 1];
         if (targetView) {
@@ -162,18 +112,6 @@ export default function useShortcutsAndSync({
         }
       }
 
-      // Raccourcis d'examen
-      if (view === "exam" && examActive) {
-        if (e.code === "Space" && !examRevealed && !isInField && examConfig?.mode !== "qcm") {
-          e.preventDefault();
-          setExamRevealed(true);
-        }
-        if (examRevealed && !isInField && examConfig?.mode !== "qcm") {
-          if (e.key === "1") handleExamAnswer(0);
-          if (e.key === "2") handleExamAnswer(3);
-          if (e.key === "3") handleExamAnswer(5);
-        }
-      }
     };
 
     window.addEventListener("keydown", onKey);
@@ -183,11 +121,6 @@ export default function useShortcutsAndSync({
     revealed,
     handleReveal,
     handleAnswer,
-    examActive,
-    examRevealed,
-    setExamRevealed,
-    handleExamAnswer,
-    examConfig,
     setCmdOpen,
     setAgentSheetOpen,
     setShowAgentPanel,
@@ -196,8 +129,6 @@ export default function useShortcutsAndSync({
   ]);
 
   return {
-    projectConflicts,
-    detectConflicts,
     manualSyncing,
     handleManualSync,
     repairSyncNow,

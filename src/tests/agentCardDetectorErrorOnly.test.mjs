@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const detectorPath = path.resolve('src/useAgentCardDetector.js');
+const detectorPath = new URL('../useAgentCardDetector.js', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const fileContent = fs.readFileSync(detectorPath, 'utf8');
 
 test('useAgentCardDetector — SYSTEM_PROMPT targets exclusively user errors and corrections', () => {

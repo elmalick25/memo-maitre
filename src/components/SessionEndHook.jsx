@@ -11,6 +11,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useMemo } from "react";
 import { computeNearMiss, estimateNextCards } from "../lib/nearMiss";
+import { colorMix } from "../lib/colorMix";
 
 export default function SessionEndHook({
   totalXP = 0,
@@ -22,7 +23,7 @@ export default function SessionEndHook({
   remainingCards = 0,
   onContinue,
   theme = {},
-  accent = "#8B5CF6",
+  accent = "var(--mm-primary)",
   extraCards = 5,
   compact = false, // CHANTIER 20 — mode mobile : CTA en zone du pouce
 }) {
@@ -44,7 +45,7 @@ export default function SessionEndHook({
         marginTop: 22,
         textAlign: "left",
         background: theme.inputBg || "rgba(148,163,184,0.08)",
-        border: `1px solid ${accent}44`,
+        border: `1px solid ${colorMix(accent, 27)}`,
         borderRadius: 20,
         padding: compact ? 14 : 18,
         // CHANTIER 20 — sur mobile on réserve la hauteur du CTA collant afin
@@ -96,9 +97,9 @@ export default function SessionEndHook({
             style={{
               width: "100%", padding: compact ? "18px 20px" : "14px 20px",
               minHeight: compact ? 58 : undefined,
-              boxShadow: compact ? "0 12px 30px rgba(124,58,237,0.45)" : undefined,
+              boxShadow: compact ? "0 12px 30px rgba(158, 71, 36,0.45)" : undefined,
               border: "none", borderRadius: 14,
-              background: `linear-gradient(135deg, ${accent}, #7C3AED)`, color: "white",
+              background: `linear-gradient(135deg, ${accent}, var(--mm-primary))`, color: "white",
               fontWeight: 900, fontSize: 15, cursor: "pointer",
             }}
           >

@@ -7,6 +7,7 @@ import { CARD_TYPES } from "../constants/cardTypes";
 import { safeParseJSON } from "../lib/textUtils";
 import { buildBatchPrompt, layoutBatchCards } from "../lib/aiCardPrompts";
 import { ATOMIC_CARD_RULES } from "../lib/atomicCardRules";
+import { colorMix } from "../lib/colorMix";
 
 export default function AddCardView({
   addForm,
@@ -76,6 +77,25 @@ export default function AddCardView({
   const [addDiagramSvg, setAddDiagramSvg] = useState(null);
   const [addAudioRecording, setAddAudioRecording] = useState(false);
   const [addAudioUrl, setAddAudioUrl] = useState(null);
+
+  // Type de fiche collapsible menu state
+  const [typeMenuOpen, setTypeMenuOpen] = useState(false);
+  const typeMenuRef = useRef(null);
+
+  useEffect(() => {
+    if (!typeMenuOpen) return;
+    const handleClickOutside = (e) => {
+      if (typeMenuRef.current && !typeMenuRef.current.contains(e.target)) {
+        setTypeMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [typeMenuOpen]);
 
   // Templates
   const [addTemplate, setAddTemplate] = useState("standard");
@@ -201,14 +221,13 @@ Traduction : [Traduction courte et naturelle]
 * **Quotidien :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*`;
       } else if (isCode) {
         structureInstructions = `
-⚠️ FICHE DE CODE — STRUCTURE pour "back" :
-⚙️ DÉFINITION : [1-2 phrases]
-💡 USAGE : [Quand l'utiliser]
-💻 EXEMPLE :
-\`\`\`<langage>
-// code bien indenté
-\`\`\`
-⚠️ ATTENTION : [Piège fréquent]`;
+⚠️ FICHE DE CODE — ATOMIQUE (une seule cible, verso ≤ 25 mots) :
+Choisis UN SEUL angle parmi :
+1. Syntaxe / annotation exacte (question directe ou trou à compléter).
+2. Comportement d'un snippet court (≤ 5 lignes, dans le recto) : « Que produit ce code ? ».
+3. Piège d'exécution classique : « Pourquoi ce code échoue-t-il ? ».
+Le verso donne UNIQUEMENT la réponse. Pas de sections Définition/Usage/Exemple/Attention.
+Un éventuel exemple complémentaire va dans "example".`;
       }
 
       const systemPrompt = `Tu es un assistant pédagogique expert pour un étudiant en Licence Informatique à Dakar, Sénégal. Génère UNE fiche de révision en JSON UNIQUEMENT (strictement sans markdown ni backticks autour du json).
@@ -633,16 +652,16 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
           <div style={{ maxWidth: 700, width: "100%", background: "transparent", display: "flex", flexDirection: "column", gap: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
               <h1 style={{ fontWeight: 900, color: theme?.text, margin: 0, fontSize: 40, fontFamily: "'Instrument Serif', Georgia, serif" }}>Deep Focus.</h1>
-              <button onClick={() => setAddZenMode(false)} className="hov" style={{ background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.05)", border: "none", borderRadius: 999, padding: "10px 20px", color: theme?.text, cursor: "pointer", fontWeight: 700 }}>✕ Quitter</button>
+              <button onClick={() => setAddZenMode(false)} className="hov" style={{ background: isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)", border: "none", borderRadius: 999, padding: "10px 20px", color: theme?.text, cursor: "pointer", fontWeight: 700 }}>✕ Quitter</button>
             </div>
             <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ width: "100%", padding: "16px 20px", background: "transparent", border: `1px solid ${theme?.border}`, borderRadius: 16, color: theme?.textMuted, fontWeight: 700, fontSize: 16 }}>
               {catNames.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
-            <input autoFocus value={addForm.front} onChange={e => { setAddForm(f => ({ ...f, front: e.target.value })); if (e.target.value.length > 3) checkDoublon(e.target.value); }} style={{ width: "100%", padding: "24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `2px solid ${theme?.highlight || "#8B5CF6"}40`, borderRadius: 20, color: theme?.highlight || "#8B5CF6", fontSize: 28, fontWeight: 900, outline: "none" }} placeholder="Concept à maîtriser..." />
-            {addDoublonCheck?.duplicate && <div style={{ background: "#F3E8FF", padding: 8, borderRadius: 8, marginBottom: 12, color: "#4C1D95" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
+            <input autoFocus value={addForm.front} onChange={e => { setAddForm(f => ({ ...f, front: e.target.value })); if (e.target.value.length > 3) checkDoublon(e.target.value); }} style={{ width: "100%", padding: "24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `2px solid ${colorMix(theme?.highlight || "var(--mm-primary)", 25)}`, borderRadius: 20, color: theme?.highlight || "var(--mm-primary)", fontSize: 28, fontWeight: 900, outline: "none" }} placeholder="Concept à maîtriser..." />
+            {addDoublonCheck?.duplicate && <div style={{ background: "color-mix(in srgb, var(--mm-primary) 10%, white)", padding: 8, borderRadius: 8, marginBottom: 12, color: "var(--mm-primary-deep)" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
             <textarea value={addForm.back} onChange={e => setAddForm(f => ({ ...f, back: e.target.value }))} style={{ width: "100%", padding: "24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme?.border}`, borderRadius: 20, color: theme?.text, minHeight: 160, fontSize: 18, lineHeight: 1.6, resize: "vertical", outline: "none" }} placeholder="L'explication claire et détaillée..." />
             <input value={addForm.example} onChange={e => setAddForm(f => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "20px 24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme?.border}`, borderRadius: 20, color: theme?.textMuted, fontSize: 16, fontStyle: "italic", outline: "none" }} placeholder="Mise en contexte ou exemple de code..." />
-            <button onClick={() => { handleAdd(); setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,#7C3AED,#8B5CF6)", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10 }}>⚡ Forger la fiche</button>
+            <button onClick={() => { handleAdd(); setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10 }}>⚡ Forger la fiche</button>
           </div>
         </div>
       ) : (
@@ -650,7 +669,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
         <div style={{ animation: "fadeUp 0.4s ease" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
             <div>
-              <h1 style={{ fontSize: 28, fontWeight: 900, color: theme?.highlight || "#8B5CF6", letterSpacing: "-1px" }}>{editingId ? "✏️ Mode Édition" : "⚡ Forge à Fiches"}</h1>
+              <h1 style={{ fontSize: 28, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", letterSpacing: "-1px" }}>{editingId ? "✏️ Mode Édition" : "⚡ Forge à Fiches"}</h1>
               <p style={{ color: theme?.textMuted, fontSize: 14, marginTop: 6 }}>{editingId ? "Ajuste ta fiche." : "Crée, génère en rafale, importe ou analyse une image."}</p>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -661,7 +680,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
 
           {/* Tabs de sous-vue */}
           {!editingId && (
-            <div className="add-tabs-cluster" style={{ display: "flex", gap: 8, marginBottom: 32, background: isDarkMode ? "rgba(15,23,42,0.4)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", padding: 8, borderRadius: 24, border: `1px solid ${theme?.border}`, boxShadow: "0 10px 30px rgba(139,92,246,0.05)", overflowX: "auto" }}>
+            <div className="add-tabs-cluster" style={{ display: "flex", gap: 8, marginBottom: 32, background: isDarkMode ? "rgba(15,23,42,0.4)" : "rgba(255,255,255,0.4)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", padding: 8, borderRadius: 24, border: `1px solid ${theme?.border}`, boxShadow: "0 10px 30px color-mix(in srgb, var(--mm-primary) 5.0%, transparent)", overflowX: "auto" }}>
               {[
                 { id: "single", icon: "✦", label: "Fiche unique" },
                 { id: "chat", icon: "💬", label: "Copilot IA" },
@@ -670,7 +689,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 { id: "file", icon: "📸", label: "Scan OCR" },
                 { id: "quickadd", icon: "⚡", label: "Quick Add" },
               ].map(t => (
-                <button key={t.id} onClick={() => { setAddSubView?.(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "#7C3AED" : theme?.textMuted }}>
+                <button key={t.id} onClick={() => { setAddSubView?.(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "var(--mm-primary)" : theme?.textMuted }}>
                   {t.icon} {t.label}
                 </button>
               ))}
@@ -681,17 +700,17 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
           {addBatchQueue.length > 0 && (
             <div style={{ background: theme?.cardBg, borderRadius: 16, padding: "14px 20px", marginBottom: 20, border: `1px solid ${theme?.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div><span style={{ fontWeight: 800, color: theme?.text }}>{addBatchQueue.length} concepts en file</span> <span style={{ color: theme?.textMuted }}>{addBatchQueue.slice(0, 3).join(', ')}{addBatchQueue.length > 3 ? '...' : ''}</span></div>
-              <button onClick={processBatchQueue} disabled={addBatchRunning} className="hov btn-glow" style={{ background: "linear-gradient(135deg,#8B5CF6,#7C3AED)", color: "white", border: "none", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>{addBatchRunning ? "⏳" : "▶️ Traiter"}</button>
+              <button onClick={processBatchQueue} disabled={addBatchRunning} className="hov btn-glow" style={{ background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>{addBatchRunning ? "⏳" : "▶️ Traiter"}</button>
             </div>
           )}
 
           {/* ========= SINGLE / EDITION ========= */}
           {(addSubView === "single" || editingId) && (
-            <div style={{ background: "linear-gradient(135deg, #7C3AED 0%, #8B5CF6 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "#FAF5FF", fontSize: 13 }}>L'IA s'adapte automatiquement au module sélectionné.</div></div></div>
+            <div style={{ background: "linear-gradient(135deg, var(--mm-primary) 0%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>L'IA s'adapte automatiquement au module sélectionné.</div></div></div>
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
                 <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
-                <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "#7C3AED", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
+                <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "var(--mm-primary)", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
               </div>
             </div>
           )}
@@ -699,10 +718,10 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
           {/* ========= CHAT COPILOT ========= */}
           {addSubView === "chat" && !editingId && (
             <div style={{ display: "flex", flexDirection: "column", height: "65vh", minHeight: 500, background: theme?.cardBg, borderRadius: 24, border: `1px solid ${theme?.border}`, overflow: "hidden", marginBottom: 32 }}>
-              <div style={{ padding: "20px 24px", background: "linear-gradient(135deg, #4C1D95 0%, #8B5CF6 100%)", color: "white", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ padding: "20px 24px", background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary) 100%)", color: "white", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontWeight: 900, fontSize: 18 }}>💬 Copilot de Fiches</div>
-                  <div style={{ fontSize: 13, color: "#FAF5FF" }}>Discute pour forger ou ajuster tes fiches</div>
+                  <div style={{ fontSize: 13, color: "color-mix(in srgb, var(--mm-primary) 4%, white)" }}>Discute pour forger ou ajuster tes fiches</div>
                 </div>
                 <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "8px 12px", background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, outline: "none" }}>
                   {catNames.map(c => <option key={c} value={c} style={{ color: "#000" }}>{c}</option>)}
@@ -712,7 +731,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
               <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
                 {chatToCardMessages.map((msg, idx) => (
                   <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: msg.role === "user" ? "flex-end" : "flex-start", gap: 8 }}>
-                    <div style={{ maxWidth: "80%", padding: "14px 18px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "linear-gradient(135deg, #7C3AED, #8B5CF6)" : theme?.inputBg, color: msg.role === "user" ? "white" : theme?.text, fontSize: 14, lineHeight: 1.5, border: msg.role === "user" ? "none" : `1px solid ${theme?.border}` }}>
+                    <div style={{ maxWidth: "80%", padding: "14px 18px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))" : theme?.inputBg, color: msg.role === "user" ? "white" : theme?.text, fontSize: 14, lineHeight: 1.5, border: msg.role === "user" ? "none" : `1px solid ${theme?.border}` }}>
                       {msg.text}
                     </div>
 
@@ -728,7 +747,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                                 <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
                               </div>
                               {card.example && <div style={{ padding: "8px 12px", background: theme?.inputBg, borderRadius: 8, fontSize: 12, color: theme?.text, fontStyle: "italic", borderLeft: `3px solid ${theme?.highlight}`, marginTop: 12 }}>{card.example}</div>}
-                              <button onClick={() => saveChatCard(card)} className="hov" style={{ marginTop: 12, width: "100%", padding: "8px", background: theme?.inputBg, color: theme?.highlight, border: `1px solid ${theme?.highlight}40`, borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>💾 Sauver</button>
+                              <button onClick={() => saveChatCard(card)} className="hov" style={{ marginTop: 12, width: "100%", padding: "8px", background: theme?.inputBg, color: theme?.highlight, border: `1px solid ${colorMix(theme?.highlight, 25)}`, borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>💾 Sauver</button>
                             </div>
                           ))}
                         </div>
@@ -743,22 +762,22 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
 
               <div style={{ padding: "16px 24px", background: theme?.cardBg, borderTop: `1px solid ${theme?.border}`, display: "flex", gap: 12 }}>
                 <input value={chatToCardInput} onChange={e => setChatToCardInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSendChatToCard()} placeholder="Demande tes fiches à l'IA..." style={{ flex: 1, padding: "14px 20px", background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 16, color: theme?.text, fontSize: 15, outline: "none" }} />
-                <button onClick={handleSendChatToCard} disabled={chatToCardLoading || !chatToCardInput.trim()} className="btn-glow hov" style={{ padding: "14px 24px", background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer", opacity: chatToCardLoading || !chatToCardInput.trim() ? 0.5 : 1 }}>{chatToCardLoading ? "⏳" : "Envoyer"}</button>
+                <button onClick={handleSendChatToCard} disabled={chatToCardLoading || !chatToCardInput.trim()} className="btn-glow hov" style={{ padding: "14px 24px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer", opacity: chatToCardLoading || !chatToCardInput.trim() ? 0.5 : 1 }}>{chatToCardLoading ? "⏳" : "Envoyer"}</button>
               </div>
             </div>
           )}
 
           {/* ========= BATCH CANVAS ========= */}
           {addSubView === "batch" && !editingId && (
-            <div style={{ background: "linear-gradient(135deg, #1A0800 0%, #6D28D9 50%, #7C3AED 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "#FAF5FF", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
+            <div style={{ background: "linear-gradient(135deg, #1A0800 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
               <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
-                <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "14px 16px", background: "#4C1D95", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>
+                <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "14px 16px", background: "var(--mm-primary-deep)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>
                   {catNames.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Annotations Spring Boot"...' />
-                <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "#4C1D95", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
-                <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "#7C3AED", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
+                <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "var(--mm-primary-deep)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
+                <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "var(--mm-primary)", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
               </div>
 
               {showBatchPreview && batchPreview.length > 0 && (
@@ -787,19 +806,19 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
           {/* ========= FROM TEXT ========= */}
           {addSubView === "text" && !editingId && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 20, marginBottom: 32 }}>
-              <div style={{ background: "linear-gradient(135deg, #4C1D95 0%, #6D28D9 50%, #8B5CF6 100%)", borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column" }}>
+              <div style={{ background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column" }}>
                 <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
                   <span style={{ fontSize: 32 }}>📄</span>
                   <div>
                     <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Source & Forge</div>
-                    <div style={{ color: "#FAF5FF", fontSize: 13 }}>Colle un texte ou cours complet</div>
+                    <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Colle un texte ou cours complet</div>
                   </div>
                 </div>
                 <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 200, resize: "vertical" }} placeholder="Colle ton cours complet ici..." />
-                <button onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ marginTop: 12, padding: "12px 20px", background: "white", color: "#4C1D95", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "Tout analyser"}</button>
+                <button onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ marginTop: 12, padding: "12px 20px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "Tout analyser"}</button>
               </div>
 
-              <div onDragOver={(e) => { e.preventDefault(); setDragOverForge(true); }} onDragLeave={() => setDragOverForge(false)} onDrop={handleDropToForge} style={{ background: dragOverForge ? `${theme?.highlight}20` : theme?.cardBg, border: `2px dashed ${theme?.border}`, borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column", minHeight: 280 }}>
+              <div onDragOver={(e) => { e.preventDefault(); setDragOverForge(true); }} onDragLeave={() => setDragOverForge(false)} onDrop={handleDropToForge} style={{ background: dragOverForge ? `${colorMix(theme?.highlight, 13)}` : theme?.cardBg, border: `2px dashed ${theme?.border}`, borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column", minHeight: 280 }}>
                 <div style={{ fontWeight: 900, color: theme?.text, fontSize: 18, marginBottom: 8 }}>⚒️ La Forge</div>
                 <p style={{ color: theme?.textMuted, fontSize: 13 }}>Glisse un extrait de texte ici pour créer une fiche instantanément.</p>
                 {dropForgeLoading && <div style={{ color: theme?.highlight, fontWeight: 700 }}>⏳ Forgeage en cours...</div>}
@@ -809,12 +828,12 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
 
           {/* ========= OCR SCAN ========= */}
           {addSubView === "file" && !editingId && (
-            <div style={{ background: "linear-gradient(135deg, #4C1D95 0%, #7C3AED 50%, #8B5CF6 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
+            <div style={{ background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
               <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
                 <span style={{ fontSize: 32 }}>📸</span>
                 <div>
                   <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Scan → Fiches</div>
-                  <div style={{ color: "#FAF5FF", fontSize: 13 }}>Prends en photo tes notes de cours</div>
+                  <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Prends en photo tes notes de cours</div>
                 </div>
               </div>
               {!addForm.imageUrl ? (
@@ -826,7 +845,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 <div>
                   <img src={addForm.imageUrl} alt="aperçu" style={{ maxHeight: 200, borderRadius: 12, marginBottom: 12 }} />
                   <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={handleVisionAI} disabled={visionScanLoading} style={{ padding: "12px 24px", background: "white", color: "#4C1D95", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer" }}>{visionScanLoading ? "⏳ Extraction..." : "📸 Extraire les fiches"}</button>
+                    <button onClick={handleVisionAI} disabled={visionScanLoading} style={{ padding: "12px 24px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer" }}>{visionScanLoading ? "⏳ Extraction..." : "📸 Extraire les fiches"}</button>
                     <button onClick={() => setAddForm(f => ({ ...f, imageUrl: null }))} style={{ padding: "12px 20px", background: "rgba(255,255,255,0.2)", color: "white", border: "none", borderRadius: 12 }}>Changer</button>
                   </div>
                 </div>
@@ -860,30 +879,125 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
             {/* Colonne gauche : Éditeur */}
             <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
               <div>
-                <select value={addForm.category} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ padding: "10px 16px", background: (theme?.highlight || "#8B5CF6") + "15", border: `1px solid ${(theme?.highlight || "#8B5CF6")}40`, borderRadius: 12, fontSize: 13, fontWeight: 800, color: theme?.highlight || "#8B5CF6", cursor: "pointer", outline: "none" }}>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
+                <select value={addForm.category} onChange={(e) => setAddForm((f) => ({ ...f, category: e.target.value }))} style={{ padding: "10px 16px", background: (theme?.highlight || "var(--mm-primary)") + "15", border: `1px solid ${colorMix((theme?.highlight || "var(--mm-primary)"), 25)}`, borderRadius: 12, fontSize: 13, fontWeight: 800, color: theme?.highlight || "var(--mm-primary)", cursor: "pointer", outline: "none" }}>{catNames.map((c) => <option key={c} value={c}>{c}</option>)}</select>
               </div>
 
               <div style={{ position: "relative" }}>
-                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "#8B5CF6", letterSpacing: 1, zIndex: 2 }}>RECTO <span style={{ color: "#EF4444" }}>*</span></label>
+                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", letterSpacing: 1, zIndex: 2 }}>RECTO <span style={{ color: "#EF4444" }}>*</span></label>
                 <input autoFocus value={addForm.front} onChange={(e) => { setAddForm((f) => ({ ...f, front: e.target.value })); if (e.target.value.length > 3 && !editingId) checkDoublon(e.target.value); }} style={{ width: "100%", padding: "18px 54px 18px 20px", background: theme?.cardBg, border: `2px solid ${theme?.border}`, borderRadius: 16, fontSize: 16, color: theme?.text, fontWeight: 700, outline: "none" }} placeholder="Le concept à mémoriser..." />
                 <button onClick={() => listening === "front" ? stopVoice() : startVoice("front")} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: theme?.inputBg, border: `1px solid ${theme?.border}`, cursor: "pointer", fontSize: 18, padding: 8, borderRadius: 10, color: listening === "front" ? "#EF4444" : theme?.textMuted }}>🎙️</button>
-                {addDoublonCheck?.duplicate && <div style={{ marginTop: 8, background: "#F3E8FF", padding: 8, borderRadius: 8, color: "#4C1D95", fontSize: 13 }}>⚠️ Doublon possible : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
+                {addDoublonCheck?.duplicate && <div style={{ marginTop: 8, background: "color-mix(in srgb, var(--mm-primary) 10%, white)", padding: 8, borderRadius: 8, color: "var(--mm-primary-deep)", fontSize: 13 }}>⚠️ Doublon possible : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
               </div>
 
-              {/* Type de fiche */}
-              <div style={{ background: theme?.cardBg, padding: "10px 14px", borderRadius: 14, border: `1px solid ${theme?.border}` }}>
-                <div style={{ fontSize: 10, fontWeight: 900, color: theme?.textMuted, letterSpacing: 1.2, marginBottom: 8 }}>TYPE DE FICHE</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {CARD_TYPES.map(t => (
-                    <button key={t.id} type="button" onClick={() => setAddForm(f => ({ ...f, type: t.id }))} style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid ${addForm.type === t.id ? theme?.highlight : theme?.border}`, background: addForm.type === t.id ? `${theme?.highlight}18` : "transparent", color: addForm.type === t.id ? theme?.highlight : theme?.textMuted, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                      {t.icon} {t.label}
+              {/* Type de fiche avec sélecteur compact déroulant et refermeture automatique */}
+              {(() => {
+                const currentType = CARD_TYPES.find(t => t.id === (addForm.type || "qa")) || CARD_TYPES[0];
+                return (
+                  <div ref={typeMenuRef} style={{ background: theme?.cardBg, padding: "10px 14px", borderRadius: 14, border: `1px solid ${typeMenuOpen ? (theme?.highlight || "var(--mm-primary)") : (theme?.border || "rgba(255,255,255,0.1)")}`, position: "relative", transition: "all 0.2s ease" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 900, color: theme?.textMuted, letterSpacing: 1.2 }}>TYPE DE FICHE</div>
+                      {typeMenuOpen && (
+                        <span style={{ fontSize: 10, color: theme?.highlight || "var(--mm-primary)", fontWeight: 800 }}>
+                          Sélectionnez pour fermer
+                        </span>
+                      )}
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setTypeMenuOpen(prev => !prev)}
+                      style={{
+                        width: "100%",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "8px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${typeMenuOpen ? (theme?.highlight || "var(--mm-primary)") : (isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.1)")}`,
+                        background: typeMenuOpen
+                          ? (isDarkMode ? "rgba(37,99,235,0.18)" : "rgba(37,99,235,0.08)")
+                          : (isDarkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)"),
+                        color: theme?.text,
+                        cursor: "pointer",
+                        fontWeight: 800,
+                        fontSize: 13,
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                        <span style={{ fontSize: 16 }}>{currentType.icon}</span>
+                        <span style={{ color: theme?.highlight || "var(--mm-primary)", fontWeight: 900 }}>{currentType.label}</span>
+                        <span style={{ fontSize: 11, color: theme?.textMuted, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          — {currentType.desc}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: 11, color: theme?.textMuted, transition: "transform 0.2s ease", transform: typeMenuOpen ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0, marginLeft: 8 }}>
+                        ▼
+                      </span>
                     </button>
-                  ))}
-                </div>
-              </div>
+
+                    {typeMenuOpen && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          top: "calc(100% + 6px)",
+                          left: 0,
+                          right: 0,
+                          zIndex: 60,
+                          background: isDarkMode ? "rgba(15, 23, 42, 0.97)" : "rgba(255, 255, 255, 0.98)",
+                          backdropFilter: "blur(20px)",
+                          WebkitBackdropFilter: "blur(20px)",
+                          borderRadius: 14,
+                          padding: "10px",
+                          border: `1px solid ${theme?.highlight || "var(--mm-primary)"}`,
+                          boxShadow: isDarkMode ? "0 16px 36px rgba(0,0,0,0.6)" : "0 12px 30px rgba(37,99,235,0.18)",
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+                          gap: 6,
+                          animation: "fadeUp 0.18s ease-out forwards"
+                        }}
+                      >
+                        {CARD_TYPES.map(t => {
+                          const isSelected = (addForm.type || "qa") === t.id;
+                          return (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => {
+                                setAddForm(f => ({ ...f, type: t.id }));
+                                setTypeMenuOpen(false); // ⚡ Refermeture automatique instantanée !
+                              }}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "8px 10px",
+                                borderRadius: 10,
+                                border: `1px solid ${isSelected ? (theme?.highlight || "var(--mm-primary)") : "transparent"}`,
+                                background: isSelected
+                                  ? (isDarkMode ? "rgba(37,99,235,0.28)" : "rgba(37,99,235,0.12)")
+                                  : (isDarkMode ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)"),
+                                color: isSelected ? (theme?.highlight || "var(--mm-primary)") : theme?.text,
+                                fontSize: 12,
+                                fontWeight: isSelected ? 900 : 700,
+                                cursor: "pointer",
+                                textAlign: "left",
+                                transition: "all 0.15s ease"
+                              }}
+                            >
+                              <span style={{ fontSize: 14 }}>{t.icon}</span>
+                              <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div style={{ position: "relative" }}>
-                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "#8B5CF6", letterSpacing: 1, zIndex: 2 }}>VERSO <span style={{ color: "#EF4444" }}>*</span></label>
+                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", letterSpacing: 1, zIndex: 2 }}>VERSO <span style={{ color: "#EF4444" }}>*</span></label>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8, padding: "6px 8px", background: theme?.inputBg, borderRadius: 10, border: `1px solid ${theme?.border}` }}>
                   {[
                     { label: "Titre", icon: "H", insert: () => insertMarkdown("back", "## ", "", "Titre") },
@@ -898,14 +1012,14 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 </div>
                 <textarea ref={backTextareaRef} value={addForm.back} onChange={(e) => setAddForm((f) => ({ ...f, back: e.target.value }))} style={{ width: "100%", padding: "20px", background: theme?.cardBg, border: `2px solid ${theme?.border}`, borderRadius: 16, fontSize: 15, color: theme?.text, minHeight: 160, resize: "vertical", outline: "none" }} placeholder="L'explication claire..." />
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: isDarkMode ? "rgba(139,92,246,0.15)" : "#F3E8FF", color: "#8B5CF6", border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🤖 Expliquer avec l'IA</button>
-                  <button onClick={generateMetaphore} disabled={addMetaphoreLoading} style={{ background: isDarkMode ? "rgba(139,92,246,0.15)" : "#F3E8FF", color: "#8B5CF6", border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🌱 Métaphore</button>
+                  <button onClick={() => handleMicroAI("back")} disabled={aiLoading} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, white)", color: "var(--mm-primary)", border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🤖 Expliquer avec l'IA</button>
+                  <button onClick={generateMetaphore} disabled={addMetaphoreLoading} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, white)", color: "var(--mm-primary)", border: "none", borderRadius: 10, padding: "6px 12px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>🌱 Métaphore</button>
                 </div>
-                {addMetaphoreText && <div style={{ marginTop: 8, padding: 10, background: "#FAF5FF", borderRadius: 8, fontSize: 13, fontStyle: "italic", color: "#4C1D95" }}>{addMetaphoreText}</div>}
+                {addMetaphoreText && <div style={{ marginTop: 8, padding: 10, background: "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 8, fontSize: 13, fontStyle: "italic", color: "var(--mm-primary-deep)" }}>{addMetaphoreText}</div>}
               </div>
 
               <div style={{ position: "relative" }}>
-                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "#8B5CF6", letterSpacing: 1, zIndex: 2 }}>EXEMPLE</label>
+                <label style={{ position: "absolute", top: -10, left: 16, background: theme?.bg, padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", letterSpacing: 1, zIndex: 2 }}>EXEMPLE</label>
                 <textarea ref={exampleTextareaRef} value={addForm.example} onChange={(e) => setAddForm((f) => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "16px", background: theme?.cardBg, border: `2px solid ${theme?.border}`, borderRadius: 16, fontSize: 14, color: theme?.text, outline: "none", minHeight: 70, resize: "vertical" }} placeholder="Exemple pratique ou code..." />
               </div>
 
@@ -928,7 +1042,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
               )}
 
               <div style={{ display: "flex", gap: 12 }}>
-                <button onClick={handleAdd} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, #7C3AED, #8B5CF6)", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 900, cursor: "pointer", boxShadow: "0 10px 30px rgba(139,92,246,0.3)" }}>{editingId ? "💾 Mettre à jour" : "⚡ Forger la fiche"}</button>
+                <button onClick={handleAdd} disabled={!addForm.front.trim() || !addForm.back.trim()} style={{ flex: 1, padding: "18px 24px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 16, fontSize: 16, fontWeight: 900, cursor: "pointer", boxShadow: "0 10px 30px color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" }}>{editingId ? "💾 Mettre à jour" : "⚡ Forger la fiche"}</button>
                 {!editingId && <button onClick={() => setAddForm(f => ({ ...f, front: "", back: "", example: "", imageUrl: null }))} style={{ padding: "18px 24px", background: theme?.cardBg, color: theme?.textMuted, border: `1px solid ${theme?.border}`, borderRadius: 16, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>Effacer</button>}
               </div>
             </div>
@@ -936,16 +1050,16 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
             {/* Colonne droite : Live Preview */}
             <div style={{ position: "sticky", top: 100, display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: theme?.textMuted, letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", paddingLeft: 12 }}>LIVE PREVIEW</div>
-              <HoloCard theme={theme} glowColor={theme?.highlight} style={{ background: theme?.cardBg, border: `1px solid ${theme?.border}`, borderRadius: 32, padding: "36px", boxShadow: "0 30px 60px rgba(139,92,246,0.05)" }}>
+              <HoloCard theme={theme} glowColor={theme?.highlight} style={{ background: theme?.cardBg, border: `1px solid ${theme?.border}`, borderRadius: 32, padding: "36px", boxShadow: "0 30px 60px color-mix(in srgb, var(--mm-primary) 5.0%, transparent)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ background: (theme?.highlight || "#8B5CF6") + "15", color: theme?.highlight, padding: "6px 14px", borderRadius: 10, fontSize: 12, fontWeight: 800, border: `1px solid ${(theme?.highlight || "#8B5CF6")}40` }}>{addForm.category || "Catégorie"}</span>
-                  <span style={{ background: "rgba(168,85,247,0.15)", color: "#A855F7", padding: "6px 14px", borderRadius: 10, fontSize: 11, fontWeight: 800 }}>Niveau 0</span>
+                  <span style={{ background: (theme?.highlight || "var(--mm-primary)") + "15", color: theme?.highlight, padding: "6px 14px", borderRadius: 10, fontSize: 12, fontWeight: 800, border: `1px solid ${colorMix((theme?.highlight || "var(--mm-primary)"), 25)}` }}>{addForm.category || "Catégorie"}</span>
+                  <span style={{ background: "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)", color: "var(--mm-primary)", padding: "6px 14px", borderRadius: 10, fontSize: 11, fontWeight: 800 }}>Niveau 0</span>
                 </div>
 
                 <div style={{ fontSize: 28, fontWeight: 900, color: addForm.front ? theme?.text : theme?.textMuted, marginBottom: 20 }}>{addForm.front || "Le concept apparaîtra ici..."}</div>
                 {addForm.imageUrl && <img src={addForm.imageUrl} alt="media" style={{ width: "100%", borderRadius: 16, marginBottom: 16, border: `1px solid ${theme?.border}` }} />}
 
-                <div style={{ background: isDarkMode ? "rgba(255,255,255,0.03)" : "#FAF5FF", border: `1px solid ${theme?.border}`, borderRadius: 24, padding: "24px" }}>
+                <div style={{ background: isDarkMode ? "rgba(255,255,255,0.03)" : "color-mix(in srgb, var(--mm-primary) 4%, white)", border: `1px solid ${theme?.border}`, borderRadius: 24, padding: "24px" }}>
                   <div style={{ color: theme?.text, lineHeight: 1.6, fontSize: 14 }}>
                     <RichText content={addForm.back || "*Le verso apparaîtra ici…*"} style={{ color: theme?.text }} />
                   </div>
@@ -960,7 +1074,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
               {/* Import CSV */}
               <div style={{ background: theme?.cardBg, border: `1px solid ${theme?.border}`, borderRadius: 16, padding: "20px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 13, fontWeight: 700, color: theme?.textMuted }}>📤 Import en masse (CSV)</span><button onClick={() => setShowImport(!showImport)} style={{ background: theme?.inputBg, color: theme?.highlight, border: "none", padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{showImport ? "Fermer" : "Ouvrir"}</button></div>
-                {showImport && <div style={{ marginTop: 12 }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "12px", background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 12, fontSize: 12, color: theme?.text, minHeight: 80 }} placeholder="front,back,category,example..." /><button onClick={handleImport} style={{ width: "100%", padding: "10px", background: "#7C3AED", color: "white", border: "none", borderRadius: 10, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
+                {showImport && <div style={{ marginTop: 12 }}><textarea value={importText} onChange={(e) => setImportText(e.target.value)} style={{ width: "100%", padding: "12px", background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 12, fontSize: 12, color: theme?.text, minHeight: 80 }} placeholder="front,back,category,example..." /><button onClick={handleImport} style={{ width: "100%", padding: "10px", background: "var(--mm-primary)", color: "white", border: "none", borderRadius: 10, fontWeight: 700, marginTop: 8, cursor: "pointer" }}>Importer</button></div>}
               </div>
             </div>
           </div>

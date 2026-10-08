@@ -5,7 +5,6 @@ import path from 'node:path';
 
 const mobileHomePath = path.resolve('src/components/MobileHomeV2.jsx');
 const memoMasterPath = path.resolve('src/MemoMaster.jsx');
-const routineTrackerPath = path.resolve('src/components/DailyRoutineTracker.jsx');
 
 test('MobileHomeV2 — no inline routine alert card or inline quest list', () => {
   const fileContent = fs.readFileSync(mobileHomePath, 'utf8');
@@ -40,31 +39,12 @@ test('MobileHomeV2 — CTA button has modern structured badge, title, pills, and
   );
 });
 
-test('DailyRoutineTracker — renders onBack button when onBack prop is provided', () => {
-  const fileContent = fs.readFileSync(routineTrackerPath, 'utf8');
-  assert.equal(
-    fileContent.includes('onBack'),
-    true,
-    'DailyRoutineTracker doit gérer la prop onBack'
-  );
-  assert.equal(
-    fileContent.includes('← Accueil'),
-    true,
-    'DailyRoutineTracker doit afficher le bouton ← Accueil quand onBack est fourni'
-  );
-});
-
-test('MemoMaster — renders dedicated quests view and passes onBack to routine', () => {
+test('MemoMaster — renders dedicated quests view', () => {
   const fileContent = fs.readFileSync(memoMasterPath, 'utf8');
   assert.equal(
     fileContent.includes('view === "quests"'),
     true,
     'MemoMaster doit supporter la vue dédiée view === quests'
-  );
-  assert.equal(
-    fileContent.includes('onBack={() => setView("dashboard")}'),
-    true,
-    'MemoMaster doit passer onBack={() => setView("dashboard")} à DailyRoutineTracker'
   );
 });
 

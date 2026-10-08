@@ -8,14 +8,14 @@ import {
 
 test('getStructureInstructions — détecte les fiches anglais', () => {
   const instructions = getStructureInstructions({ category: '🇬🇧 Anglais' });
-  assert.ok(instructions.includes('RÉTRO-INGÉNIERIE SÉMANTIQUE'));
-  assert.ok(instructions.includes('Décomposition & Transition Métaphorique'));
+  assert.ok(instructions.includes('Vrai sens'));
+  assert.ok(instructions.includes('Mini-dialogue'));
 });
 
 test('getStructureInstructions — détecte les fiches code', () => {
   const instructions = getStructureInstructions({ category: '☕ Java / Spring Boot' });
-  assert.ok(instructions.includes('DÉFINITION :'));
-  assert.ok(instructions.includes('EXEMPLE :'));
+  assert.ok(instructions.includes('FICHE DE CODE'));
+  assert.ok(instructions.includes('Règles de rédaction :'));
 });
 
 test('getStructureInstructions — détecte le type tableau', () => {
@@ -44,3 +44,4 @@ test('layoutBatchCards — assigne des coordonnées spatiales et des liens', () 
   assert.equal(links[0].source, layouted[0].id);
   assert.equal(links[0].target, layouted[1].id);
 });
+

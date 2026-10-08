@@ -1,6 +1,8 @@
 import { ATOMIC_CARD_RULES } from "./atomicCardRules.js";
 import { SPEECH_HYGIENE_PROMPT } from "../utils/speechCleanup.js";
 
+import { ENGLISH_CARD_STRUCTURE_INSTRUCTION } from "./englishCardEngine.js";
+
 export function getStructureInstructions({ category = "", formType = "qa" }) {
   const cat = String(category).toLowerCase();
   const isEnglish = cat.includes("anglais") || cat.includes("english") || category.includes("🇬🇧");
@@ -14,52 +16,52 @@ export function getStructureInstructions({ category = "", formType = "qa" }) {
     cat.includes("code") ||
     cat.includes("python") ||
     cat.includes("lisp");
+  const isConcept = formType === "concept" || cat.includes("archi") || cat.includes("système");
+  const isFormula = formType === "formula" || cat.includes("math") || cat.includes("physique");
   const isTable = formType === "table";
 
   if (isEnglish) {
+    return ENGLISH_CARD_STRUCTURE_INSTRUCTION;
+  }
+
+  if (isConcept) {
     return `
-⚠️ POUR CHAQUE FICHE D'ANGLAIS, "back" DOIT suivre EXACTEMENT la RÉTRO-INGÉNIERIE SÉMANTIQUE (mêmes titres Markdown, même ordre, concis ~30-40 lignes max) :
+⚠️ POUR CHAQUE FICHE DE TYPE CONCEPT TECHNIQUE :
+L'objectif est la rétention atomique immédiate, PAS un mini-cours.
+Chaque fiche DOIT cibler UN SEUL angle parmi :
+1. L'INTUITION / PROBLÈME : Quel problème concret ce concept résout-il ?
+2. L'INVARIANT / MÉCANISME : Quelle est la règle ou la transition d'état clé ?
+3. LE TRADE-OFF / LIMITE : Quel est son coût ou son piège majeur ?
 
-Traduction : [Traduction courte et naturelle]
-
-### ⚙️ 1. Décomposition & Transition Métaphorique
-* **[Mot 1] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
-* **[Mot 2] :** Sens physique : *[Sens brut]* ➔ **Glissement sémantique :** [Pourquoi cela signifie ce sens figuré]
-* **Le Modèle Mental :** [En 1 phrase : l'image mécanique globale]
-
-### 🔍 2. Comparatif (Pourquoi A et pas B ?)
-* **Option A ([Expression]) :** [Ce que le native visualise]
-* **Option B ([Alternative faux-ami]) :** [Pourquoi le sens dévie ou casse la logique]
-
-### ⚠️ 3. Anti-Pattern (Le piège)
-* **Erreur :** [Ce qu'on dit en traduisant du FR] ➔ **Problème :** [Le vrai sens perçu par un anglophone]
-
-### 💻 4. Exemples (Format court)
-* **Tech/Workflow :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*
-* **Quotidien :** \`[Phrase courte en anglais]\` ↳ *[Traduction française]*`;
+Règles de rédaction :
+- "front" : Question précise et non ambiguë (ex: "Quel problème en cascade le pattern Circuit Breaker évite-t-il ?")
+- "back" : Réponse univoque et tranchée en 1 ou 2 phrases courtes (≤ 25 mots). Pas de liste à puces.
+- "example" : Un cas réel ou analogie en 1 phrase.`;
   }
 
   if (isCode) {
     return `
-⚠️ POUR CHAQUE FICHE DE CODE, "back" DOIT suivre EXACTEMENT cette structure :
+⚠️ POUR CHAQUE FICHE DE CODE / DÉVELOPPEMENT :
+INTERDICTION des fiches encyclopédiques (définition + usage + code + piège réunis).
+Chaque fiche DOIT être atomique et tester :
+- SOIT la syntaxe clé / annotation exacte (via format cloze ou question directe).
+- SOIT le comportement d'un snippet court (≤ 5 lignes bien indentées).
+- SOIT l'erreur classique / piège d'exécution.
 
-⚙️ DÉFINITION :
-[Définition technique précise, 1-2 phrases]
+Règles de rédaction :
+- "front" : Une question contextuelle ou un mini-snippet à analyser (≤ 15 mots).
+- "back" : La solution exacte ou l'annotation (≤ 20 mots) + court bloc code markdown si nécessaire.
+- "example" : Cas d'usage minimaliste en 1 ligne.`;
+  }
 
-💡 USAGE :
-[Quand utiliser ce concept dans un projet réel, 1-2 phrases]
-
-💻 EXEMPLE :
-\`\`\`<langage>
-<code BIEN INDENTÉ, syntaxiquement correct, copiable-collable. Toujours ouvrir/fermer la fence sur sa propre ligne.>
-\`\`\`
-
-⚠️ ATTENTION :
-[Piège ou erreur fréquente, 1-2 phrases]
-
-🔁 ÉQUIVALENT / ALTERNATIVE : [autre façon ou concept connexe]
-
-RÈGLES STRICTES : le bloc de code DOIT être encadré par \`\`\`<langage> / \`\`\` sur leurs propres lignes, parfaitement indenté (jamais sur une seule ligne).`;
+  if (isFormula) {
+    return `
+⚠️ POUR CHAQUE FICHE DE FORMULE / MATHS :
+Ne demande JAMAIS de recracher une formule complète par cœur.
+Teste :
+- La signification d'une variable spécifique dans la formule.
+- La condition de validité fondamentale.
+- L'effet de la variation d'un paramètre (si X double, que devient Y ?).`;
   }
 
   if (isTable) {
@@ -120,3 +122,4 @@ export function layoutBatchCards(cards = []) {
 
   return { layouted, links };
 }
+

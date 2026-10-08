@@ -7,13 +7,12 @@
 
 import { safeHTML } from "./lib/htmlSanitizer";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { PenLine, Shuffle, History, Plus, Sparkles, Layers, BookOpenCheck, LayoutGrid, SpellCheck2, Mic, Square, Globe, AlertTriangle, CheckCircle2, Lightbulb, RotateCcw, AudioLines, Repeat2, Ear, Loader2, Volume2, ArrowRight, PlusCircle, Zap } from "lucide-react";
-import DailyFluencySprint from "./components/DailyFluencySprint";
+import { PenLine, Shuffle, History, Plus, Sparkles, Layers, BookOpenCheck, LayoutGrid, SpellCheck2, Mic, Square, Globe, AlertTriangle, CheckCircle2, Lightbulb, RotateCcw, AudioLines, Repeat2, Ear, Loader2, Volume2, ArrowRight, PlusCircle, Zap, ChevronUp, ChevronDown, BarChart2, Search, Trash2, ExternalLink, Copy, Check } from "lucide-react";
 import EnglishInTheWild from "./EnglishInTheWild";
+import RealLife from "./RealLife";
 import AgentVoiceBar, { AGENT_VOICES, useElevenLabsAgent, MODE_CONFIGS } from "./AgentVoiceBar";
 import { registerAgentClientTool, setContextSnapshotBuilder } from "./lib/agentClientTools";
 import { summarizeForContinuity } from "./lib/agentSessionMemory";
-import { ConversationProvider } from "@elevenlabs/react";
 import { useAgentCardDetector } from "./useAgentCardDetector";
 import AgentCardToast from "./AgentCardToast";
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
@@ -27,20 +26,23 @@ import { today } from "./utils/dateUtils";
 import LiveNewsModule from "./components/LiveNewsModule";
 import { useXP } from "./hooks/useXP";
 import { useCEFR } from "./hooks/useCEFR";
-import CEFRTracker from "./components/CEFRTracker";
 import CoachSpeedListening from "./components/CoachSpeedListening";
 import CoachNewsAnchor from "./components/CoachNewsAnchor";
 import BattleMode from "./components/BattleMode";
-import AccentTraining from "./components/AccentTraining";
 import SpeakItChallenge from "./components/SpeakItChallenge";
 import ProductionChallenge from "./components/ProductionChallenge";
 
 import { speakWithGroq } from "./lib/groqTTS";
 import LiveKitVoiceAssistant from "./components/LiveKitVoiceAssistant";
+import { liveKitVoiceBus, prewarmNovaToken } from "./components/LiveKitVoiceAssistant";
+import { playEnglishAudio, stopEnglishAudio } from "./lib/speakUtils";
+import "./styles/english-views.css";
 import { armIosAudio } from "./lib/iosVoiceHardening";
 import { VoiceMirror } from "./components/VoiceMirror";
 import { CoachAnalyzeListener } from "./components/CoachAnalyzeListener";
 import { safeParseJSON } from "./lib/textUtils";
+import { colorMix } from "./lib/colorMix";
+import { getDailyOralTargets, isTargetSpoken } from "./lib/english/dailyOralTargets";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT INTERNE — EnglishPracticeInner (doit être rendu dans ConversationProvider)
@@ -59,6 +61,11 @@ function EnglishPracticeInner({
   // ── Thème ───────────────────────────────────────────────────────────────────
   theme,
   isDarkMode,
+  // ── Navigation & Filtres ───────────────────────────────────────────────────
+  setView,
+  navigate,
+  setFilterCat,
+  setSearchQuery,
 }) {
   // ── Détection automatique du module Anglais ─────────────────────────────────
   const englishCategory = React.useMemo(() => {
@@ -113,6 +120,19 @@ function EnglishPracticeInner({
     return [...needProduction, ...dueOrLearning].slice(0, 3);
   }, [expressions]);
 
+  // ── Smart Daily Oral Targets (Cibles orales du jour pour Live Nova — Niveau 100) ──
+  const dailyOralTargetsData = React.useMemo(() => {
+    return getDailyOralTargets(expressions, { limit: 3 });
+  }, [expressions]);
+
+  const [novaDailyTargetMode, setNovaDailyTargetMode] = useState(() => {
+    try {
+      const saved = localStorage.getItem("nova_daily_target_mode");
+      if (saved) return saved;
+    } catch { }
+    return "daily";
+  });
+
   // ── Toutes les fiches anglais (pour le Speaking Lab — prononcer ses propres expressions) ──
   const allEnglishFiches = React.useMemo(() => {
     if (!expressions || !Array.isArray(expressions)) return [];
@@ -135,6 +155,10 @@ function EnglishPracticeInner({
   const [liveKitState, setLiveKitState] = useState(null);
   const [studentName, setStudentName] = useState(() => {
     try { return localStorage.getItem("nova_student_name") || ""; } catch { return ""; }
+  });
+
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(() => {
+    try { return localStorage.getItem("nova_subtitles_enabled") !== "false"; } catch { return true; }
   });
 
   const novaSessionMemoryRef = useRef(null);
@@ -259,7 +283,50 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   });
   const novaMessageCountRef = useRef(0);
 
-  const [practiceSubView, setPracticeSubView] = useState("sprint");
+  const [practiceSubView, setPracticeSubView] = useState("chat");
+
+  // ── Résolution TDZ : cibles et objectifs calculés après déclaration de practiceSubView & practiceTopic ──
+  const effectiveTargetExpressions = React.useMemo(() => {
+    if (practiceSubView === "chat") {
+      if (novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0) {
+        return dailyOralTargetsData.targets;
+      }
+      if (novaDailyTargetMode === "free") {
+        return [];
+      }
+    }
+    return targetExpressions;
+  }, [practiceSubView, novaDailyTargetMode, dailyOralTargetsData, targetExpressions]);
+
+  const effectiveSessionGoal = React.useMemo(() => {
+    if (practiceSubView === "chat") {
+      if (novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0) {
+        const list = dailyOralTargetsData.targets.map(t => t.front).join(", ");
+        return `Daily targeted expressions practice: ${list}`;
+      }
+      return "Free conversation";
+    }
+    return practiceTopic || "Free conversation";
+  }, [practiceSubView, novaDailyTargetMode, dailyOralTargetsData, practiceTopic]);
+
+  // Détection en direct des cibles orales prononcées par l'élève dans Live Nova
+  const spokenTargetIds = React.useMemo(() => {
+    if (!dailyOralTargetsData?.targets?.length) return new Set();
+    const spoken = new Set();
+    const userUtterances = [
+      ...(liveKitTranscriptions || []).filter(m => m.role === "user").map(m => m.text),
+      ...(practiceMessages || []).filter(m => m.role === "user").map(m => m.text),
+    ].filter(Boolean);
+
+    if (userUtterances.length === 0) return spoken;
+
+    dailyOralTargetsData.targets.forEach(target => {
+      const isSpoken = userUtterances.some(text => isTargetSpoken(target, text));
+      if (isSpoken) spoken.add(target.id);
+    });
+
+    return spoken;
+  }, [dailyOralTargetsData, liveKitTranscriptions, practiceMessages]);
   const [speakItOpen, setSpeakItOpen] = useState(false);
   const [coachMode, setCoachMode] = useState("pronunciation");
   const [practiceDebateTopic, setPracticeDebateTopic] = useState("");
@@ -322,11 +389,254 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
 
   const [practiceWritingText, setPracticeWritingText] = useState("");
   const [practiceWritingFeedback, setPracticeWritingFeedback] = useState(null);
+  const [writingWordGoal, setWritingWordGoal] = useState(200);
+  const [isReportExpanded, setIsReportExpanded] = useState(true);
+  const [ieltsActiveTab, setIeltsActiveTab] = useState("overview");
+  const [isHudCollapsed, setIsHudCollapsed] = useState(false);
+  const [showWritingTip, setShowWritingTip] = useState(false);
+  const [showWritingHistory, setShowWritingHistory] = useState(false);
+  const [writingHistory, setWritingHistory] = useState([]);
   const [practiceWritingLoading, setPracticeWritingLoading] = useState(false);
   const [practiceWritingPrompt, setPracticeWritingPrompt] = useState("");
   const [practiceWritingDrafts, setPracticeWritingDrafts] = useState([]);
   const [practiceWritingActiveId, setPracticeWritingActiveId] = useState(null);
-  const [showDraftsModal, setShowDraftsModal] = useState(false);
+  const [writingTabMode, setWritingTabMode] = useState("editor"); // "editor" | "history"
+  const [draftSearchQuery, setDraftSearchQuery] = useState("");
+
+  const filteredDrafts = useMemo(() => {
+    if (!draftSearchQuery || !draftSearchQuery.trim()) return practiceWritingDrafts;
+    const q = draftSearchQuery.toLowerCase().trim();
+    return practiceWritingDrafts.filter(d =>
+      (d.prompt && d.prompt.toLowerCase().includes(q)) ||
+      (d.text && d.text.toLowerCase().includes(q)) ||
+      (d.feedback?.overallComment && d.feedback.overallComment.toLowerCase().includes(q))
+    );
+  }, [practiceWritingDrafts, draftSearchQuery]);
+
+  const getBandScoreColor = useCallback((score) => {
+    const num = parseFloat(score);
+    if (isNaN(num)) return "var(--mm-primary)";
+    if (num >= 7) return "#10B981";
+    if (num >= 5.5) return "#F59E0B";
+    return "#EF4444";
+  }, []);
+
+  const [copiedDraftId, setCopiedDraftId] = useState(null);
+  const [generatingCorrectedId, setGeneratingCorrectedId] = useState(null);
+  const [playingAudioId, setPlayingAudioId] = useState(null);
+  const [expandedDraftIds, setExpandedDraftIds] = useState({});
+  const [expandedMistakeIdxs, setExpandedMistakeIdxs] = useState({});
+
+  const toggleDraftExpand = useCallback((draftId) => {
+    setExpandedDraftIds(prev => ({
+      ...prev,
+      [draftId]: !prev[draftId]
+    }));
+  }, []);
+
+  const toggleMistakeExpand = useCallback((idx) => {
+    setExpandedMistakeIdxs(prev => ({
+      ...prev,
+      [idx]: !prev[idx]
+    }));
+  }, []);
+
+  // Expressions révisées aujourd'hui pour réutilisation active dans le Writing Lab
+  const [showReviewedDrawer, setShowReviewedDrawer] = useState(false);
+  const todayDateStr = today();
+
+  const { todayReviewedExpressions, hasTodayReviews } = useMemo(() => {
+    if (!Array.isArray(expressions)) return { todayReviewedExpressions: [], hasTodayReviews: false };
+
+    const reviewed = expressions.filter(e => {
+      if (!englishCategoryFilter(e)) return false;
+      const inHistory = Array.isArray(e.reviewHistory) && e.reviewHistory.some(r => r.date === todayDateStr);
+      const inLastRev = typeof e.lastReviewed === "string" && e.lastReviewed.startsWith(todayDateStr);
+      const inLastRevDate = e.lastReviewDate === todayDateStr;
+      return inHistory || inLastRev || inLastRevDate;
+    });
+
+    if (reviewed.length > 0) {
+      return { todayReviewedExpressions: reviewed, hasTodayReviews: true };
+    }
+
+    // Fallback gracieux si aucune révision aujourd'hui : proposer 10 expressions anglaises du deck
+    const fallback = expressions.filter(englishCategoryFilter).slice(0, 10);
+    return { todayReviewedExpressions: fallback, hasTodayReviews: false };
+  }, [expressions, todayDateStr]);
+
+  // Extraction chirurgicale de la traduction française courte (Vrai sens) sans le surplus de la fiche
+  const extractFrenchTranslation = useCallback((backText) => {
+    if (!backText || typeof backText !== "string") return "";
+
+    // 1. Détection "Vrai sens :" (avec ou sans emojis/markdown)
+    const vraiSensMatch = backText.match(/(?:📖\s*)?(?:\*{0,2}Vrai sens\s*(?:\(FR\))?\s*:\*{0,2})\s*([^\n🧩💬⚠️]+)/i);
+    if (vraiSensMatch && vraiSensMatch[1]) {
+      let clean = vraiSensMatch[1].replace(/[`*_~]/g, "").trim();
+      clean = clean.split(/[🧩💬⚠️\n]/)[0].trim();
+      if (clean) return clean;
+    }
+
+    // 2. Détection flèche "↳ <traduction>"
+    const arrowMatch = backText.match(/^[↳\->]+\s*([^\n🧩💬⚠️]+)/m);
+    if (arrowMatch && arrowMatch[1]) {
+      const clean = arrowMatch[1].replace(/[`*_~]/g, "").trim();
+      if (clean) return clean;
+    }
+
+    // 3. Première ligne nettoyée (sans emojis de rubriques)
+    const firstLine = backText
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith("🧩") && !l.startsWith("💬") && !l.startsWith("⚠️") && !l.startsWith("* **"))[0] || "";
+
+    let cleaned = firstLine
+      .replace(/^#+\s*/g, "")
+      .replace(/\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")
+      .replace(/(?:\*{0,2}Vrai sens\s*:\*{0,2})/gi, "")
+      .replace(/[`*_~]/g, "")
+      .trim();
+
+    if (cleaned.length > 95) {
+      cleaned = cleaned.slice(0, 92) + "...";
+    }
+    return cleaned;
+  }, []);
+
+  const insertExpressionIntoDraft = useCallback((phrase) => {
+    if (!phrase || !phrase.trim()) return;
+    setPracticeWritingText(prev => {
+      const trimmed = (prev || "").trimEnd();
+      const spacer = trimmed.length > 0 ? " " : "";
+      return trimmed + spacer + phrase.trim() + " ";
+    });
+    if (showToast) showToast(`"${phrase}" inséré dans votre essai ! ✍️`, "success");
+  }, [showToast]);
+
+
+
+  const togglePlayAudio = useCallback((text, audioId) => {
+    if (!text || !text.trim()) return;
+    if (playingAudioId === audioId) {
+      stopEnglishAudio();
+      setPlayingAudioId(null);
+      return;
+    }
+    stopEnglishAudio();
+    setPlayingAudioId(audioId);
+    const ok = playEnglishAudio(text, {
+      raw: true,
+      groqApiKey: typeof getNextGroqKey === "function" ? getNextGroqKey() : null,
+      onStart: () => setPlayingAudioId(audioId),
+      onEnd: () => setPlayingAudioId(prev => prev === audioId ? null : prev),
+      onError: () => setPlayingAudioId(prev => prev === audioId ? null : prev)
+    });
+    if (!ok) {
+      setPlayingAudioId(null);
+      if (showToast) showToast("Audio non disponible ou non supporté", "error");
+    }
+  }, [playingAudioId, getNextGroqKey, showToast]);
+
+  const handleCopyText = (text, id) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedDraftId(id);
+      if (showToast) showToast("Texte copié dans le presse-papiers ! 📋", "success");
+      setTimeout(() => setCopiedDraftId(null), 2500);
+    }).catch(() => {
+      if (showToast) showToast("Impossible de copier le texte", "error");
+    });
+  };
+
+  const generateMissingCorrectedText = async (draft) => {
+    if (!draft || !draft.text || !draft.text.trim()) return;
+    setGeneratingCorrectedId(draft.id);
+    try {
+      const raw = await callClaude(
+        `Tu es un mentor d'anglais d'élite et examinateur officiel IELTS/Cambridge.
+Analyse en profondeur cet essai rédigé par un étudiant francophone :
+"""${draft.text}"""
+
+Sujet : "${draft.prompt || "Présentation ou essai libre"}"
+
+CONSIGNES STRICTES DE CLARTÉ PÉDAGOGIQUE (LIS ATTENTIVEMENT) :
+1. ATOMICITÉ ABSOLUE : Isole chaque faute individuellement (un seul mot ou une courte expression de 1 à 3 mots). Ne fusionne JAMAIS plusieurs fautes distinctes dans un même bloc !
+   - Mauvais exemple à PROSCRIRE : "i'm actually in my last year of degree" (ceci mélange 3 erreurs !).
+   - Bon exemple OBLIGATOIRE :
+     * Faute A : "i'm" ➔ "I'm" (Règle majuscule)
+     * Faute B : "actually" ➔ "currently" (Faux-ami majeur)
+     * Faute C : "last year of degree" ➔ "final year of my degree" (Vocabulaire académique & possessif)
+     * Faute D : "go entreprise for a stage" ➔ "do an internship at a company" (Faux-ami & collocation)
+     * Faute E : "about computer scientist" ➔ "in computer science" (Confusion discipline vs métier)
+     * Faute F : "to create and knowing" ➔ "to create and know" (Parallélisme infinitif après 'to')
+     * Faute G : "two differents domains" ➔ "two different fields" (Adjectif invariable sans 's')
+     * Faute H : "AI logiciel" ➔ "AI software" (Traduction 'software' indénombrable)
+     * Faute I : "make them safety" ➔ "ensure their safety / make them safe" (Nom vs adjectif)
+     * Faute J : "cybersecurity and ai engeneering" ➔ "cybersecurity and AI engineering" (Orthographe & sigle)
+
+2. CLARTÉ RADICALE DU "POURQUOI" :
+   - Explique la règle en français limpide, direct et percutant, SANS JARGON FLOU ni formules abstraites.
+   - Si c'est un faux-ami, donne obligatoirement le vrai sens du mot anglais et le mot qu'il fallait utiliser (ex: "'Actually' ne signifie JAMAIS 'actuellement', mais 'en fait / en réalité'. Pour dire 'actuellement / en ce moment', le seul mot anglais est 'currently'.").
+   - Explique pourquoi le cerveau francophone s'est trompé (calque mot à mot, faux-ami).
+   - Précise la sanction ou l'impact auprès d'un examinateur IELTS/Cambridge (ex: perte de points sur le critère Lexical Resource ou Grammatical Accuracy).
+
+3. TEXTE CORRIGÉ INTÉGRAL : Fournis la version réécrite complète, naturelle et élégante en anglais.
+
+Donne UNIQUEMENT un objet JSON valide (SANS TEXTE AUTOUR):
+{
+  "correctedText": "Version intégrale corrigée et réécrite en anglais naturel, fluide et impeccable",
+  "mistakes": [
+    {
+      "originalText": "le mot ou segment exact de 1 à 3 mots (ex: actually)",
+      "correctedText": "la correction exacte (ex: currently)",
+      "category": "Faux-ami & Vocabulaire" | "Majuscules & Rigueur" | "Grammaire & Parallélisme" | "Accord d'adjectif" | "Orthographe",
+      "why": "L'explication limpide du POURQUOI : sens réel du mot, règle de grammaire simple et contre-exemple clair",
+      "examTrap": "Le piège pour francophones (calque/faux-ami) et ce que l'examinateur officiel IELTS sanctionne",
+      "flashcard": {
+        "front": "Question directe en français pour tester cette règle précise (ex: Comment dire 'actuellement' en anglais sans tomber dans le faux-ami ?)",
+        "back": "Currently (attention : 'actually' signifie 'en réalité / en fait')"
+      }
+    }
+  ]
+}`
+      );
+      const parsed = safeParseJSON(raw);
+      const cleanedText = parsed?.correctedText || (typeof raw === "string" && !raw.trim().startsWith("{") ? raw.trim() : "");
+      const newMistakes = Array.isArray(parsed?.mistakes) && parsed.mistakes.length > 0 ? parsed.mistakes : null;
+
+      if (cleanedText || newMistakes) {
+        setPracticeWritingDrafts(prev => {
+          const updated = prev.map(d => {
+            if (d.id === draft.id) {
+              return {
+                ...d,
+                feedback: {
+                  ...(d.feedback || {}),
+                  ...(cleanedText ? { correctedText: cleanedText } : {}),
+                  ...(newMistakes ? { mistakes: newMistakes } : {})
+                }
+              };
+            }
+            return d;
+          });
+          storage.set("nova_writing_drafts", updated).catch(() => {});
+          return updated;
+        });
+        if (practiceWritingActiveId === draft.id) {
+          setPracticeWritingFeedback(prev => ({
+            ...(prev || {}),
+            ...(cleanedText ? { correctedText: cleanedText } : {}),
+            ...(newMistakes ? { mistakes: newMistakes } : {})
+          }));
+        }
+        if (showToast) showToast("Diagnostic intelligent & texte correctif générés ! ✨", "success");
+      }
+    } catch (e) {
+      if (showToast) showToast("Erreur lors de la génération du diagnostic", "error");
+    } finally {
+      setGeneratingCorrectedId(null);
+    }
+  };
 
   const [practiceSpeakingAudioBlob, setPracticeSpeakingAudioBlob] = useState(null);
   const [practiceSpeakingTranscript, setPracticeSpeakingTranscript] = useState("");
@@ -347,11 +657,6 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
 
   const [practiceAchievements, setPracticeAchievements] = useState([]);
   const [practiceDashboardView, setPracticeDashboardView] = useState("overview");
-
-  const [practiceShadowingMode, setPracticeShadowingMode] = useState(false);
-  const [practiceShadowingPhrase, setPracticeShadowingPhrase] = useState("");
-  const [practiceShadowingUserAudio, setPracticeShadowingUserAudio] = useState(null);
-  const [practiceShadowingScore, setPracticeShadowingScore] = useState(null);
 
   const [practiceExamMode, setPracticeExamMode] = useState(false);
   const [practiceExamSection, setPracticeExamSection] = useState("reading");
@@ -445,6 +750,46 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     enabled: true,
   });
 
+  // Fiches ajoutées manuellement via tool d'agent (save_expression)
+  const [manualSessionCards, setManualSessionCards] = useState([]);
+
+  // Agrégation dédoublonnée de toutes les fiches créées durant la session en direct
+  const allSessionCards = React.useMemo(() => {
+    const list = [...(sessionCreatedCards || []), ...manualSessionCards];
+    const seen = new Set();
+    return list.filter(card => {
+      const key = (card.id || card.front || "").toLowerCase().trim();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [sessionCreatedCards, manualSessionCards]);
+
+  const sessionCardsCount = allSessionCards.length;
+
+  // Redirection sans faille vers la vue fiches
+  const handleViewSessionCreatedCards = useCallback(() => {
+    if (sessionCardsCount === 0) {
+      showToast?.("0 fiche créée pour le moment. Discute avec NOVA pour qu'elle relève tes expressions !", "info");
+      return;
+    }
+    // Coupure propre de la voix avant la navigation
+    if (agent?.isConnected) {
+      try { agent.stop(); } catch (_e) {}
+    }
+    // Filtrage immédiat sur le module anglais
+    if (typeof setFilterCat === "function") {
+      setFilterCat(englishCategory || "🇬🇧 Anglais");
+    }
+    // Redirection sans faille
+    if (typeof setView === "function") {
+      setView("list");
+    } else if (typeof navigate === "function") {
+      navigate("list");
+    }
+    showToast?.(`📋 Affichage de tes ${sessionCardsCount} fiche${sessionCardsCount > 1 ? "s créées" : " créée"} durant cette session`, "success");
+  }, [sessionCardsCount, agent, setFilterCat, englishCategory, setView, navigate, showToast]);
+
   // Hook Nova (PTT + pipeline STT → LLM → TTS)
   const novaVoice = useNovaAgent({
     transcribeWithGroq: (blob) => transcribeWithGroq(blob),
@@ -530,27 +875,32 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
       }
     }).catch(() => { });
 
-    // Load Writing Drafts
+    // Load Writing Drafts (sans restaurer le dernier essai — session vierge par défaut)
     storage.get("nova_writing_drafts").then(saved => {
       if (saved && Array.isArray(saved)) {
         setPracticeWritingDrafts(saved);
-        if (saved.length > 0) {
-          const lastDraft = saved[0];
-          setPracticeWritingActiveId(lastDraft.id);
-          setPracticeWritingText(lastDraft.text || "");
-          setPracticeWritingPrompt(lastDraft.prompt || "");
-          setPracticeWritingFeedback(lastDraft.feedback || null);
-        }
+        // NE PAS restaurer automatiquement le dernier brouillon dans l'éditeur :
+        // l'utilisateur retrouve ses sessions via "Sessions passées".
       }
     }).catch(() => { });
 
-    // Unmount hook for saving Memory
+    // Unmount hook for saving Memory and stopping audio
     return () => {
+      stopEnglishAudio();
       if (practiceMsgRef.current && practiceMsgRef.current.length > 3) {
         generateSessionMemoryPayload(practiceMsgRef.current);
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Arrêt automatique de l'audio si changement d'onglet ou sous-vue
+  useEffect(() => {
+    return () => {
+      stopEnglishAudio();
+      setPlayingAudioId(null);
+    };
+  }, [practiceSubView, writingTabMode]);
+
 
   // Auto-save chat messages
   useEffect(() => {
@@ -735,7 +1085,7 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
       } else {
         hint = "Vérifie : (1) LLM → remplace \"Gemini 3 Flash Preview\" par \"gemini-2.5-flash\". (2) Clé API et Agent ID dans .env. (3) Agent publié sur elevenlabs.io.";
       }
-      setAgentError(`⚠️ Session vocale interrompue par ElevenLabs. ${hint} — Ouvre F12 → Console pour le détail.`);
+      setAgentError(`⚠️ . ${hint} — Ouvre F12 → Console pour le détail.`);
     } else {
       setAgentError("");
     }
@@ -768,6 +1118,13 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     agent.selectedAgentIndex, agent.setSelectedAgentIndex,
     agent.start, agent.stop, agentTranscript,
   ]);
+
+  // ── Coupure propre de la voix en cas de bascule vers un autre pilier (Shadowing, Dictation, etc.) ──
+  useEffect(() => {
+    if (practiceSubView !== "chat" && agent.isConnected) {
+      agent.stop();
+    }
+  }, [practiceSubView, agent.isConnected, agent.stop]);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 🔗 LIVE LINK — L'agent vocal ElevenLabs voit l'état réel de l'app :
@@ -812,15 +1169,14 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
       if (!front || !back) return { ok: false, error: "front and back required" };
       const id = "el-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
       const now = Date.now();
-      setExpressions(prev => [
-        ...prev,
-        {
-          id, front: String(front).trim(), back: String(back).trim(),
-          example: example ? String(example) : "",
-          category: category ? String(category) : (practiceTopic || "Voice Coach"),
-          createdAt: now, updatedAt: now
-        },
-      ]);
+      const newCard = {
+        id, front: String(front).trim(), back: String(back).trim(),
+        example: example ? String(example) : "",
+        category: category ? String(category) : (practiceTopic || "Voice Coach"),
+        createdAt: now, updatedAt: now
+      };
+      setExpressions(prev => [...prev, newCard]);
+      setManualSessionCards(prev => [...prev, newCard]);
       try { awardXP(15, 3, `🎙️ Nouvelle expression via coach vocal : ${front}`); } catch { }
       try { showToast?.(`✨ Ajoutée : ${front}`); } catch { }
       return { ok: true, id };
@@ -905,14 +1261,14 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
       if (userLines.trim().length > 20) {
         analyzeSessionProductiveUses({
           transcriptText: userLines,
-          targets: targetExpressions,
+          targets: effectiveTargetExpressions,
           sessionContext: "voice",
         }).then((updated) => openProductionChallengeIfRelevant(undefined, updated));
       } else {
         openProductionChallengeIfRelevant();
       }
     } catch (e) { console.warn("[stopVoiceConversation] analysis failed", e); }
-  }, [clearPending, sessionCreatedCards, showToast, analyzeSessionProductiveUses, targetExpressions, openProductionChallengeIfRelevant]);
+  }, [clearPending, sessionCreatedCards, showToast, analyzeSessionProductiveUses, effectiveTargetExpressions, openProductionChallengeIfRelevant]);
 
   // ── Construit le system prompt ElevenLabs enrichi avec la mémoire de session ─
   // Même logique que sendPracticeMessage mais formaté pour l'agent vocal.
@@ -1000,8 +1356,8 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     }
 
     let activeRecallInst = "";
-    if (targetExpressions && targetExpressions.length > 0) {
-      const expList = targetExpressions.map(ex =>
+    if (effectiveTargetExpressions && effectiveTargetExpressions.length > 0) {
+      const expList = effectiveTargetExpressions.map(ex =>
         `"${ex.front}" (meaning: ${ex.back})${ex.example ? ` - Example: "${ex.example}"` : ''}`
       ).join(" | ");
       activeRecallInst = `[ACTIVE RECALL MISSION] The student is currently learning these expressions: ${expList}. Subtly steer the conversation to create natural opportunities for the student to use them. If they use one correctly, acknowledge it enthusiastically.`;
@@ -1035,12 +1391,26 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
       activeRecallInst,
       "CRITICAL RULES: Replies 1–3 sentences MAX. End with one focused, adult open question. Neutral professional register. No slang, no emojis, no 'vibing/slay/bestie/energy' vocabulary, no stacked exclamations. Never use lists or bullet points.",
     ].filter(Boolean).join("\n");
-  }, [targetExpressions, studentName, practiceSubView, practiceDebateTopic, practiceRoleplayScenario, practiceRoleplayCharacter, practiceIeltsPart, practiceLevel]);
+  }, [effectiveTargetExpressions, studentName, practiceSubView, practiceDebateTopic, practiceRoleplayScenario, practiceRoleplayCharacter, practiceIeltsPart, practiceLevel]);
 
   const liveKitSystemPrompt = useMemo(
     () => buildLiveKitSystemPrompt(),
     [buildLiveKitSystemPrompt]
   );
+
+  // ── Pre-warming intelligent du token LiveKit Nova ─────────────────────────
+  // Déclenché APRÈS l'initialisation de liveKitSystemPrompt (zéro TDZ)
+  useEffect(() => {
+    if (["chat", "debate", "roleplay", "ielts"].includes(practiceSubView)) {
+      prewarmNovaToken({
+        studentName,
+        level: practiceLevel,
+        sessionGoal: effectiveSessionGoal,
+        targetExpressions: effectiveTargetExpressions,
+        systemPrompt: liveKitSystemPrompt,
+      }).catch(() => {});
+    }
+  }, [practiceSubView, studentName, practiceLevel, effectiveSessionGoal, effectiveTargetExpressions, liveKitSystemPrompt]);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const practiceEndRef = useRef(null);
@@ -1061,7 +1431,6 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   const xpPopupTimerRef = useRef(null);
   // FIX B7: refs vers tous les MediaStreams actifs pour cleanup au unmount
   const activeStreamsRef = useRef(new Set());        // verrou synchrone anti double-envoi
-  const isShadowingRef = useRef(false);      // verrou pour startShadowing / analyzeShadowing
   const debateRecorderRef = useRef(null);    // pour stopper l'enregistrement débat manuellement
   const roleplayRecorderRef = useRef(null);  // pour stopper l'enregistrement roleplay manuellement
   const userHasInteractedRef = useRef(false); // débloque l'autoplay TTS après 1ère interaction
@@ -1152,29 +1521,40 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
     const finalMsgs = liveKitTranscriptions.filter(m => m.isFinal);
     if (!finalMsgs.length) return;
 
-    // Dernier agent final
-    const lastAgentMsg = [...finalMsgs].reverse().find(m => m.role === "agent");
-    if (!lastAgentMsg) return;
-    if (lastAgentMsg.id === lastLkSyncedIdRef.current) return;
+    // Agrégation continue des fragments oraux par tour de parole
+    const groupedTurns = [];
+    for (const msg of finalMsgs) {
+      const text = (msg.text || "").trim();
+      if (!text) continue;
+      const prev = groupedTurns[groupedTurns.length - 1];
+      if (prev && prev.role === msg.role) {
+        prev.text = `${prev.text} ${text}`;
+        prev.id = msg.id;
+      } else {
+        groupedTurns.push({ id: msg.id, role: msg.role, text });
+      }
+    }
 
-    // Dernier user avant cet agent
-    const agentMsgIdx = finalMsgs.indexOf(lastAgentMsg);
-    const lastUserMsg = finalMsgs.slice(0, agentMsgIdx).reverse().find(m => m.role === "user");
+    const lastAgentTurn = [...groupedTurns].reverse().find(m => m.role === "agent");
+    if (!lastAgentTurn) return;
+    if (lastAgentTurn.id === lastLkSyncedIdRef.current) return;
 
-    // Injecte la paire dans agentTranscript pour que le détecteur de fiches l'analyse
+    const agentMsgIdx = groupedTurns.indexOf(lastAgentTurn);
+    const lastUserTurn = groupedTurns.slice(0, agentMsgIdx).reverse().find(m => m.role === "user");
+
     setAgentTranscript(prev => {
       const existingTexts = new Set(prev.map(m => m.text?.trim()));
       const toAdd = [];
-      if (lastUserMsg && !existingTexts.has(lastUserMsg.text?.trim())) {
-        toAdd.push({ role: "user", text: lastUserMsg.text || "" });
+      if (lastUserTurn && !existingTexts.has(lastUserTurn.text?.trim())) {
+        toAdd.push({ role: "user", text: lastUserTurn.text || "" });
       }
-      if (!existingTexts.has(lastAgentMsg.text?.trim())) {
-        toAdd.push({ role: "agent", text: lastAgentMsg.text || "" });
+      if (!existingTexts.has(lastAgentTurn.text?.trim())) {
+        toAdd.push({ role: "agent", text: lastAgentTurn.text || "" });
       }
       if (!toAdd.length) return prev;
       return [...prev, ...toAdd];
     });
-    lastLkSyncedIdRef.current = lastAgentMsg.id;
+    lastLkSyncedIdRef.current = lastAgentTurn.id;
   }, [liveKitTranscriptions]);
 
   // ── Callbacks agent vocal ────────────────────────────────────────────────────
@@ -1218,9 +1598,10 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
 
   // Restore last active sub-view so navigating away and back keeps context
   useEffect(() => {
-    const VALID_VIEWS = ["sprint", "chat", "daily", "debate", "roleplay", "dictation", "writing", "speaking", "ielts", "dashboard", "achievements", "brainmap", "accent", "exam", "notebook", "wild", "coach", "news", "cefr", "battle"];
+    const VALID_VIEWS = ["chat", "wild", "debate", "roleplay", "writing", "dictation"];
+    const ALL_SUBVIEWS = [...VALID_VIEWS, "reallife"];
     storage.get("english_subview").then(saved => {
-      if (saved && VALID_VIEWS.includes(saved)) setPracticeSubView(saved);
+      if (saved && ALL_SUBVIEWS.includes(saved)) setPracticeSubView(saved);
     }).catch(() => { });
   }, []);
 
@@ -1319,68 +1700,8 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   const speakText = (text, isDirectGesture = false) => {
     if (!text?.trim()) return false;
     userHasInteractedRef.current = true;
-
-    // Détecte mobile (Chrome Android/iOS) — speechSynthesis y est peu fiable
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-    // Sur mobile : Groq TTS en priorité (mobile-safe, pas de restriction autoplay)
-    if (isMobile) {
-      const groqKeyObj = getNextGroqKey?.();
-      if (groqKeyObj?.key) {
-        setPracticeSpeaking(true);
-        speakWithGroq(text, {
-          apiKey: groqKeyObj.key,
-          lang: "en-US",
-          voice: "tara",
-          onStart: () => setPracticeSpeaking(true),
-          onEnd: () => setPracticeSpeaking(false),
-          onError: (e) => {
-            console.warn("[TTS mobile] Groq échoue, fallback Web Speech:", e);
-            setPracticeSpeaking(false);
-            // Fallback Web Speech sur mobile en dernier recours
-            if (window.speechSynthesis) {
-              const u = new SpeechSynthesisUtterance(text);
-              u.lang = "en-US"; u.rate = ttsRate;
-              u.onend = () => setPracticeSpeaking(false);
-              window.speechSynthesis.speak(u);
-            }
-          },
-        }).catch(() => setPracticeSpeaking(false));
-        return true;
-      }
-    }
-
-    // Desktop : Web Speech API (fiable ici)
-    if (!window.speechSynthesis) { showToast("🔇 Synthèse vocale non supportée.", "warning"); return false; }
-    try { window.speechSynthesis.cancel(); } catch { }
-    const voices = window.speechSynthesis.getVoices();
-
-    const pickVoice = (vList) => {
-      if (!vList.length) return null;
-      return vList.find(v => v.name === ttsVoice)
-        || vList.find(v => v.lang.startsWith("en") && !MALE_MARKERS.test(v.name))
-        || vList.find(v => v.lang.startsWith("en"))
-        || vList[0];
-    };
-
-    const buildAndSpeak = (vList) => {
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = "en-US"; utter.rate = ttsRate;
-      const voice = pickVoice(vList);
-      if (voice) utter.voice = voice;
-      utter.onstart = () => setPracticeSpeaking(true);
-      utter.onend = () => setPracticeSpeaking(false);
-      utter.onerror = () => setPracticeSpeaking(false);
-      try { window.speechSynthesis.speak(utter); } catch (e) { console.warn("TTS speak failed", e); }
-    };
-
-    if (!voices.length) {
-      try { window.speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch { }
-      setTimeout(() => buildAndSpeak(window.speechSynthesis.getVoices()), 250);
-      return true;
-    }
-
-    buildAndSpeak(voices);
+    setPracticeSpeaking(true);
+    liveKitVoiceBus.say(text);
     return true;
   };
 
@@ -1389,7 +1710,7 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
 
   // Couper la voix de l'IA immédiatement (appelé dès que l'utilisateur prend la parole)
   const stopSpeaking = () => {
-    window.speechSynthesis?.cancel();
+    liveKitVoiceBus.interrupt();
     setPracticeSpeaking(false);
   };
 
@@ -1695,9 +2016,19 @@ Renvoie UNIQUEMENT un objet JSON valide (sans markdown, sans backticks) avec ces
     setPracticeLoading(true);
     setPracticeMessages([{ role: "assistant", text: "..." }]);
     try {
-      const prompt = `Tu es Nova, un coach d'anglais ultra-charismatique et amical. Le sujet de conversation choisi par l'étudiant est "${topic}" et son niveau estimé est ${level}.
+      let prompt = "";
+      if (novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0) {
+        const targetList = dailyOralTargetsData.targets.map(t => `"${t.front}" (= ${t.back})`).join(", ");
+        prompt = `Tu es Nova, un coach d'anglais ultra-charismatique et bienveillant pour un apprenant adulte nommé ${studentName || "l'étudiant"}.
+Niveau CEFR : ${level || "intermediate"}.
+L'étudiant a révisé ces expressions aujourd'hui : ${targetList}.
+Génère une phrase d'accroche captivante, vivante et courte (2 à 3 phrases max) où tu lances un mini-dilemme ou une anecdote concrète qui tisse le sens de ces expressions, et termine par une vraie question ouverte invitant l'étudiant à partager son point de vue.
+Ne cite JAMAIS les mots comme une liste de vocabulaire ou un exercice scolaire. Parle uniquement en anglais, sans guillemets autour.`;
+      } else {
+        prompt = `Tu es Nova, un coach d'anglais ultra-charismatique et amical. Le sujet de conversation choisi par l'étudiant est "${topic || "Free conversation"}" et son niveau estimé est ${level}.
 Génère une phrase d'accroche chaleureuse et courte (2 phrases max) pour commencer la conversation, qui se termine par une vraie question ouverte pertinente sur ce sujet.
 Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne mets pas de guillemets autour de ta réponse. Parle uniquement en anglais.`;
+      }
       const response = await callClaude(prompt, "Génération de l'accroche Nova");
       if (response) {
         setPracticeMessages([{ role: "assistant", text: response.trim() }]);
@@ -1884,6 +2215,11 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
 
   const sendDebateVoiceMessage = async () => {
     stopSpeaking();
+    if (debateListening) return;
+    if (customAgent.isConnected) {
+      showToast("🎙️ Session LiveKit active — ARGOS écoute déjà directement ton micro !", "info");
+      return;
+    }
     const check = canRecord();
     if (!check.ok) { showToast("🎤 " + check.reason, "error"); return; }
     try {
@@ -1989,7 +2325,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "Google-style Tech Interview",
       role: "a senior Google recruiter conducting a technical job interview",
       opening: "Hello! Thanks for coming in today. I'm Alex, senior recruiter here at Google. Before we dive into the technical side, could you start by telling me a little about yourself?",
-      color: "#8B5CF6",
+      color: "var(--mm-primary)",
       tip: "Use formal English, structure your answers with STAR method"
     },
     {
@@ -2064,44 +2400,59 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
     },
   ];
 
-  // Speak with Web speechSynthesis (no API cost)
+  // Speak with LiveKit voice agent
   const rpSpeak = (text, onEnd) => {
-    if (!window.speechSynthesis) { onEnd?.(); return; }
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "en-US";
-    utter.rate = 0.95;
-    utter.pitch = 1;
-    // Prefer a good US voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const usVoice = voices.find(v => v.lang === "en-US" && v.name.toLowerCase().includes("google"))
-      || voices.find(v => v.lang === "en-US")
-      || voices.find(v => v.lang.startsWith("en"));
-    if (usVoice) utter.voice = usVoice;
-    utter.onend = () => { rpSpeakingRef.current = false; onEnd?.(); };
-    utter.onerror = () => { rpSpeakingRef.current = false; onEnd?.(); };
+    if (!text?.trim()) { onEnd?.(); return; }
+    liveKitVoiceBus.say(text);
+    const words = text.split(/\s+/).length;
+    const durationMs = Math.max(1400, (words / 2.6) * 1000);
     rpSpeakingRef.current = true;
-    window.speechSynthesis.speak(utter);
+    setTimeout(() => {
+      rpSpeakingRef.current = false;
+      onEnd?.();
+    }, durationMs);
   };
 
-  // Start SpeechRecognition to capture user reply
+  // Start speech capture to get user reply
   const rpListen = (onResult, onError) => {
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRec) { onError?.("SpeechRecognition not supported"); return null; }
-    const recog = new SpeechRec();
-    recog.lang = "en-US";
-    recog.continuous = false;
-    recog.interimResults = false;
-    recog.maxAlternatives = 1;
-    recog.onresult = (e) => { onResult(e.results[0][0].transcript); };
-    recog.onerror = (e) => {
-      if (e.error !== "no-speech") onError?.(e.error);
-      else onResult(""); // no-speech → empty turn
-    };
-    recog.onend = () => { }; // handled via onresult
-    rpRecogRef.current = recog;
-    try { recog.start(); } catch (e) { onError?.(e.message); }
-    return recog;
+    if (customAgent.isConnected) {
+      const startCount = (liveKitTranscriptions || []).filter(t => t.role === "user").length;
+      let checkTimer = setInterval(() => {
+        const userSegs = (liveKitTranscriptions || []).filter(t => t.role === "user");
+        if (userSegs.length > startCount) {
+          clearInterval(checkTimer);
+          onResult(userSegs[userSegs.length - 1].text);
+        }
+      }, 500);
+      rpRecogRef.current = { abort: () => clearInterval(checkTimer) };
+      return rpRecogRef.current;
+    }
+    // Fallback: enregistreur audio intégré Whisper
+    const check = canRecord();
+    if (!check.ok) { onError?.(check.reason); return null; }
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      activeStreamsRef.current.add(stream);
+      const mimeType = getSupportedMimeType();
+      let mediaRecorder;
+      try { mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream); }
+      catch { mediaRecorder = new MediaRecorder(stream); }
+      const chunks = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+      mediaRecorder.onstop = async () => {
+        const actualMime = mediaRecorder.mimeType || mimeType || "audio/mp4";
+        const blob = new Blob(chunks, { type: actualMime });
+        try {
+          const raw = await transcribeWithGroq(blob);
+          const transcript = cleanSpeechTranscript(raw || "");
+          onResult(transcript);
+        } catch (err) { onError?.(err.message); }
+        stream.getTracks().forEach(t => t.stop());
+        activeStreamsRef.current.delete(stream);
+      };
+      rpRecogRef.current = mediaRecorder;
+      mediaRecorder.start();
+      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 7000);
+    }).catch(e => onError?.(e.message));
   };
 
   // Send one turn to Claude: get reply + inline feedback
@@ -2206,7 +2557,7 @@ Rules:
 
   const rpFinishSession = async () => {
     setRpState("scoring");
-    window.speechSynthesis?.cancel();
+    liveKitVoiceBus.interrupt();
     try {
       const score = await rpClaudeScore(rpScenarioRef.current, rpHistoryRef.current);
       setRpScore(score);
@@ -2218,7 +2569,7 @@ Rules:
   };
 
   const rpStopSession = () => {
-    window.speechSynthesis?.cancel();
+    liveKitVoiceBus.interrupt();
     rpRecogRef.current?.abort?.();
     if (rpTurnRef.current > 0) { rpFinishSession(); }
     else { setRpState("picking"); setRpHistory([]); setRpScore(null); }
@@ -2363,53 +2714,6 @@ Est-ce que sa réponse est correcte ou acceptable ? Réponds UNIQUEMENT en JSON 
     awardXP(5, 1, "Défi quotidien tenté");
   };
 
-  // Shadowing
-  const startShadowing = async () => {
-    if (isShadowingRef.current) return;
-    isShadowingRef.current = true;
-    try {
-      const raw = await callClaude(
-        `Génère une courte phrase en anglais (max 15 mots) pour un exercice de prononciation. Niveau ${practiceLevel}.`,
-        "Shadowing"
-      );
-      setPracticeShadowingPhrase(raw.trim());
-      setPracticeShadowingMode(true);
-      markInteracted(); speakText(raw.trim());
-    } catch (e) { showToast("Erreur shadowing", "error"); }
-    finally { isShadowingRef.current = false; }
-  };
-
-  const analyzeShadowing = async (audioBlob) => {
-    if (isShadowingRef.current) return;
-    isShadowingRef.current = true;
-    showToast("Analyse de prononciation en cours...");
-    setPracticeShadowingUserAudio(URL.createObjectURL(audioBlob));
-    setPracticeShadowingScore(null);
-    try {
-      // Transcription via Groq Whisper
-      const transcript = await transcribeWithGroq(audioBlob);
-
-      // Analyse via callClaude
-      const raw = await callClaude(
-        `Tu es un coach de prononciation anglaise. L'étudiant devait lire à voix haute la phrase suivante : "${practiceShadowingPhrase}". La transcription de son audio est : "${transcript}". Évalue sa prononciation. Réponds UNIQUEMENT en JSON : {"transcript":"${transcript}","score":85,"feedback":"commentaire court sur la prononciation"}. Le score est sur 100.`,
-        "Analyse shadowing"
-      );
-      const parsed = safeParseJSON(raw);
-      const finalScore = Math.min(100, Math.max(0, Math.round(parsed.score)));
-      setPracticeShadowingScore(finalScore);
-      if (parsed.feedback) showToast(`💬 ${parsed.feedback}`, "info");
-      if (finalScore >= 90) awardXP(40, 12, "Shadowing excellent 🎤");
-      else if (finalScore >= 70) awardXP(20, 5, "Bon shadowing");
-      else awardXP(10, 2, "Shadowing complété");
-    } catch (e) {
-      console.error("Shadowing analysis error:", e);
-      showToast("Erreur analyse prononciation", "error");
-      setPracticeShadowingScore(null);
-    } finally {
-      isShadowingRef.current = false;
-    }
-  };
-
   // Examen Blanc
   const startExamMode = async (section = "reading") => {
     setPracticeExamMode(true);
@@ -2440,34 +2744,107 @@ Est-ce que sa réponse est correcte ou acceptable ? Réponds UNIQUEMENT en JSON 
   };
 
   // Writing Lab
+  const IELTS_TOPIC_BANK = [
+    {
+      topic: "Intelligence Artificielle & Emploi",
+      prompt: "Some people believe that artificial intelligence will create more jobs than it destroys, while others fear mass unemployment. Discuss both views and give your opinion."
+    },
+    {
+      topic: "Télétravail & Mondialisation",
+      prompt: "In many countries, working from home has become common practice. Do the advantages of this trend for workers and companies outweigh the disadvantages?"
+    },
+    {
+      topic: "Éducation Supérieure Gratuite",
+      prompt: "University education should be completely free for all students, funded entirely by governments. To what extent do you agree or disagree?"
+    },
+    {
+      topic: "Taxe Carbone & Écologie",
+      prompt: "The most effective way to solve global environmental issues is to heavily tax fossil fuel consumption. To what extent do you agree or disagree?"
+    },
+    {
+      topic: "Réseaux Sociaux & Société",
+      prompt: "Social media platforms bring communities closer together across the world, yet some argue they cause social isolation. Discuss both views and give your opinion."
+    },
+    {
+      topic: "Longévité & Retraite",
+      prompt: "In modern societies, life expectancy is increasing rapidly. What challenges does this present for public institutions, and what measures can be taken to address them?"
+    }
+  ];
+
+  const pickRandomIeltsTopic = () => {
+    const available = IELTS_TOPIC_BANK.filter(item => item.prompt !== practiceWritingPrompt);
+    const chosen = available[Math.floor(Math.random() * available.length)] || IELTS_TOPIC_BANK[0];
+    setPracticeWritingPrompt(chosen.prompt);
+    if (showToast) showToast(`Sujet IELTS généré : ${chosen.topic} 💡`, "info");
+  };
+
+  const startNewWritingSession = () => {
+    setPracticeWritingText("");
+    setPracticeWritingPrompt("");
+    setPracticeWritingFeedback(null);
+    setIsReportExpanded(true);
+    setIeltsActiveTab("overview");
+    storage.set("nova_writing", null).catch(() => { });
+    if (showToast) showToast("Nouvelle session vierge prête ! ✍️", "info");
+  };
+
+  const loadPastSession = (session) => {
+    setPracticeWritingPrompt(session.prompt || "");
+    setPracticeWritingText(session.text || "");
+    setPracticeWritingFeedback(session.feedback || null);
+    setIsReportExpanded(true);
+    setIeltsActiveTab("overview");
+    setShowWritingHistory(false);
+    if (showToast) showToast("Session rechargée 📖", "info");
+  };
+
   const submitWriting = async () => {
     if (!practiceWritingText.trim()) return;
     setPracticeWritingLoading(true);
     try {
       const raw = await callClaude(
-        `Tu es un correcteur expert en anglais. Analyse l'essai fourni.
-Donne UNIQUEMENT un objet JSON avec cette structure exacte (SANS BLA BLA, UNIQUEMENT LE JSON VALIDE):
+        `Tu es un mentor d'anglais d'élite et examinateur officiel IELTS/Cambridge.
+Analyse en profondeur l'essai rédigé par un apprenant francophone.
+Sois hyper intelligent, limpide et pédagogue dans ton diagnostic.
+
+RÈGLE IMPÉRATIVE DE LANGUE (FONDAMENTAL) :
+- TOUTES les explications, commentaires, synthèses et analyses ("overallComment", "grammarFeedback", "vocabularyFeedback", "structureFeedback", "why", "examTrap", "front") DOIVENT ÊTRE EXCLUSIVEMENT RÉDIGÉS EN FRANÇAIS LIMPIDE ET NATUREL.
+- SEULES la version réécrite globale ("correctedText") et les corrections ciblées de mots ("correctedText" dans mistakes) doivent être en anglais impeccable.
+
+CONSIGNES STRICTES DE CLARTÉ PÉDAGOGIQUE :
+1. ATOMICITÉ & PRIORITÉ (6 À 8 ERREURS MAXIMUM) : Cible les 6 à 8 erreurs les plus pénalisantes et prioritaires pour le band score IELTS (focus en priorité sur les faux-amis, calques de pensée francophones, et structures grammaticales clés). Ne dépasse jamais 8 erreurs afin de préserver l'impact pédagogique. Isole chaque faute individuellement (1 à 3 mots max).
+2. CLARTÉ RADICALE DU "POURQUOI" :
+   - Explique la règle en français limpide, SANS JARGON FLOU.
+   - Si c'est un faux-ami (ex: actually ≠ actuellement, stage ≠ stage), indique obligatoirement le vrai sens du mot anglais et le mot qu'il fallait utiliser.
+   - Explique le piège francophone (calque mot à mot) et ce que l'examinateur officiel IELTS sanctionne.
+3. Version réécrite globale ("correctedText") : Donne une version intégralement réécrite et bonifiée en anglais fluide, élégant et de registre soutenu.
+
+Donne UNIQUEMENT un objet JSON valide avec cette structure exacte (SANS AUCUN BLA BLA HORS DU JSON):
 {
   "score": 6.5,
-  "grammarFeedback": "...",
-  "vocabularyFeedback": "...",
-  "structureFeedback": "...",
-  "overallComment": "...",
+  "overallComment": "Commentaire global en français bienveillant et stimulant sur le niveau, les forces et les axes de progression majeurs",
+  "grammarFeedback": "Synthèse en français ciblée sur les structures grammaticales et temps des verbes",
+  "vocabularyFeedback": "Synthèse en français sur la richesse lexicale, collocations et faux-amis",
+  "structureFeedback": "Synthèse en français sur la logique discursive, connecteurs et paragraphes",
+  "correctedText": "Full rewritten text in natural, flawless and academic English",
   "mistakes": [
     {
-      "originalText": "le mot ou bout de phrase erroné EXACT dans le texte original",
-      "correctedText": "la correction suggérée",
-      "rule": "L'explication courte de l'erreur en français",
+      "originalText": "le mot ou segment exact de 1 à 3 mots (ex: actually)",
+      "correctedText": "la correction exacte en anglais (ex: currently)",
+      "category": "Faux-ami & Vocabulaire",
+      "why": "L'explication limpide en français du POURQUOI : sens réel du mot, règle de grammaire simple et contre-exemple clair",
+      "examTrap": "Le piège pour francophones en français (calque/faux-ami) et ce que l'examinateur officiel IELTS sanctionne",
       "flashcard": {
-        "front": "La question directe en français pour tester cette erreur (ex: Comment dire 'faire un stage' en anglais ?)",
-        "back": "la correction en anglais (ex: to apply for an internship)"
+        "front": "La question directe en français pour tester cette règle (ex: Comment dire 'actuellement' sans faire de faux-ami ?)",
+        "back": "Currently (attention : 'actually' signifie 'en réalité / en fait')"
       }
     }
   ]
 }
 
 Texte: """${practiceWritingText}"""`,
-        practiceWritingPrompt || "Sujet libre"
+        practiceWritingPrompt || "Sujet libre",
+        { maxTokens: 6000, temperature: 0.3 }
       );
       const feedback = safeParseJSON(raw);
       if (feedback) {
@@ -2478,7 +2855,10 @@ Texte: """${practiceWritingText}"""`,
       } else {
         showToast("Impossible d'analyser le retour du correcteur", "error");
       }
-    } catch (e) { showToast("Erreur correction écrit", "error"); }
+    } catch (e) {
+      console.error("[submitWriting] Erreur correction écrit:", e);
+      showToast("Erreur correction écrit" + (e?.message ? ` (${e.message.slice(0, 45)})` : ""), "error");
+    }
     setPracticeWritingLoading(false);
   };
 
@@ -2496,7 +2876,22 @@ Texte: """${practiceWritingText}"""`,
       setPracticeWritingText(draft.text || "");
       setPracticeWritingPrompt(draft.prompt || "");
       setPracticeWritingFeedback(draft.feedback || null);
+      setIsReportExpanded(true);
+      setIeltsActiveTab("overview");
+      setWritingTabMode("editor");
+      if (showToast) showToast("Essai et correction rechargés dans l'éditeur 📖", "info");
     }
+  };
+
+  const deleteDraft = (id, e) => {
+    if (e) e.stopPropagation();
+    const next = practiceWritingDrafts.filter(d => d.id !== id);
+    setPracticeWritingDrafts(next);
+    storage.set("nova_writing_drafts", next).catch(() => { });
+    if (practiceWritingActiveId === id) {
+      setPracticeWritingActiveId(null);
+    }
+    if (showToast) showToast("Essai supprimé de l'historique 🗑️", "info");
   };
 
   const importFlashcards = (mistakes, sourceTheme = "writing-lab", sourceName = "Writing Lab") => {
@@ -2506,15 +2901,125 @@ Texte: """${practiceWritingText}"""`,
       front: m.flashcard.front,
       back: m.flashcard.back,
       category: englishCategory,
-      notes: `Extrait de ${sourceName} : ` + m.rule,
+      notes: `Extrait de ${sourceName} : ` + (m.why || m.examTrap || m.rule || ""),
       createdAt: new Date().toISOString(),
       theme: sourceTheme
     }));
     if (cards.length > 0) {
       setExpressions(prev => [...prev, ...cards]);
-      showToast(`${cards.length} fiches ajoutées au MemoMaster !`, "success");
+      if (showToast) showToast(`${cards.length} fiche(s) ajoutée(s) au MemoMaster !`, "success");
     }
   };
+
+  const renderDetailedMistakes = (mistakes) => {
+    if (!mistakes || !Array.isArray(mistakes) || mistakes.length === 0) return null;
+    return (
+      <div className="ev-mistakes-container">
+        <div className="ev-mistakes-header">
+          <div className="ev-mistakes-title">
+            <span>🔍</span>
+            <span>DIAGNOSTIC CIBLÉ DES FAUTES ({mistakes.length})</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => {
+                const all = {};
+                mistakes.forEach((_, i) => { all[i] = true; });
+                setExpandedMistakeIdxs(all);
+              }}
+              className="ev-history-bulk-toggle"
+              title="Déplier toutes les fautes"
+            >
+              Tout ouvrir
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpandedMistakeIdxs({})}
+              className="ev-history-bulk-toggle"
+              title="Replier toutes les fautes"
+            >
+              Tout replier
+            </button>
+            <button
+              type="button"
+              onClick={() => importFlashcards(mistakes, "writing-lab", "Writing Lab")}
+              className="ev-mistakes-bulk-flashcard-btn"
+              title="Créer des fiches de révision pour toutes ces erreurs"
+            >
+              <Plus size={11} />
+              <span>Tout ajouter en Flashcards</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="ev-mistakes-list">
+          {mistakes.map((m, mIdx) => {
+            const isOpen = !!expandedMistakeIdxs[mIdx];
+            return (
+              <div key={mIdx} className={`ev-mistake-accordion-item ${isOpen ? "is-open" : "is-collapsed"}`}>
+                <button
+                  type="button"
+                  className="ev-mistake-accordion-header"
+                  onClick={() => toggleMistakeExpand(mIdx)}
+                  title={isOpen ? "Replier cette explication" : "Déplier l'explication et la règle"}
+                >
+                  <div className="ev-mistake-diff-row">
+                    <span className="ev-mistake-idx">#{mIdx + 1}</span>
+                    <span className="ev-mistake-bad"><del>{m.originalText}</del></span>
+                    <span className="ev-mistake-arrow">➔</span>
+                    <span className="ev-mistake-good">{m.correctedText}</span>
+                    {m.category && <span className="ev-mistake-badge">{m.category}</span>}
+                  </div>
+                  <div className="ev-mistake-header-right">
+                    <span className="ev-mistake-header-hint">{isOpen ? "Masquer" : "Pourquoi ?"}</span>
+                    <span className={`ev-mistake-chevron ${isOpen ? "is-open" : ""}`}>
+                      <ChevronDown size={14} />
+                    </span>
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="ev-mistake-detail-body">
+                    {(m.why || m.rule) && (
+                      <div className="ev-mistake-why-box">
+                        <span className="ev-mistake-label">💡 Pourquoi c&apos;est faux &amp; la règle :</span>
+                        <span className="ev-mistake-desc">{m.why || m.rule}</span>
+                      </div>
+                    )}
+
+                    {m.examTrap && (
+                      <div className="ev-mistake-trap-box">
+                        <span className="ev-mistake-label">⚠️ Piège francophone &amp; Rigueur examen :</span>
+                        <span className="ev-mistake-desc">{m.examTrap}</span>
+                      </div>
+                    )}
+
+                    {m.flashcard && (
+                      <div className="ev-mistake-footer">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            importFlashcards([m], "writing-lab", "Writing Lab");
+                          }}
+                          className="ev-mistake-card-btn"
+                          title="Mémoriser cette règle dans MemoMaster"
+                        >
+                          <Plus size={11} /> Mémoriser la règle (FSRS)
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
 
   const renderInlineTextWithMistakes = () => {
     if (!practiceWritingFeedback?.mistakes || practiceWritingFeedback.mistakes.length === 0) {
@@ -2600,14 +3105,9 @@ Texte: """${practiceWritingText}"""`,
     }
 
     const speakFrenchText = (txt) => {
-      if (!txt || !window.speechSynthesis) return;
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(txt);
-      u.lang = "fr-FR";
-      const voices = window.speechSynthesis.getVoices();
-      const frVoice = voices.find(v => v.lang.startsWith("fr"));
-      if (frVoice) u.voice = frVoice;
-      window.speechSynthesis.speak(u);
+      if (!txt) return;
+      liveKitVoiceBus.interrupt();
+      liveKitVoiceBus.say(txt);
     };
 
     let result = [];
@@ -2801,7 +3301,7 @@ Réponds UNIQUEMENT avec ce JSON valide, sans markdown ni backticks:
                 ctx.shadowBlur = 10;
               } else {
                 ctx.fillStyle = "var(--mm-primary)"; // Violet
-                ctx.shadowColor = "#C084FC";
+                ctx.shadowColor = "var(--mm-primary-glow)";
                 ctx.shadowBlur = 8;
               }
 
@@ -3016,7 +3516,7 @@ Réponds UNIQUEMENT en anglais, comme un vrai examinateur IELTS (1-3 phrases max
   };
 
   const THEME_COLORS = {
-    "Business": { bg: "#4C1D95", glow: "#8B5CF6", text: "#DDD6FE" },
+    "Business": { bg: "var(--mm-primary-deep)", glow: "var(--mm-primary)", text: "color-mix(in srgb, var(--mm-primary) 22%, white)" },
     "Academic": { bg: "#064E3B", glow: "#10B981", text: "#A7F3D0" },
     "Daily Life": { bg: "#7C2D12", glow: "#F97316", text: "#FED7AA" },
     "Technology": { bg: "#312E81", glow: "var(--mm-primary)", text: "#E9D5FF" },
@@ -3162,7 +3662,7 @@ Réponds UNIQUEMENT en JSON: {"definition":"définition courte en français","ex
     "w": {
       label: "W — /w/",
       emoji: "💋",
-      color: "#8B5CF6",
+      color: "var(--mm-primary)",
       desc: "Pas un 'ou' français. Les lèvres se projettent en avant comme pour un baiser.",
       guide: [
         { step: "Position", detail: "Arrondis les lèvres vers l'avant comme pour siffler, puis relâche en produisant le son." },
@@ -3450,79 +3950,12 @@ ${SPEECH_HYGIENE_PROMPT}`,
   // RENDU
   // ══════════════════════════════════════════════════════════════════════════════
   return (
-    <div style={{ animation: "fadeUp 0.4s ease" }}>
-
-      {/* ── 🔥 XP DASHBOARD ── */}
-      <div style={{
-        background: isDarkMode ? "var(--mm-bg-card)" : "white",
-        border: `1px solid ${isDarkMode ? "var(--mm-border)" : "var(--mm-border)"}`,
-        borderRadius: 16, padding: "16px 20px", marginBottom: 16,
-        display: "flex", flexDirection: "column", gap: 12
-      }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setShowXPDashboard(!showXPDashboard)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontSize: 24 }}>{getStats().level.icon}</span>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: theme.primary, textTransform: "uppercase" }}>{getStats().level.name}</div>
-              <div style={{ fontSize: 18, fontWeight: 900, color: theme.text }}>{getStats().totalXP.toLocaleString()} XP</div>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(245,158,11,0.1)", padding: "6px 12px", borderRadius: 100 }}>
-              <span style={{ fontSize: 18, animation: "srsBandeauPulse 2s infinite" }}>🔥</span>
-              <span style={{ fontSize: 14, fontWeight: 800, color: "#F59E0B" }}>{getStats().currentStreak} jours {getStats().multiplier > 1 && `(x${getStats().multiplier})`}</span>
-            </div>
-            <span style={{ transform: showXPDashboard ? "rotate(180deg)" : "none", transition: "0.2s" }}>▼</span>
-          </div>
-        </div>
-
-        {showXPDashboard && (
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${isDarkMode ? "var(--mm-border)" : "var(--mm-border)"}`, display: "flex", flexDirection: "column", gap: 16, animation: "fadeUp 0.2s ease" }}>
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 200 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Prochain Niveau</div>
-                <div style={{ background: "rgba(139, 92, 246,0.05)", height: 12, borderRadius: 100, overflow: "hidden", position: "relative" }}>
-                  <div style={{
-                    position: "absolute", top: 0, left: 0, height: "100%",
-                    width: `${Math.min(100, (getStats().totalXP / getStats().level.max) * 100)}%`,
-                    background: "linear-gradient(90deg, #F59E0B, #EF4444)",
-                    transition: "width 0.5s ease"
-                  }} />
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: theme.textMuted, marginBottom: 8 }}>Badges ({getStats().badges.length})</div>
-                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  {getStats().badges.slice(-3).map((b, i) => (
-                    <span key={i} style={{ fontSize: 11, background: "rgba(139, 92, 246,0.1)", color: theme.primary, padding: "2px 8px", borderRadius: 100, fontWeight: 800 }}>{b}</span>
-                  ))}
-                  {getStats().badges.length > 3 && <span style={{ fontSize: 11, color: theme.textMuted }}>+{getStats().badges.length - 3}</span>}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 16, alignItems: "flex-end", justifyContent: "space-between" }}>
-              <div style={{ fontFamily: "monospace", fontSize: 11, color: theme.textMuted, whiteSpace: "pre", background: "rgba(139, 92, 246,0.05)", padding: 8, borderRadius: 8 }}>
-                {getStats().asciiChart}
-              </div>
-              <button
-                onClick={async () => {
-                  showToast("Génération du rapport...", "info");
-                  try {
-                    const r = await generateReport();
-                    alert(r);
-                  } catch (e) { showToast("Erreur", "error"); }
-                }}
-                style={{
-                  background: theme.primary, color: "white", border: "none", padding: "8px 16px", borderRadius: 8, fontWeight: 700, cursor: "pointer"
-                }}
-              >
-                📊 Mon rapport
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+    <div style={{
+      animation: "fadeUp 0.4s ease",
+      paddingBottom: practiceSubView === "chat"
+        ? 0
+        : "calc(140px + env(safe-area-inset-bottom, 24px))"
+    }}>
 
 
       <style>{`
@@ -3549,88 +3982,176 @@ ${SPEECH_HYGIENE_PROMPT}`,
         .magic-ink-text del::after { content: ''; position: absolute; left: 0; top: 55%; height: 2px; background: #EF4444; animation: ink-strike 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) forwards; box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
         .magic-ink-text ins { color: #10B981; text-decoration: none; font-weight: 800; display: inline-block; margin: 0 4px; animation: ink-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; position: relative; top: -6px; font-size: 0.9em; text-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
       `}</style>
-      {/* ══ HEADER ══ */}
+      {/* ══ HEADER (Fond Blanc Pur en Light Mode - Format Compact Réduit de Moitié) ══ */}
       <div style={{
         background: isDarkMode
-          ? "radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.2), transparent 70%), radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.15), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
-          : "radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.08), transparent 70%), radial-gradient(circle at 90% 80%, rgba(217, 70, 239, 0.06), transparent 70%), #FFFFFF",
-        borderRadius: 24, padding: "28px 32px", marginBottom: 24, position: "relative", overflow: "hidden",
-        boxShadow: isDarkMode ? "0 20px 50px rgba(0,0,0,0.5), 0 0 60px rgba(139, 92, 246,0.15)" : "0 12px 32px rgba(15,23,42,0.06)",
-        border: `1px solid ${isDarkMode ? "rgba(139,92,246,0.3)" : "rgba(139, 92, 246,0.18)"}`,
+          ? "radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.2), transparent 70%), radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.15), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
+          : "#FFFFFF",
+        borderRadius: 18, padding: "10px 18px", marginBottom: 12, position: "relative", overflow: "hidden",
+        boxShadow: isDarkMode ? "0 10px 24px rgba(0,0,0,0.35)" : "0 2px 12px rgba(0, 0, 0, 0.03)",
+        border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(15, 23, 42, 0.07)"}`,
       }} className="section-header academy-header ep-hero-card">
 
-        {/* Effet lumineux de fond Astral */}
-        <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400, background: "radial-gradient(circle, rgba(139,92,246,0.2) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none", animation: "pulseAstral 4s infinite" }} />
+        {/* Effet lumineux de fond Astral (Dark Mode uniquement pour préserver le fond blanc pur en Light Mode) */}
+        {isDarkMode && (
+          <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400, background: "radial-gradient(circle, rgba(37, 99, 235, 0.18) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none", animation: "pulseAstral 4s infinite" }} />
+        )}
         <div style={{ position: "absolute", top: -20, left: -20, fontSize: 160, opacity: isDarkMode ? 0.04 : 0.02, pointerEvents: "none" }}>🇬🇧</div>
 
-        {/* ── LIGNE DU HAUT : Titre & HUD RPG ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 24, marginBottom: 24, position: "relative", zIndex: 10 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: isDarkMode ? "#a78bfa" : "#7c3aed", letterSpacing: 3, marginBottom: 6, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>
-              ⚡ AI English Training Center
-            </div>
-            <h1 style={{ fontSize: 32, fontWeight: 900, color: theme.text, margin: 0, letterSpacing: "-0.5px" }}>
-              {practiceImmersionMode ? "Full Immersion 🇬🇧" : "Practice Room 🇬🇧"}
-            </h1>
-          </div>
+        {/* ── LIGNE DU HAUT : Titre & HUD RPG (Pliable / Compactable) ── */}
+        {(() => {
+          const xp = practiceStats.xp || 0;
+          const coins = practiceStats.coins || 0;
+          const streak = practiceStats.streak || 0;
+          const XP_LVLS = [0, 100, 250, 500, 900, 1400, 2100, 3000, 4200, 5800, 8000];
+          const getLvl = (x) => { let l = 0; for (let i = 0; i < XP_LVLS.length; i++) { if (x >= XP_LVLS[i]) l = i; } return l; };
+          const getLbl = (l) => ["Novice", "Apprentice", "Explorer", "Conversant", "Fluent", "Advanced", "Expert", "Master", "Grand Master", "Legend", "GOD"][Math.min(l, 10)];
+          const lvl = getLvl(xp);
+          const nextXP = XP_LVLS[Math.min(lvl + 1, XP_LVLS.length - 1)];
+          const prevXP = XP_LVLS[lvl];
+          const pct = lvl >= 10 ? 100 : Math.round(((xp - prevXP) / (nextXP - prevXP)) * 100);
 
-          {/* PLAYER STATUS BAR (HUD) */}
-          {(() => {
-            const xp = practiceStats.xp || 0;
-            const coins = practiceStats.coins || 0;
-            const streak = practiceStats.streak || 0;
-            const XP_LVLS = [0, 100, 250, 500, 900, 1400, 2100, 3000, 4200, 5800, 8000];
-            const getLvl = (x) => { let l = 0; for (let i = 0; i < XP_LVLS.length; i++) { if (x >= XP_LVLS[i]) l = i; } return l; };
-            const getLbl = (l) => ["Novice", "Apprentice", "Explorer", "Conversant", "Fluent", "Advanced", "Expert", "Master", "Grand Master", "Legend", "GOD"][Math.min(l, 10)];
-            const lvl = getLvl(xp);
-            const nextXP = XP_LVLS[Math.min(lvl + 1, XP_LVLS.length - 1)];
-            const prevXP = XP_LVLS[lvl];
-            const pct = lvl >= 10 ? 100 : Math.round(((xp - prevXP) / (nextXP - prevXP)) * 100);
-
+          if (isHudCollapsed) {
             return (
+              <div
+                className="ev-hud-collapsed-strip"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  marginBottom: 10,
+                  padding: "6px 14px",
+                  borderRadius: 12,
+                  background: isDarkMode ? "rgba(15, 23, 42, 0.75)" : "rgba(255, 255, 255, 0.9)",
+                  border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.18)"}`,
+                  backdropFilter: "blur(14px)",
+                  WebkitBackdropFilter: "blur(14px)",
+                  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
+                  cursor: "pointer",
+                  transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)"
+                }}
+                onClick={() => setIsHudCollapsed(false)}
+                title="Cliquer pour déplier l'en-tête et les statistiques complètes"
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: isDarkMode ? "#F8FAFC" : "#0F172A" }}>
+                    🇬🇧 {practiceImmersionMode ? "Full Immersion" : "Practice Room"}
+                  </span>
+                  <span style={{
+                    background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                    padding: "2px 8px", borderRadius: 8,
+                    fontSize: 11, fontWeight: 900, color: "white"
+                  }}>
+                    Lv.{lvl} {getLbl(lvl)}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: isDarkMode ? "#60A5FA" : "#2563EB" }}>
+                    {xp.toLocaleString()} XP
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 12 }}>🔥</span>
+                    <span style={{ fontWeight: 800, fontSize: 11.5, color: streak > 0 ? "#F59E0B" : theme?.textMuted || "#64748b" }}>{streak}j</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 12 }}>🪙</span>
+                    <span style={{ fontWeight: 800, fontSize: 11.5, color: isDarkMode ? "#FCD34D" : "#D97706" }}>{coins.toLocaleString()}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setIsHudCollapsed(false); }}
+                    style={{
+                      background: "rgba(37, 99, 235, 0.1)",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "3px 8px",
+                      color: isDarkMode ? "#93C5FD" : "#2563EB",
+                      fontSize: 10.5,
+                      fontWeight: 800,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Déplier ▼
+                  </button>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 10, position: "relative", zIndex: 10 }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                  <div style={{ fontSize: 10, fontWeight: 900, color: isDarkMode ? "#60A5FA" : "#2563EB", letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>
+                    ⚡ AI English Training Center
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsHudCollapsed(true)}
+                    style={{
+                      background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)",
+                      border: "1px solid var(--mm-border, rgba(0,0,0,0.08))",
+                      borderRadius: 6,
+                      padding: "1px 6px",
+                      fontSize: 9.5,
+                      fontWeight: 700,
+                      color: "var(--mm-fg-muted, #64748b)",
+                      cursor: "pointer"
+                    }}
+                    title="Réduire l'en-tête pour avoir plus d'espace"
+                  >
+                    ▲ Réduire
+                  </button>
+                </div>
+                <h1 style={{ fontSize: 18, fontWeight: 900, color: isDarkMode ? "#F8FAFC" : "#0F172A", margin: 0, letterSpacing: "-0.3px", lineHeight: 1.2 }}>
+                  {practiceImmersionMode ? "Full Immersion 🇬🇧" : "Practice Room 🇬🇧"}
+                </h1>
+              </div>
+
+              {/* PLAYER STATUS BAR (HUD COMPACT RÉDUIT DE MOITIÉ) */}
               <div style={{
-                background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(248, 250, 252, 0.9)",
-                border: `1px solid ${isDarkMode ? "rgba(139,92,246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
-                borderRadius: 20, padding: "14px 18px", display: "flex", flexDirection: "column", gap: 10,
-                backdropFilter: "blur(16px)", minWidth: 280, boxShadow: isDarkMode ? "0 10px 30px rgba(0,0,0,0.3)" : "0 6px 20px rgba(15,23,42,0.05)"
+                background: isDarkMode ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.88)",
+                border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.18)"}`,
+                borderRadius: 14, padding: "6px 12px", display: "flex", flexDirection: "column", gap: 5,
+                backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", minWidth: 240,
+                boxShadow: isDarkMode ? "0 6px 16px rgba(0,0,0,0.25)" : "0 2px 10px rgba(37, 99, 235, 0.06)"
               }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ background: "linear-gradient(135deg, #F59E0B, #EF4444)", padding: "4px 10px", borderRadius: 10, fontWeight: 900, fontSize: 12, color: "white", boxShadow: "0 2px 10px rgba(245, 158, 11, 0.3)" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ background: "linear-gradient(135deg, #2563EB, #1D4ED8)", padding: "2px 8px", borderRadius: 8, fontWeight: 900, fontSize: 11, color: "white" }}>
                       Lv.{lvl} {getLbl(lvl)}
                     </div>
-                    <div style={{ fontSize: 13, color: isDarkMode ? "#a78bfa" : "#7c3aed", fontWeight: 700 }}>{xp.toLocaleString()} XP</div>
+                    <div style={{ fontSize: 11.5, color: isDarkMode ? "#60A5FA" : "#1D4ED8", fontWeight: 700 }}>{xp.toLocaleString()} XP</div>
                   </div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <div title="Streak" style={{ display: "flex", alignItems: "center", gap: 4, background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)", borderRadius: 8, padding: "4px 8px" }}>
-                      <span style={{ fontSize: 14, animation: streak > 0 ? "pulse 1.5s infinite" : "none" }}>🔥</span>
-                      <span style={{ fontWeight: 900, color: streak > 0 ? "#FCD34D" : theme.textMuted, fontSize: 13 }}>{streak}j</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <div title="Streak" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(37, 99, 235, 0.05)", borderRadius: 6, padding: "2px 6px" }}>
+                      <span style={{ fontSize: 12, animation: streak > 0 ? "pulse 1.5s infinite" : "none" }}>🔥</span>
+                      <span style={{ fontWeight: 800, color: streak > 0 ? "#F59E0B" : theme?.textMuted || "#64748b", fontSize: 11.5 }}>{streak}j</span>
                     </div>
-                    <div title="Coins" style={{ display: "flex", alignItems: "center", gap: 4, background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)", borderRadius: 8, padding: "4px 8px" }}>
-                      <span style={{ fontSize: 14 }}>🪙</span>
-                      <span style={{ fontWeight: 900, color: isDarkMode ? "#FCD34D" : "#D97706", fontSize: 13 }}>{coins.toLocaleString()}</span>
+                    <div title="Coins" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(37, 99, 235, 0.05)", borderRadius: 6, padding: "2px 6px" }}>
+                      <span style={{ fontSize: 12 }}>🪙</span>
+                      <span style={{ fontWeight: 800, color: isDarkMode ? "#FCD34D" : "#D97706", fontSize: 11.5 }}>{coins.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>
                 <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: theme.textMuted, fontWeight: 800, marginBottom: 5, textTransform: "uppercase", letterSpacing: 1 }}>
-                    <span>Progression Niveau {lvl + 1}</span>
-                    <span>{pct}%</span>
-                  </div>
-                  <div style={{ height: 6, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", borderRadius: 3, overflow: "hidden", position: "relative" }}>
-                    <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, #8b5cf6, #8b5cf6, #ec4899)", borderRadius: 3, transition: "width 0.8s cubic-bezier(0.34, 1.56, 0.64, 1)" }} />
+                  <div style={{ height: 3, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(37, 99, 235, 0.1)", borderRadius: 2, overflow: "hidden", position: "relative" }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, #2563EB, #60A5FA)", borderRadius: 2, transition: "width 0.8s ease" }} />
                   </div>
                 </div>
                 {/* XP popup toast intra-HUD */}
                 {practiceXpPopup && (
-                  <div style={{ position: "absolute", top: -14, right: 0, background: "linear-gradient(135deg,#059669,#10B981)", color: "white", borderRadius: 10, padding: "4px 12px", fontWeight: 900, fontSize: 12, animation: "fadeUp 0.3s ease forwards", pointerEvents: "none", zIndex: 100, boxShadow: "0 4px 10px rgba(16,185,129,0.3)" }}>
-                    +{practiceXpPopup.xp} XP {practiceXpPopup.coins > 0 ? `• +${practiceXpPopup.coins} 🪙` : ""} {practiceXpPopup.label && `· ${practiceXpPopup.label}`}
+                  <div style={{ position: "absolute", top: -12, right: 0, background: "linear-gradient(135deg,#059669,#10B981)", color: "white", borderRadius: 8, padding: "2px 8px", fontWeight: 900, fontSize: 10.5, animation: "fadeUp 0.3s ease forwards", pointerEvents: "none", zIndex: 100, boxShadow: "0 4px 10px rgba(16,185,129,0.3)" }}>
+                    +{practiceXpPopup.xp} XP {practiceXpPopup.coins > 0 ? `• +${practiceXpPopup.coins} 🪙` : ""}
                   </div>
                 )}
               </div>
-            );
-          })()}
-        </div>
+            </div>
+          );
+        })()}
 
         {/* ── COMMAND DOCK : BARRE UNIQUE STICKY (toutes les vues) ── */}
         <div style={{
@@ -3641,28 +4162,47 @@ ${SPEECH_HYGIENE_PROMPT}`,
           marginLeft: -36, marginRight: -36, paddingLeft: 36, paddingRight: 36,
           paddingTop: 12, paddingBottom: 12,
         }}>
-          <button
-            type="button"
-            className="english-tabs-toggle ep-tabs-toggle"
-            onClick={() => document.body.classList.toggle("english-tabs-expanded")}
-            aria-label="Afficher / cacher les modes"
-            style={{ display: "none" }}
-          >
-            ☰ Modes & outils
-          </button>
+          {/* ── Modes & Outils + New Session (sur la même ligne) ── */}
+          <div className="ep-modes-header-row" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, width: "100%", marginBottom: 8 }}>
+            <button
+              type="button"
+              className="english-tabs-toggle ep-tabs-toggle"
+              onClick={() => document.body.classList.toggle("english-tabs-expanded")}
+              aria-label="Afficher / cacher les modes"
+              style={{ display: "none", flex: 1, margin: 0, height: 42 }}
+            >
+              ☰ Modes & outils
+            </button>
+            {practiceSubView === "chat" && (
+              <button
+                type="button"
+                onClick={resetPracticeChat}
+                className="ep-new-session-btn hov"
+                style={{
+                  height: 42, padding: "0 16px",
+                  background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))",
+                  border: "1px solid var(--mm-primary-glow)", borderRadius: 14, color: "white",
+                  fontWeight: 900, fontSize: 13, cursor: "pointer",
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.25)",
+                  whiteSpace: "nowrap", flexShrink: 0
+                }}
+              >
+                <span>🔄</span> New Session
+              </button>
+            )}
+          </div>
           <div className="ep-tabbar-row">
             <span className="ep-tabbar-label">Piliers</span>
             <div className="tabs-scroll english-tabs-cluster ep-tabbar" role="tablist" aria-label="Modes de pratique">
               {[
-                { id: "sprint", icon: "⚡", label: "Sprint (15m)", accent: "#EC4899" },
-                { id: "chat", icon: "🎙️", label: "Live Nova", accent: "#8B5CF6" },
-                { id: "accent", icon: "🗣️", label: "Dojo Phonétique", accent: "#A855F7" },
+                { id: "chat", icon: "🎙️", label: "Live Nova", accent: "var(--mm-primary)" },
+                { id: "reallife", icon: "🌍", label: "RealLife", accent: "#F97316" },
                 { id: "wild", icon: "📺", label: "In The Wild", accent: "#F97316" },
                 { id: "debate", icon: "⚖️", label: "Débat", accent: "#EAB308" },
                 { id: "roleplay", icon: "🎭", label: "Roleplay", accent: "#D946EF" },
                 { id: "writing", icon: "📝", label: "Écriture", accent: "#22C55E" },
-                { id: "dictation", icon: "✍️", label: "Dictée", accent: "#A855F7" },
-                { id: "cefr", icon: "📊", label: "CEFR", accent: "#8B5CF6" },
+                { id: "dictation", icon: "✍️", label: "Dictée", accent: "var(--mm-primary)" },
               ].map(tab => {
                 const isActive = practiceSubView === tab.id;
                 return (
@@ -3682,441 +4222,1534 @@ ${SPEECH_HYGIENE_PROMPT}`,
             </div>
           </div>
         </div>
-
-        {/* ── Cockpit chat simplifié — uniquement New Session ── */}
-        {practiceSubView === "chat" && (
-          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
-            <button onClick={resetPracticeChat} className="hov" style={{
-              padding: "12px 24px", background: "linear-gradient(135deg, #7C3AED, #6D28D9)",
-              border: "1px solid #C084FC", borderRadius: 12, color: "white",
-              fontWeight: 900, fontSize: 14, cursor: "pointer", height: 42,
-              boxShadow: "0 0 20px rgba(124, 58, 237,0.4)", display: "flex", alignItems: "center", gap: 8
-            }}>
-              <span>🔄</span> New Session
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* ══ SPRINT QUOTIDIEN DE FLUIDITÉ (15 MIN) ══ */}
-      {practiceSubView === "sprint" && (
-        <DailyFluencySprint
-          callClaude={callClaude}
-          getNextGroqKey={getNextGroqKey}
-          storage={storage}
-          expressions={expressions}
-          setExpressions={setExpressions}
-          showToast={showToast}
-          awardXP={awardXP}
-          theme={theme}
-          isDarkMode={isDarkMode}
-          englishCategory={englishCategory}
-          onSwitchToLiveVoice={() => switchSubView("chat")}
-        />
-      )}
+
 
       {/* ══ CHAT ══ */}
       {practiceSubView === "chat" && (
         <div
           onClick={markInteracted}
           onKeyDown={markInteracted}
-          className="ep-glass-panel"
+          className="ep-glass-panel ep-live-nova-panel"
           style={{
             position: "relative",
-            border: `1px solid ${isDarkMode ? "rgba(139,92,246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
+            border: `1px solid ${isDarkMode ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.22)"}`,
             borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column",
-            height: "clamp(360px, 62vh, 520px)",
-            boxShadow: isDarkMode ? "0 16px 36px rgba(0,0,0,0.4)" : "0 10px 28px rgba(15,23,42,0.06)"
+            height: "clamp(440px, 70vh, 640px)",
+            paddingBottom: 0,
+            boxShadow: isDarkMode ? "0 16px 36px rgba(0,0,0,0.4)" : "0 10px 28px rgba(37,99,235,0.08)"
           }}
         >
-          {/* ── CHAT TOP HEADER BAR (historique + nom) ── */}
+          {/* ── CHAT TOP HEADER BAR (Statut + Historique + Profil) ── */}
           <div style={{
-            padding: "10px 16px",
-            borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"}`,
-            background: isDarkMode ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)",
-            display: "flex", alignItems: "center", justifyContent: "space-between"
+            padding: "10px 14px",
+            borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(37, 99, 235, 0.12)"}`,
+            background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(241, 245, 249, 0.85)",
+            backdropFilter: "blur(14px)",
+            WebkitBackdropFilter: "blur(14px)",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+            flexWrap: "wrap"
           }}>
-            <button
-              onClick={() => setChatShowHistory(p => !p)}
-              style={{
-                background: chatShowHistory ? (isDarkMode ? "rgba(139,92,246,0.35)" : "rgba(139, 92, 246,0.15)") : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"),
-                border: "none", color: chatShowHistory ? (isDarkMode ? "#A78BFA" : "#7C3AED") : theme.textMuted,
-                padding: "6px 12px", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: "bold",
-                transition: "all 0.2s"
-              }}
-            >
-              📜 {chatShowHistory ? "Masquer l'historique" : "Historique"}
-            </button>
+            {/* Statut Nova */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              <div style={{ position: "relative", width: 9, height: 9, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ position: "absolute", inset: -2, borderRadius: "50%", background: "#10B981", animation: "ping 2s cubic-bezier(0, 0, 0.2, 1) infinite", opacity: 0.6 }} />
+                <span style={{ position: "relative", width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
+              </div>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#1E40AF", letterSpacing: "0.2px" }}>
+                Coach NOVA
+              </span>
+              <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.08)", color: isDarkMode ? "#93C5FD" : "#2563EB", fontWeight: 700 }}>
+                En direct
+              </span>
+            </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {studentName ? (
-                <button
-                  title="Changer de nom"
-                  onClick={() => {
-                    const n = window.prompt("Quel est ton prénom ?", studentName);
-                    if (n !== null) {
-                      const trimmed = n.trim();
-                      setStudentName(trimmed);
-                      try { localStorage.setItem("nova_student_name", trimmed); } catch { }
-                    }
-                  }}
-                  style={{
-                    background: "linear-gradient(135deg, #8b5cf6, #8b5cf6)",
-                    border: "none", color: "white", padding: "5px 12px", borderRadius: 20, cursor: "pointer",
-                    fontSize: 12, fontWeight: "bold", boxShadow: "0 2px 8px rgba(139, 92, 246,0.3)"
-                  }}
-                >
-                  👤 {studentName}
-                </button>
+            {/* Actions & Profil : STRICTEMENT SUR LA MÊME LIGNE */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", flexShrink: 0 }}>
+              {/* Toggle Sous-titres ON / OFF */}
+              <button
+                type="button"
+                onClick={() => {
+                  setSubtitlesEnabled(prev => {
+                    const next = !prev;
+                    try { localStorage.setItem("nova_subtitles_enabled", String(next)); } catch { }
+                    return next;
+                  });
+                }}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: subtitlesEnabled
+                    ? (isDarkMode ? "rgba(37,99,235,0.3)" : "rgba(37,99,235,0.14)")
+                    : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"),
+                  border: `1px solid ${subtitlesEnabled ? (isDarkMode ? "rgba(59,130,246,0.35)" : "rgba(59,130,246,0.25)") : "transparent"}`,
+                  color: subtitlesEnabled ? (isDarkMode ? "#93C5FD" : "#1D4ED8") : theme.textMuted,
+                  padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700,
+                  whiteSpace: "nowrap",
+                  transition: "all 0.2s ease"
+                }}
+                title="Activer ou désactiver les sous-titres en direct"
+              >
+                💬 Sous-titres : <span style={{ fontWeight: 900 }}>{subtitlesEnabled ? "ON" : "OFF"}</span>
+              </button>
+
+              <button
+                onClick={() => setChatShowHistory(p => !p)}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: chatShowHistory
+                    ? (isDarkMode ? "rgba(37,99,235,0.3)" : "rgba(37,99,235,0.14)")
+                    : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.9)"),
+                  border: `1px solid ${isDarkMode ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.2)"}`,
+                  color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+                  padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700,
+                  whiteSpace: "nowrap",
+                  transition: "all 0.2s"
+                }}
+              >
+                📜 {chatShowHistory ? "Masquer" : "Historique"}
+              </button>
+
+              <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                {studentName ? (
+                  <button
+                    title="Changer de nom"
+                    onClick={() => {
+                      const n = window.prompt("Quel est ton prénom ?", studentName);
+                      if (n !== null) {
+                        const trimmed = n.trim();
+                        setStudentName(trimmed);
+                        try { localStorage.setItem("nova_student_name", trimmed); } catch { }
+                      }
+                    }}
+                    style={{
+                      background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                      border: "none", color: "white", padding: "4px 10px", borderRadius: 16, cursor: "pointer",
+                      fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)",
+                      whiteSpace: "nowrap", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis"
+                    }}
+                  >
+                    👤 {studentName}
+                  </button>
+                ) : (
+                  <button
+                    title="Dis ton prénom à NOVA"
+                    onClick={() => {
+                      const n = window.prompt("Quel est ton prénom ? NOVA s'en souviendra 🎉");
+                      if (n !== null) {
+                        const trimmed = n.trim();
+                        setStudentName(trimmed);
+                        try { localStorage.setItem("nova_student_name", trimmed); } catch { }
+                      }
+                    }}
+                    style={{
+                      background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.9)",
+                      border: `1px dashed ${isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(59,130,246,0.35)"}`,
+                      color: isDarkMode ? theme.textMuted : "#1D4ED8",
+                      padding: "4px 8px", borderRadius: 16, cursor: "pointer", fontSize: 11, fontWeight: 700,
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    + Ton prénom
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── HUD RADAR LEXICAL — CIBLES ORALES DU JOUR (Niveau 100) ── */}
+          <div className="ev-nova-daily-hud">
+            <div className="ev-nova-hud-left">
+              <button
+                type="button"
+                onClick={() => {
+                  setNovaDailyTargetMode(prev => {
+                    const next = prev === "daily" ? "free" : "daily";
+                    try { localStorage.setItem("nova_daily_target_mode", next); } catch { }
+                    return next;
+                  });
+                }}
+                className={`ev-nova-hud-toggle-btn ${novaDailyTargetMode === "daily" ? "is-daily" : "is-free"}`}
+                title={novaDailyTargetMode === "daily" ? "Clique pour basculer en conversation libre" : "Clique pour activer le focus fiches du jour"}
+              >
+                <span>{novaDailyTargetMode === "daily" ? "🎯 Focus du jour" : "☕ Mode libre"}</span>
+                {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 && (
+                  <span style={{ opacity: 0.9, fontSize: 10, fontWeight: 900 }}>
+                    ({spokenTargetIds.size}/{dailyOralTargetsData.targets.length})
+                  </span>
+                )}
+              </button>
+            </div>
+
+            <div className="ev-nova-hud-chips">
+              {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? (
+                dailyOralTargetsData.targets.map(target => {
+                  const isSpoken = spokenTargetIds.has(target.id);
+                  return (
+                    <span
+                      key={target.id}
+                      className={`ev-nova-target-chip ${isSpoken ? "is-spoken" : ""}`}
+                      title={target.back ? `${target.front} = ${target.back}` : target.front}
+                    >
+                      {isSpoken ? (
+                        <span className="chip-check">✓</span>
+                      ) : (
+                        <span className="chip-dot" />
+                      )}
+                      <span>{target.front}</span>
+                    </span>
+                  );
+                })
               ) : (
-                <button
-                  title="Dis ton prénom à NOVA"
-                  onClick={() => {
-                    const n = window.prompt("Quel est ton prénom ? NOVA s'en souviendra 🎉");
-                    if (n !== null) {
-                      const trimmed = n.trim();
-                      setStudentName(trimmed);
-                      try { localStorage.setItem("nova_student_name", trimmed); } catch { }
-                    }
-                  }}
-                  style={{
-                    background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)",
-                    border: `1px dashed ${isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.2)"}`,
-                    color: theme.textMuted, padding: "5px 10px", borderRadius: 20, cursor: "pointer", fontSize: 12, fontWeight: "bold"
-                  }}
-                >
-                  + Ton prénom
-                </button>
+                <span style={{ fontSize: 11, color: isDarkMode ? "#94A3B8" : "#64748B", fontStyle: "italic" }}>
+                  {novaDailyTargetMode === "free"
+                    ? "Conversation libre — parle de n'importe quel sujet"
+                    : "Aucune fiche cible — conversation ouverte"}
+                </span>
               )}
             </div>
           </div>
 
           {/* ── Messages list ── */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px", display: "flex", flexDirection: "column", gap: 14 }}>
-            {practiceMessages.length === 0 && !practiceLoading && (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                <div style={{ fontSize: 48, marginBottom: 16 }}>👋</div>
-                <h3 style={{ margin: "0 0 8px 0", color: theme.text }}>Prêt à pratiquer ?</h3>
-                <p style={{ margin: "0 0 24px 0", color: theme.textMuted, fontSize: 14, textAlign: "center", maxWidth: 300 }}>
-                  Commencez une conversation libre avec Nova, votre coach vocal IA.
+          <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+            {practiceMessages.length === 0 && !practiceLoading && !customAgent.isConnected && (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px 0" }}>
+                <div style={{
+                  width: 60, height: 60, borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(37,99,235,0.18), transparent 70%)",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 12
+                }}>
+                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "🎯" : "✨"}
+                </div>
+                <h3 style={{ margin: "0 0 6px 0", color: theme.text, fontSize: 18, fontWeight: 800 }}>
+                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0
+                    ? (dailyOralTargetsData.totalReviewedToday > 0 ? "Prêt pour tes fiches du jour ?" : "Prêt à t'entraîner avec Nova ?")
+                    : "Ready to chat?"}
+                </h3>
+                <p style={{ margin: "0 0 18px 0", color: theme.textMuted, fontSize: 13.5, textAlign: "center", maxWidth: 340, lineHeight: 1.5 }}>
+                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0
+                    ? `Nova lance un sujet immersif pour t'amener naturellement à placer tes ${dailyOralTargetsData.targets.length} expressions cibles.`
+                    : "Démarre une conversation vivante avec NOVA, ton coach d’anglais interactif."}
                 </p>
                 <button
                   onClick={() => generateDynamicGreeting()}
                   style={{
-                    background: "linear-gradient(135deg, var(--mm-primary), #8b5cf6)",
-                    color: "white", border: "none", padding: "14px 28px", borderRadius: 999, fontWeight: 800, fontSize: 15, cursor: "pointer", boxShadow: "0 4px 16px rgba(139,92,246,0.3)"
+                    background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                    color: "white", border: "none", padding: "12px 24px", borderRadius: 999, fontWeight: 800, fontSize: 14, cursor: "pointer",
+                    boxShadow: "0 6px 20px rgba(37, 99, 235, 0.35)", transition: "transform 0.15s ease"
                   }}
                 >
-                  Commencer la conversation
+                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "🎙️ Lancer la mission du jour" : "Démarrer la discussion"}
                 </button>
               </div>
             )}
-            {(() => {
-              if (customAgent.isConnected) return null;
+
+            {/* Messages statiques (affichés hors connexion ou en attente de la 1ère parole LiveKit) */}
+            {(!customAgent.isConnected || (subtitlesEnabled && liveKitTranscriptions.length === 0)) && (() => {
               const lastUser = [...practiceMessages].reverse().find(msg => msg.role === 'user');
               const lastAgent = [...practiceMessages].reverse().find(msg => msg.role !== 'user');
               const displayMessages = chatShowHistory
                 ? practiceMessages
                 : practiceMessages.filter(m => m === lastUser || m === lastAgent);
-              return displayMessages.map((msg, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}>
-                  <div
-                    data-chat-bubble
-                    className={msg.role === "user" ? "ep-user-bubble" : "ep-coach-bubble"}
-                    style={{ maxWidth: "80%" }}
-                  >
-                    {msg.text}
-                    {msg.needsPlay && (
-                      <button
-                        onClick={() => { markInteracted(); speakText(msg.text, true); }}
-                        style={{ display: "block", marginTop: 8, background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontSize: 12, color: "white" }}
-                      >
-                        🔊 Écouter
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ));
-            })()}
-
-            {customAgent.isConnected && (() => {
-              // liveKitTranscriptions est maintenant un tableau unifié { id, role, text, isFinal, ts }
-              const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.role === "user");
-              const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.role === "agent" && msg.isFinal);
-              const displayLkMsgs = liveKitTranscriptions.filter(m => m === lastLkUser || m === lastLkAgent);
-
-              return displayLkMsgs.map((msg, i) => {
+              return displayMessages.map((msg, i) => {
                 const isUser = msg.role === "user";
                 return (
-                  <div key={msg.id || `lk-${i}`} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginTop: 8 }}>
-                    <div data-chat-bubble style={{
-                      maxWidth: "80%", padding: "12px 16px", borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-                      wordBreak: "break-word",
-                      background: isUser
-                        ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
-                        : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(139, 92, 246,0.05)"),
-                      color: isUser ? "white" : theme.text,
-                      fontSize: 15, lineHeight: 1.6, fontWeight: 500,
-                      boxShadow: isUser ? "0 4px 12px rgba(139, 92, 246,0.3)" : "none",
-                      border: !isUser ? `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.05)"}` : "none",
-                      opacity: msg.isFinal ? 1 : 0.65,
-                      fontStyle: msg.isFinal ? "normal" : "italic",
-                    }}>
-                      {msg.text}
-                      {!msg.isFinal && <span style={{ display: "inline-block", marginLeft: 4, animation: "pulse 1.5s infinite", opacity: 0.7 }}>…</span>}
+                  <div key={i} style={{ display: "flex", gap: 10, justifyContent: isUser ? "flex-end" : "flex-start", alignItems: "flex-end" }}>
+                    {!isUser && (
+                      <div style={{
+                        width: 34, height: 34, borderRadius: "50%", flexShrink: 0,
+                        background: "linear-gradient(135deg, #2563EB, #60A5FA)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 16, color: "white", boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)"
+                      }}>
+                        ✨
+                      </div>
+                    )}
+                    <div
+                      data-chat-bubble
+                      className={isUser ? "ep-user-bubble" : "ep-coach-bubble"}
+                      style={{
+                        maxWidth: "82%",
+                        background: isUser
+                          ? "linear-gradient(135deg, #2563EB, #1D4ED8)"
+                          : (isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.96)"),
+                        color: isUser ? "#FFFFFF" : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                        borderRadius: isUser ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
+                        border: isUser ? "none" : `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.2)"}`,
+                        boxShadow: isUser ? "0 6px 18px rgba(37, 99, 235, 0.28)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.08)"),
+                        padding: "14px 18px", fontSize: 14.5, lineHeight: 1.6
+                      }}
+                    >
+                      {!isUser && (
+                        <div style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#2563EB", marginBottom: 4, letterSpacing: "0.4px" }}>
+                          COACH NOVA
+                        </div>
+                      )}
+                      <div>{msg.text}</div>
+                      {msg.needsPlay && (
+                        <button
+                          onClick={() => { markInteracted(); speakText(msg.text, true); }}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                            marginTop: 10, background: isUser ? "rgba(255,255,255,0.2)" : (isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.1)"),
+                            border: `1px solid ${isUser ? "rgba(255,255,255,0.3)" : "rgba(37,99,235,0.2)"}`,
+                            borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                            color: isUser ? "white" : (isDarkMode ? "#93C5FD" : "#1D4ED8"), transition: "all 0.15s"
+                          }}
+                        >
+                          🔊 Écouter
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
               });
             })()}
+
+            {/* Transcriptions LiveKit en temps réel (si Sous-titres ON) */}
+            {customAgent.isConnected && subtitlesEnabled && (() => {
+              const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.role === "user");
+              const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.role === "agent");
+              const displayLkMsgs = chatShowHistory
+                ? liveKitTranscriptions
+                : liveKitTranscriptions.filter(m => m === lastLkUser || m === lastLkAgent);
+
+              return displayLkMsgs.map((msg, i) => {
+                const isUser = msg.role === "user";
+                return (
+                  <div key={msg.id || `lk-${i}`} style={{ display: "flex", gap: 10, justifyContent: isUser ? "flex-end" : "flex-start", alignItems: "flex-end", marginTop: 8 }}>
+                    {!isUser && (
+                      <div style={{
+                        width: 34, height: 34, borderRadius: "50%", flexShrink: 0,
+                        background: "linear-gradient(135deg, #2563EB, #60A5FA)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 16, color: "white", boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)"
+                      }}>
+                        ✨
+                      </div>
+                    )}
+                    <div data-chat-bubble style={{
+                      maxWidth: "82%", padding: "14px 18px",
+                      borderRadius: isUser ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
+                      wordBreak: "break-word",
+                      background: isUser
+                        ? "linear-gradient(135deg, #2563EB, #1D4ED8)"
+                        : (isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.96)"),
+                      color: isUser ? "#FFFFFF" : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                      fontSize: 14.5, lineHeight: 1.6, fontWeight: 500,
+                      boxShadow: isUser ? "0 6px 18px rgba(37, 99, 235, 0.28)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.08)"),
+                      border: isUser ? "none" : `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.2)"}`,
+                      opacity: msg.isFinal ? 1 : 0.88,
+                    }}>
+                      {!isUser && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#2563EB", letterSpacing: "0.4px" }}>
+                            COACH NOVA
+                          </span>
+                          {!msg.isFinal && (
+                            <span style={{ fontSize: 10, background: "rgba(37,99,235,0.15)", color: isDarkMode ? "#93C5FD" : "#2563EB", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
+                              en direct…
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div>
+                        {msg.text}
+                        {!msg.isFinal && <span style={{ display: "inline-block", marginLeft: 4, animation: "pulse 1s infinite", color: "#2563EB" }}>●</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+
             {practiceLoading && (
-              <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                <div style={{ padding: "12px 20px", borderRadius: "18px 18px 18px 4px", background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(139, 92, 246,0.05)", border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.05)"}`, display: "flex", gap: 6, alignItems: "center" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: theme.primary, animation: "pulse 0.8s infinite" }} />
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: theme.primary, animation: "pulse 0.8s 0.2s infinite" }} />
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: theme.primary, animation: "pulse 0.8s 0.4s infinite" }} />
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <div style={{ width: 34, height: 34, borderRadius: "50%", background: "linear-gradient(135deg, #2563EB, #60A5FA)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white" }}>
+                  ✨
                 </div>
+                <div style={{ padding: "12px 18px", borderRadius: "18px 18px 18px 4px", background: isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.95)", border: `1px solid rgba(59, 130, 246, 0.2)`, display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s infinite" }} />
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s 0.2s infinite" }} />
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s 0.4s infinite" }} />
+                </div>
+              </div>
+            )}
+
+            {/* Mode Immersion Audio Pure (quand Sous-titres OFF pendant l'appel vocal) */}
+            {customAgent.isConnected && !subtitlesEnabled && (
+              <div style={{
+                flex: 1, display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center", padding: "28px 16px", gap: 16,
+                animation: "fadeIn 0.3s ease"
+              }}>
+                <div style={{
+                  width: 72, height: 72, borderRadius: "50%",
+                  background: "radial-gradient(circle, rgba(37,99,235,0.18), transparent 70%)",
+                  border: "1px solid rgba(59,130,246,0.3)",
+                  display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32,
+                  boxShadow: "0 8px 24px rgba(37,99,235,0.15)"
+                }}>
+                  🎧
+                </div>
+
+                {/* Ondes acoustiques animées */}
+                <div style={{ display: "flex", alignItems: "center", gap: 5, height: 28 }}>
+                  {[0.4, 0.8, 1.2, 0.6, 0.9, 0.5, 0.7].map((delay, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        width: 4, height: 24, borderRadius: 2,
+                        background: "linear-gradient(180deg, #2563EB, #60A5FA)",
+                        animation: customAgent.isSpeaking ? `mm-pulse 1s infinite ${delay * 0.2}s` : "none",
+                        opacity: customAgent.isSpeaking ? 1 : 0.4
+                      }}
+                    />
+                  ))}
+                </div>
+
+                <div style={{ textAlign: "center", maxWidth: 320 }}>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: theme.text, marginBottom: 4 }}>
+                    Immersion Audio Pure
+                  </div>
+                  <div style={{ fontSize: 13, color: theme.textMuted, lineHeight: 1.5 }}>
+                    {customAgent.isSpeaking ? "Écoute attentivement la voix de NOVA..." : "Parle librement dans ton micro..."}
+                  </div>
+                </div>
+
+                {/* Bouton de secours pour réactiver les sous-titres en 1 clic */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubtitlesEnabled(true);
+                    try { localStorage.setItem("nova_subtitles_enabled", "true"); } catch { }
+                  }}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "8px 16px", borderRadius: 12,
+                    background: isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.1)",
+                    border: "1px solid rgba(59,130,246,0.3)",
+                    color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+                    fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                    transition: "all 0.2s ease"
+                  }}
+                >
+                  👁️ Révéler les sous-titres
+                </button>
               </div>
             )}
             <div ref={practiceEndRef} />
           </div>
 
-          <div style={{ padding: "16px 20px", borderTop: "1px solid var(--mm-border-strong)", background: "var(--mm-bg-overlay)", backdropFilter: "var(--mm-blur)" }}>
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              {/* Conteneur unifié pour l'input et la barre vocale */}
-              <div style={{
-                flex: 1, display: "flex", alignItems: "center", gap: 8,
-                background: customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.05)" : "#F0FDF4") : "var(--mm-bg-elev)",
-                border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.3)" : "#86EFAC") : "var(--mm-border-strong)"}`,
-                borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
+          {/* ── DOCK VOCAL COMPACT STYLE CHATGPT (Épuré & Ultra-gain d'espace) ── */}
+          <div style={{
+            padding: "10px 16px",
+            borderTop: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(37, 99, 235, 0.12)"}`,
+            background: isDarkMode
+              ? "linear-gradient(180deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 15, 28, 0.98) 100%)"
+              : "linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(241, 245, 249, 0.98) 100%)",
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            marginTop: "auto",
+            borderRadius: "0 0 24px 24px",
+            position: "relative",
+            zIndex: 10
+          }}>
+            {/* Statut de session / topic en direct */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+              <span style={{
+                position: "relative", width: 8, height: 8, borderRadius: "50%",
+                background: customAgent.isConnected ? "#10B981" : (isDarkMode ? "#60A5FA" : "#2563EB"),
+                boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "none",
+                flexShrink: 0
               }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: "50%",
-                    background: customAgent.isConnected ? "#10B981" : "var(--mm-primary)",
-                    boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "0 0 10px var(--mm-primary-glow)",
-                    animation: customAgent.isConnected ? "mm-pulse 1.5s infinite" : "none"
+                {customAgent.isConnected && (
+                  <span style={{
+                    position: "absolute", inset: -3, borderRadius: "50%",
+                    border: "2px solid #10B981", animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite", opacity: 0.6
                   }} />
-                  {customAgent.isConnected && (
-                    <span style={{ fontSize: 12, fontWeight: 800, color: "#10B981", whiteSpace: "nowrap" }} className="hide-mobile">
-                      {customAgent.isSpeaking ? "🗣️ Coach parle" : "👂 T'écoute"}
-                    </span>
-                  )}
-                </div>
-
-                <input
-                  value={customAgent.isConnected ? "" : practiceInput}
-                  onChange={e => { if (customAgent.isConnected) return; markInteracted(); setPracticeInput(e.target.value); }}
-                  onKeyDown={e => { if (customAgent.isConnected) return; markInteracted(); if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); stopSpeaking(); sendPracticeMessage(practiceInput, true); } }}
-                  placeholder={customAgent.isConnected
-                    ? (liveKitState?.state === "speaking" ? "Coach NOVA parle..."
-                      : liveKitState?.state === "listening" ? "Je vous écoute..."
-                        : liveKitState?.state === "thinking" ? "Je réfléchis..."
-                          : "Connexion en cours...")
-                    : "Tape ton message en anglais..."}
-                  style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 15, fontWeight: 500, minWidth: 0, fontStyle: customAgent.isConnected ? "italic" : "normal" }}
-                  disabled={practiceLoading || customAgent.isConnected}
-                />
-
-                {/* ── Bouton micro : agent unique LiveKit ──────────────────
-                    FIX : le NovaMicButton (pipeline vocal séparé Groq STT/TTS,
-                    complètement indépendant du worker LiveKit "assistant-53a")
-                    a été retiré ici. Il ne reste plus qu'un seul agent vocal
-                    dans toute l'app — LiveKit — comme c'était déjà le cas
-                    dans Débat, Roleplay et IELTS. */}
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-
-                  {/* ── LiveKit Voice Agent Button ── */}
-                  <AgentVoiceBar
-                    agent={agent}
-                    variant="minimal"
-                    onStart={() => {
-                      // 🔑 MOBILE FIX: débloque l'AudioContext de façon synchrone
-                      // avant tout await (iOS/Android autoplay policy).
-                      armIosAudio();
-                      setAgentTranscript([]);
-                      setAgentError("");
-                      agent.start(MODE_CONFIGS.chat({ topic: practiceTopic || "Free conversation", level: practiceLevel }));
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* ── Bannière "Nova = fallback illimité" quand ElevenLabs KO ── */}
-              {agent.status === "unavailable" && (
-                <div style={{
-                  marginTop: 10,
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  lineHeight: 1.5,
-                  background: isDarkMode ? "rgba(16,185,129,0.08)" : "#ECFDF5",
-                  color: isDarkMode ? "#6EE7B7" : "#065F46",
-                  border: `1px solid ${isDarkMode ? "rgba(16,185,129,0.25)" : "#A7F3D0"}`,
-                  display: "flex", alignItems: "center", gap: 10,
+                )}
+              </span>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{
+                  fontSize: 13, fontWeight: 800,
+                  color: customAgent.isConnected
+                    ? (customAgent.isSpeaking ? "#10B981" : (isDarkMode ? "#93C5FD" : "#1D4ED8"))
+                    : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
                 }}>
-                  <span style={{ fontSize: 18 }}>🟢</span>
-                  <span>
-                    Quota des coachs vocaux ElevenLabs épuisé ce mois-ci.
-                    <b> Nova (gratuit & illimité)</b> prend le relais — appuie sur le
-                    micro vert pour continuer à parler comme d'habitude. Les fiches
-                    sont toujours créées automatiquement à la volée.
-                  </span>
-                </div>
-              )}
-
-              {/* Send Button */}
-              <button
-                onClick={() => { if (customAgent.isConnected) return; markInteracted(); stopSpeaking(); sendPracticeMessage(practiceInput, true); }}
-                disabled={!practiceInput.trim() || practiceLoading || customAgent.isConnected}
-                className="chat-send-btn"
-                style={{
-                  width: 50, height: 50, borderRadius: 16,
-                  background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg,
-                  border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`,
-                  cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default",
-                  fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                  opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s",
-                  boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px rgba(139, 92, 246,0.4)" : "none",
-                  color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted
-                }}
-              >
-                {practiceLoading ? "⏳" : "➤"}
-              </button>
+                  {customAgent.isConnected
+                    ? (liveKitState?.state === "speaking" || customAgent.isSpeaking
+                      ? "NOVA parle..."
+                      : liveKitState?.state === "listening"
+                        ? "NOVA t'écoute..."
+                        : liveKitState?.state === "thinking"
+                          ? "NOVA réfléchit..."
+                          : liveKitState?.state === "connecting" || !liveKitState?.state
+                            ? "⚡ NOVA arrive en direct..."
+                            : "NOVA est prête")
+                    : "Session vocale NOVA"}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 500, color: isDarkMode ? "#94A3B8" : "#64748B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {practiceTopic ? `Sujet : ${practiceTopic}` : "Parle librement en anglais"}
+                </span>
+              </div>
             </div>
 
-            {/* Messages d'erreur du micro / agent */}
-            {agentError && (
-              <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
-                {agentError}
-              </div>
-            )}
+            {/* Groupe d'actions vocales & compteur de fiches mémos */}
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
+              <AgentVoiceBar
+                agent={agent}
+                variant="chatgpt"
+                onStart={() => {
+                  armIosAudio();
+                  setAgentTranscript([]);
+                  setAgentError("");
+                  agent.start(MODE_CONFIGS.chat({ topic: practiceTopic || "Free conversation", level: practiceLevel }));
+                }}
+              />
+
+              {/* Bouton Compteur de fiches créées durant la session (48px rond) */}
+              <button
+                type="button"
+                onClick={handleViewSessionCreatedCards}
+                title={
+                  sessionCardsCount === 0
+                    ? "0 fiche créée durant cette session"
+                    : `${sessionCardsCount} fiche${sessionCardsCount > 1 ? "s ont été créées" : " a été créée"} durant cette session — Cliquer pour voir`
+                }
+                aria-label={`${sessionCardsCount} fiches créées durant cette session`}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: "50%",
+                  cursor: sessionCardsCount > 0 ? "pointer" : "default",
+                  display: "inline-flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: sessionCardsCount > 0
+                    ? (isDarkMode
+                        ? "linear-gradient(135deg, rgba(37,99,235,0.4), rgba(29,78,216,0.65))"
+                        : "linear-gradient(135deg, #EFF6FF, #DBEAFE)")
+                    : (isDarkMode ? "rgba(30, 41, 59, 0.65)" : "rgba(241, 245, 249, 0.85)"),
+                  border: sessionCardsCount > 0
+                    ? `1.5px solid ${isDarkMode ? "rgba(96,165,250,0.65)" : "rgba(37,99,235,0.5)"}`
+                    : `1px solid ${isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+                  boxShadow: sessionCardsCount > 0
+                    ? (isDarkMode
+                        ? "0 4px 14px rgba(37, 99, 235, 0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
+                        : "0 4px 14px rgba(37, 99, 235, 0.22), inset 0 1px 0 rgba(255,255,255,0.85)")
+                    : "none",
+                  position: "relative",
+                  transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+                  outline: "none",
+                  flexShrink: 0,
+                  userSelect: "none"
+                }}
+                onMouseEnter={(e) => {
+                  if (sessionCardsCount > 0) e.currentTarget.style.transform = "scale(1.06)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                <span style={{ fontSize: 13, lineHeight: 1, marginBottom: 2 }}>🗂️</span>
+                <span style={{
+                  fontSize: 12,
+                  fontWeight: 900,
+                  color: sessionCardsCount > 0
+                    ? (isDarkMode ? "#93C5FD" : "#1D4ED8")
+                    : (isDarkMode ? "#94A3B8" : "#64748B"),
+                  lineHeight: 1,
+                  fontFamily: "'JetBrains Mono', monospace"
+                }}>
+                  {sessionCardsCount}
+                </span>
+
+                {/* Pastille vibrante animée si des fiches ont été créées */}
+                {sessionCardsCount > 0 && (
+                  <span style={{
+                    position: "absolute",
+                    top: -1,
+                    right: -1,
+                    width: 10,
+                    height: 10,
+                    borderRadius: "50%",
+                    background: "#10B981",
+                    boxShadow: "0 0 8px #10B981",
+                    animation: "pulse 2s infinite"
+                  }} />
+                )}
+              </button>
+            </div>
           </div>
+
+          {/* Messages d'erreur du micro / agent */}
+          {agentError && (
+            <div style={{
+              padding: "8px 14px",
+              background: "#FEF2F2",
+              color: "#EF4444",
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              maxWidth: 480,
+              width: "100%",
+              textAlign: "center"
+            }}>
+              {agentError}
+            </div>
+          )}
         </div>
       )}
 
       {/* ══ WRITING LAB ══ */}
       {
         practiceSubView === "writing" && (
-          <div className="ep-glass-panel ep-write-lab" style={{ borderRadius: 24, padding: 28 }}>
-            <div className="ep-write-header">
-              <div className="ep-write-header-title">
-                <span className="ep-write-header-icon"><PenLine size={20} strokeWidth={2} /></span>
+          <div className="ev-writing-lab-container" style={{ background: "var(--mm-bg-card)", borderRadius: 24, padding: "24px 24px 76px 24px", border: "1px solid var(--mm-border)", boxShadow: "var(--mm-shadow)" }}>
+
+            {/* Top Bar : Titre Studio, Onglets Studio/Historique & Actions */}
+            <div className="ev-wl-topbar">
+              <div className="ev-wl-title-group">
+                <div className="ev-wl-orb-icon">
+                  <PenLine size={20} className="ev-wl-title-icon" strokeWidth={2.2} />
+                </div>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: theme.text, fontFamily: "var(--mm-font-display)" }}>Writing Lab</h2>
-                  <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>Rédige un texte, reçois une correction détaillée annotée</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <h2 className="ev-wl-title">Writing Lab</h2>
+                    <span className="ev-wl-badge-ielts">IELTS Academic Desk</span>
+                  </div>
+                  <p className="ev-wl-subtitle">Entraînement rédactionnel chronométré &amp; évaluation band score</p>
                 </div>
               </div>
-              <div className="ep-write-header-actions">
-                {practiceWritingDrafts.length > 0 && (
-                  <button onClick={() => setShowDraftsModal(true)} className="mm-btn mm-btn-ghost ep-write-btn-sm">
-                    <History size={15} strokeWidth={2} /> Historique <span className="mm-chip" style={{ marginLeft: 2 }}>{practiceWritingDrafts.length}</span>
-                  </button>
-                )}
-                <button onClick={createNewDraft} className="mm-btn ep-write-btn-sm">
-                  <Plus size={15} strokeWidth={2.5} /> Nouveau
+
+              {/* Mode Switcher In-Page (ZERO POPUP) */}
+              <div className="ev-wl-mode-switcher" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={writingTabMode === "editor"}
+                  onClick={() => setWritingTabMode("editor")}
+                  className={`ev-wl-mode-btn ${writingTabMode === "editor" ? "is-active" : ""}`}
+                >
+                  <PenLine size={14} strokeWidth={2.2} />
+                  <span>Rédiger</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={writingTabMode === "history"}
+                  onClick={() => setWritingTabMode("history")}
+                  className={`ev-wl-mode-btn ${writingTabMode === "history" ? "is-active" : ""}`}
+                >
+                  <History size={14} strokeWidth={2.2} />
+                  <span>Mes écrits &amp; Corrections</span>
+                  <span className="ev-wl-mode-badge">{practiceWritingDrafts.length}</span>
                 </button>
               </div>
-            </div>
 
-            <div className="ep-write-toolbar">
-              <input
-                value={practiceWritingPrompt}
-                onChange={e => setPracticeWritingPrompt(e.target.value)}
-                placeholder="Sujet libre (ou décris ce dont tu veux parler)"
-                className="mm-input ep-write-prompt-input"
-              />
-              <button
-                onClick={() => {
-                  const topics = [
-                    "Some people believe that university education should be free for everyone. To what extent do you agree or disagree?",
-                    "In many countries, the proportion of older people is steadily increasing. Does this trend have more positive or negative effects on society?",
-                    "Nowadays, many families have both parents working. What are the advantages and disadvantages of this?",
-                    "The development of artificial intelligence will change our lives for the better. Discuss both views and give your opinion.",
-                    "Many people prefer to rent a house rather than buying one. Describe the advantages and disadvantages of renting.",
-                    "Describe a memorable journey you have made. Why was it so special?",
-                    "Write an email to a friend inviting them to visit your hometown. Mention what you can do together.",
-                    "Do you think it is better to work in a large corporation or a small company? Explain your reasons."
-                  ];
-                  setPracticeWritingPrompt(topics[Math.floor(Math.random() * topics.length)]);
-                }}
-                className="mm-btn mm-btn-ghost ep-write-btn-sm"
-                title="Générer un sujet aléatoire"
-              >
-                <Shuffle size={15} strokeWidth={2} /> Sujet aléatoire
-              </button>
-            </div>
-
-            <div className="ep-write-desk">
-              <textarea
-                value={practiceWritingText}
-                onChange={e => setPracticeWritingText(e.target.value)}
-                rows={11}
-                className="ep-write-textarea"
-                placeholder="Écris ton essai ici… (sauvegarde automatique en cours de frappe)"
-              />
-              <div className="ep-write-wordcount">
-                {practiceWritingText.trim() ? practiceWritingText.trim().split(/\s+/).length : 0} mots
+              {/* Actions rapides contextuelles */}
+              <div className="ev-wl-actions">
+                {writingTabMode === "editor" ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={pickRandomIeltsTopic}
+                      className="ev-wl-btn-sparkle"
+                      title="Générer un sujet officiel IELTS Task 2"
+                    >
+                      <Sparkles size={14} strokeWidth={2.2} />
+                      Sujet aléatoire
+                    </button>
+                    <button
+                      type="button"
+                      onClick={startNewWritingSession}
+                      className="ev-wl-btn-primary"
+                      title="Réinitialiser l'éditeur pour démarrer un nouvel essai vierge"
+                    >
+                      <PenLine size={14} strokeWidth={2.5} />
+                      Nouvelle session
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      createNewDraft();
+                      setWritingTabMode("editor");
+                    }}
+                    className="ev-wl-btn-primary"
+                    title="Ouvrir l'éditeur pour rédiger un nouvel essai"
+                  >
+                    <PenLine size={14} strokeWidth={2.5} />
+                    Nouvel essai
+                  </button>
+                )}
               </div>
             </div>
 
-            <button onClick={submitWriting} disabled={practiceWritingLoading || !practiceWritingText.trim()} className="mm-btn mm-btn-primary ep-write-submit">
-              {practiceWritingLoading ? "Correction en cours…" : (<><Sparkles size={16} strokeWidth={2} /> Corriger</>)}
+            {writingTabMode === "editor" ? (
+              <>
+
+            {/* Bannière pédagogique épurée (Consolidation active) */}
+            <div
+              className="ev-consolidation-banner"
+              style={{
+                padding: "10px 16px",
+                marginBottom: 16,
+                cursor: "pointer",
+                transition: "all 0.2s ease"
+              }}
+              onClick={() => setShowWritingTip(prev => !prev)}
+              title="Cliquer pour afficher ou masquer le rappel"
+            >
+              <div className="ev-consolidation-banner-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div className="ev-consolidation-banner-title" style={{ fontSize: 13, gap: 8, display: "flex", alignItems: "center" }}>
+                  <span>✨</span>
+                  <span>Si vous avez appris des expressions, venez les pratiquer avec vos propres mots.</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowReviewedDrawer(prev => !prev);
+                    }}
+                    className={`ev-today-reviewed-btn ${showReviewedDrawer ? "is-open" : ""}`}
+                    title="Afficher les expressions révisées aujourd'hui pour les insérer dans mon texte"
+                  >
+                    <span>🎯 Mes révisions du jour</span>
+                    <span className="ev-today-reviewed-badge">{todayReviewedExpressions.length}</span>
+                    <ChevronDown size={12} className={`ev-today-chevron ${showReviewedDrawer ? "is-open" : ""}`} />
+                  </button>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--mm-primary, #b4552d)", whiteSpace: "nowrap" }}>
+                    {showWritingTip ? "▲ Replier" : "💡 Astuce & Thèmes"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Tiroir d'insertion des expressions révisées aujourd'hui */}
+              {showReviewedDrawer && (
+                <div
+                  className="ev-today-reviewed-drawer"
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed rgba(180, 85, 45, 0.25)" }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-fg)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>🎯</span>
+                      <span>
+                        {hasTodayReviews
+                          ? `Expressions révisées aujourd'hui (${todayReviewedExpressions.length})`
+                          : `Expressions recommandées pour votre texte (${todayReviewedExpressions.length})`}
+                      </span>
+                    </div>
+                    <span style={{ fontSize: 11, color: "var(--mm-fg-muted)" }}>
+                      Cliquez pour insérer directement dans votre essai ✍️
+                    </span>
+                  </div>
+
+                  <div className="ev-today-chips-grid">
+                    {todayReviewedExpressions.map((expr, idx) => {
+                      const cleanEnglish = (expr.front || expr.expression || "").trim();
+                      const cleanFrench = extractFrenchTranslation(expr.back || expr.translation || "");
+                      const isUsed = practiceWritingText && cleanEnglish && practiceWritingText.toLowerCase().includes(cleanEnglish.toLowerCase());
+
+                      return (
+                        <div
+                          key={expr.id || idx}
+                          onClick={() => insertExpressionIntoDraft(cleanEnglish)}
+                          className={`ev-today-card ${isUsed ? "is-used" : ""}`}
+                          role="button"
+                          tabIndex={0}
+                          title={isUsed ? `Déjà utilisée dans votre essai ! Cliquez pour réinsérer` : `Cliquer pour insérer "${cleanEnglish}" dans votre essai`}
+                        >
+                          <div className="ev-today-card-top">
+                            <span className="ev-today-card-en">{cleanEnglish}</span>
+                            <span className="ev-today-card-badge">
+                              {isUsed ? "✅ Utilisée" : "+ Insérer"}
+                            </span>
+                          </div>
+                          {cleanFrench && (
+                            <div className="ev-today-card-fr">
+                              ↳ {cleanFrench}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                </div>
+              )}
+
+              {showWritingTip && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(180, 85, 45, 0.2)", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", marginRight: 4, alignSelf: "center" }}>Thèmes recommandés :</span>
+                  {IELTS_TOPIC_BANK.map((item, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPracticeWritingPrompt(item.prompt);
+                        if (showToast) showToast(`Sujet sélectionné : ${item.topic}`, "info");
+                      }}
+                      className="ev-wl-topic-chip"
+                    >
+                      {item.topic}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Pupitre d'écriture (Sujet & Objectifs) */}
+            <div className="ev-wl-editor-toprow">
+              <div className="ev-wl-subject-wrapper">
+                <input
+                  value={practiceWritingPrompt}
+                  onChange={e => setPracticeWritingPrompt(e.target.value)}
+                  placeholder="Sujet d'écriture (ex: 'Some people believe technology isolates us...')"
+                  className="ev-wl-subject-input"
+                />
+                {practiceWritingPrompt && (
+                  <button
+                    type="button"
+                    onClick={() => setPracticeWritingPrompt("")}
+                    className="ev-wl-subject-clear"
+                    title="Effacer le sujet"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+              <div className="ev-goal-chips" title="Choisir un objectif de longueur">
+                {[150, 250, 350].map(goal => (
+                  <button
+                    key={goal}
+                    type="button"
+                    onClick={() => setWritingWordGoal(goal)}
+                    className={`ev-goal-chip ${writingWordGoal === goal ? "is-active" : ""}`}
+                  >
+                    {goal} mots
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Éditeur de texte haute lisibilité */}
+            <div className="ev-wl-textarea-wrap">
+              <textarea
+                value={practiceWritingText}
+                onChange={e => {
+                  setPracticeWritingText(e.target.value);
+                  if (!isHudCollapsed && e.target.value.length > 5) {
+                    setIsHudCollapsed(true);
+                  }
+                }}
+                rows={9}
+                className="ev-wl-textarea"
+                placeholder="Écris ton essai ici avec tes propres mots... (Structure type IELTS : Introduction, Argument 1, Argument 2, Conclusion)"
+              />
+            </div>
+
+            {/* Footer de l'éditeur : Compteur dynamique haute fidélité & barre de progression */}
+            {(() => {
+              const currentWords = practiceWritingText.trim() ? practiceWritingText.trim().split(/\s+/).filter(Boolean).length : 0;
+              const wordPct = Math.min(100, Math.round((currentWords / writingWordGoal) * 100));
+              const isGoalReached = wordPct >= 100;
+              const isNearing = wordPct >= 75 && !isGoalReached;
+              const readTimeMin = Math.max(1, Math.round(currentWords / 130));
+              return (
+                <div className="ev-editor-footer">
+                  <div className="ev-editor-footer-left">
+                    <div className="ev-editor-progress-track">
+                      <div
+                        className={`ev-editor-progress-bar ${isGoalReached ? "is-goal" : isNearing ? "is-nearing" : ""}`}
+                        style={{ width: `${wordPct}%` }}
+                      />
+                    </div>
+                    <span className="ev-editor-readtime">
+                      ~{currentWords === 0 ? "0" : readTimeMin} min de lecture
+                    </span>
+                  </div>
+                  <div className={`ev-editor-wordcount-badge ${isGoalReached ? "is-goal" : isNearing ? "is-nearing" : ""}`}>
+                    <span className="ev-editor-wc-num">{currentWords}</span> / {writingWordGoal} mots
+                    <span className="ev-editor-wc-pct">({wordPct}%)</span>
+                    {isGoalReached && <span className="ev-editor-wc-status">· Objectif atteint 🎉</span>}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Bouton d'évaluation */}
+            <button
+              type="button"
+              onClick={submitWriting}
+              disabled={practiceWritingLoading || !practiceWritingText.trim()}
+              className={`ev-wl-cta-btn ${practiceWritingLoading || !practiceWritingText.trim() ? "is-disabled" : ""}`}
+            >
+              {practiceWritingLoading
+                ? <><Loader2 size={18} className="ev-wl-cta-spinner" /> Correction &amp; évaluation du band score par l&apos;examinateur IELTS...</>
+                : <><SpellCheck2 size={18} /> Évaluer &amp; corriger mon essai (IELTS)</>
+              }
             </button>
 
+            {/* Rapport d'évaluation IELTS rétractable */}
             {practiceWritingFeedback && (
-              <div className="ep-write-report">
-                <div className="ep-write-report-head">
-                  <div
-                    className="ep-write-seal"
-                    data-tier={practiceWritingFeedback.score >= 7 ? "high" : practiceWritingFeedback.score >= 5.5 ? "mid" : "low"}
-                  >
-                    <span className="ep-write-seal-ring" />
-                    <span className="ep-write-seal-score">{practiceWritingFeedback.score}</span>
+              <div style={{ marginTop: 20 }}>
+                <button
+                  type="button"
+                  onClick={() => setIsReportExpanded(prev => !prev)}
+                  className="ev-wl-report-toggle ev-report-toggle-btn"
+                  title="Cliquer pour replier ou déplier le rapport IELTS"
+                >
+                  <div className="ev-wl-report-toggle-left">
+                    <BarChart2 size={16} strokeWidth={2.5} className="ev-wl-report-toggle-icon" />
+                    <span className="ev-wl-report-toggle-label">Évaluation IELTS &amp; Corrections</span>
+                    <span
+                      className="ev-report-toggle-score"
+                      style={{
+                        background: practiceWritingFeedback.score >= 7 ? "#10B981" : practiceWritingFeedback.score >= 5.5 ? "#F59E0B" : "#EF4444"
+                      }}
+                    >
+                      Score {practiceWritingFeedback.score}
+                    </span>
                   </div>
-                  <div>
-                    <div className="ep-write-report-eyebrow">Évaluation IELTS</div>
-                    <div className="ep-write-report-comment">{practiceWritingFeedback.overallComment}</div>
-                  </div>
-                </div>
+                  <span className="ev-wl-report-toggle-chevron">
+                    {isReportExpanded ? <ChevronUp size={16} strokeWidth={2} /> : <ChevronDown size={16} strokeWidth={2} />}
+                  </span>
+                </button>
 
-                <div className="ep-write-criteria">
-                  <div className="ep-write-criterion">
-                    <div className="ep-write-criterion-label"><SpellCheck2 size={14} strokeWidth={2} /> Grammaire</div>
-                    <div className="ep-write-criterion-text">{practiceWritingFeedback.grammarFeedback}</div>
-                  </div>
-                  <div className="ep-write-criterion">
-                    <div className="ep-write-criterion-label"><BookOpenCheck size={14} strokeWidth={2} /> Vocabulaire</div>
-                    <div className="ep-write-criterion-text">{practiceWritingFeedback.vocabularyFeedback}</div>
-                  </div>
-                  <div className="ep-write-criterion">
-                    <div className="ep-write-criterion-label"><LayoutGrid size={14} strokeWidth={2} /> Structure</div>
-                    <div className="ep-write-criterion-text">{practiceWritingFeedback.structureFeedback}</div>
-                  </div>
-                </div>
+                {isReportExpanded && (
+                  <div className="ev-wl-report-body">
+                    {/* En-tête Score & Commentaire Global */}
+                    <div className="ev-wl-score-header">
+                      <div
+                        className="ev-wl-score-orb"
+                        style={{
+                          background: `linear-gradient(135deg, ${
+                            practiceWritingFeedback.score >= 7 ? "#10B981" :
+                            practiceWritingFeedback.score >= 5.5 ? "#F59E0B" : "#EF4444"
+                          }, var(--mm-primary))`
+                        }}
+                      >
+                        {practiceWritingFeedback.score}
+                      </div>
+                      <div className="ev-wl-score-comment">
+                        <h3 className="ev-wl-score-title">Évaluation IELTS</h3>
+                        <div className="ev-wl-score-text">{practiceWritingFeedback.overallComment}</div>
+                      </div>
+                    </div>
 
-                <div className="ep-write-annotated">
-                  <div className="ep-write-annotated-head">
-                    <span className="ep-write-annotated-title">Corrections annotées</span>
-                    {practiceWritingFeedback.mistakes && practiceWritingFeedback.mistakes.length > 0 && (
-                      <button onClick={() => importFlashcards(practiceWritingFeedback.mistakes)} className="mm-btn ep-write-btn-sm">
-                        <Layers size={14} strokeWidth={2} /> Créer des fiches
+                    {/* Barre d'Onglets Segmentés */}
+                    <div className="ev-ielts-tab-bar" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+                      {[
+                        { id: "overview", label: "Vue d'ensemble", icon: "📊" },
+                        { id: "corrected", label: "Texte corrigé", icon: "✨" },
+                        { id: "mistakes", label: "Diagnostic fautes", icon: "🔍" },
+                        { id: "grammar", label: "Grammaire", icon: "📐" },
+                        { id: "vocab", label: "Vocabulaire", icon: "📚" },
+                        { id: "structure", label: "Structure", icon: "🏗️" },
+                        { id: "magicink", label: "Magic Ink", icon: "✏️" },
+                        { id: "all", label: "Tout afficher", icon: "📄" },
+                      ].map(tab => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setIeltsActiveTab(tab.id)}
+                          className={`ev-ielts-tab-btn ${ieltsActiveTab === tab.id ? "is-active" : ""}`}
+                          title={`Afficher ${tab.label}`}
+                        >
+                          <span>{tab.icon}</span>
+                          <span>{tab.label}</span>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Contenu selon l'onglet actif */}
+                    {ieltsActiveTab === "overview" && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                        {/* 2 Boutons Raccourcis Principaux : Texte Corrigé & Diagnostic Fautes */}
+                        <div className="ev-overview-shortcuts-grid">
+                          {practiceWritingFeedback.correctedText && (
+                            <div
+                              onClick={() => setIeltsActiveTab("corrected")}
+                              className="ev-overview-shortcut-card"
+                              data-accent="success"
+                              role="button"
+                              tabIndex={0}
+                              title="Ouvrir la version intégrale corrigée et écouter l'audio"
+                            >
+                              <div className="ev-overview-shortcut-header">
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <Sparkles size={16} color="#10B981" />
+                                  <span className="ev-overview-shortcut-title" style={{ color: "#10B981" }}>Version Corrigée &amp; Audio</span>
+                                </div>
+                                <span className="ev-overview-shortcut-cta">Ouvrir ➔</span>
+                              </div>
+                              <p className="ev-overview-shortcut-preview">
+                                {practiceWritingFeedback.correctedText.slice(0, 130)}...
+                              </p>
+                            </div>
+                          )}
+
+                          {practiceWritingFeedback.mistakes && practiceWritingFeedback.mistakes.length > 0 && (
+                            <div
+                              onClick={() => setIeltsActiveTab("mistakes")}
+                              className="ev-overview-shortcut-card"
+                              data-accent="danger"
+                              role="button"
+                              tabIndex={0}
+                              title="Explorer les fautes classées avec la règle du Pourquoi"
+                            >
+                              <div className="ev-overview-shortcut-header">
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <Search size={16} color="#EF4444" />
+                                  <span className="ev-overview-shortcut-title" style={{ color: "#EF4444" }}>
+                                    Diagnostic Ciblé ({practiceWritingFeedback.mistakes.length} fautes)
+                                  </span>
+                                </div>
+                                <span className="ev-overview-shortcut-cta">Explorer ➔</span>
+                              </div>
+                              <p className="ev-overview-shortcut-preview">
+                                Règle d'or du « Pourquoi », pièges d'examen et création flashcards FSRS.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+
+
+                        {/* Grille de synthèse par compétences */}
+                        <div className="ev-wl-overview-grid">
+                          <div
+                            onClick={() => setIeltsActiveTab("grammar")}
+                            className="ev-ielts-summary-card"
+                            data-accent="primary"
+                          >
+                            <div className="ev-ielts-card-header">
+                              <span className="ev-ielts-card-label" style={{ color: "var(--mm-primary)" }}>GRAMMAIRE</span>
+                              <span className="ev-ielts-card-link" style={{ color: "var(--mm-primary)" }}>Détails ↗</span>
+                            </div>
+                            <div className="ev-ielts-card-preview">{practiceWritingFeedback.grammarFeedback}</div>
+                          </div>
+
+                          <div
+                            onClick={() => setIeltsActiveTab("vocab")}
+                            className="ev-ielts-summary-card"
+                            data-accent="primary"
+                          >
+                            <div className="ev-ielts-card-header">
+                              <span className="ev-ielts-card-label" style={{ color: "var(--mm-primary)" }}>VOCABULAIRE</span>
+                              <span className="ev-ielts-card-link" style={{ color: "var(--mm-primary)" }}>Détails ↗</span>
+                            </div>
+                            <div className="ev-ielts-card-preview">{practiceWritingFeedback.vocabularyFeedback}</div>
+                          </div>
+
+                          <div
+                            onClick={() => setIeltsActiveTab("structure")}
+                            className="ev-ielts-summary-card"
+                            data-accent="success"
+                          >
+                            <div className="ev-ielts-card-header">
+                              <span className="ev-ielts-card-label" style={{ color: "#10B981" }}>STRUCTURE</span>
+                              <span className="ev-ielts-card-link" style={{ color: "#10B981" }}>Détails ↗</span>
+                            </div>
+                            <div className="ev-ielts-card-preview">{practiceWritingFeedback.structureFeedback}</div>
+                          </div>
+
+                          <div
+                            onClick={() => setIeltsActiveTab("magicink")}
+                            className="ev-ielts-summary-card"
+                            data-accent="danger"
+                          >
+                            <div className="ev-ielts-card-header">
+                              <span className="ev-ielts-card-label" style={{ color: "#EF4444" }}>MAGIC INK</span>
+                              <span className="ev-ielts-card-link" style={{ color: "#EF4444" }}>Voir ↗</span>
+                            </div>
+                            <div className="ev-ielts-card-preview">Consulter le texte avec les erreurs surlignées et les corrections.</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Cartes de Critères Spécifiques */}
+                    {(ieltsActiveTab === "grammar" || ieltsActiveTab === "all") && (
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="primary">
+                        <div className="ev-ielts-detail-label" style={{ color: "var(--mm-primary)" }}>ANALYSE DE LA GRAMMAIRE</div>
+                        <div className="ev-ielts-detail-text">{practiceWritingFeedback.grammarFeedback}</div>
+                      </div>
+                    )}
+
+                    {(ieltsActiveTab === "vocab" || ieltsActiveTab === "all") && (
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="primary">
+                        <div className="ev-ielts-detail-label" style={{ color: "var(--mm-primary)" }}>ENRICHISSEMENT DU VOCABULAIRE</div>
+                        <div className="ev-ielts-detail-text">{practiceWritingFeedback.vocabularyFeedback}</div>
+                      </div>
+                    )}
+
+                    {(ieltsActiveTab === "structure" || ieltsActiveTab === "all") && (
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="success">
+                        <div className="ev-ielts-detail-label" style={{ color: "#10B981" }}>LOGIQUE &amp; STRUCTURE DU DISCOURS</div>
+                        <div className="ev-ielts-detail-text">{practiceWritingFeedback.structureFeedback}</div>
+                      </div>
+                    )}
+
+                    {(ieltsActiveTab === "magicink" || ieltsActiveTab === "all") && (
+                      <div className="ev-ielts-detail-card ev-ielts-magicink-card" data-accent="danger">
+                        <div className="ev-ielts-detail-label" style={{ color: "#EF4444" }}>MAGIC INK — CORRECTIONS ANNOTÉES</div>
+                        <div
+                          className="liquid-morph-text ev-ielts-magicink-text"
+                          dangerouslySetInnerHTML={safeHTML((practiceWritingFeedback.magicInkText || practiceWritingFeedback.correctedText || "").replace(/\n/g, "<br/>"))}
+                        />
+                      </div>
+                    )}
+
+                    {(ieltsActiveTab === "corrected" || ieltsActiveTab === "all") && (
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="success" style={{ borderLeft: "4px solid #10B981" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+                          <div className="ev-ielts-detail-label" style={{ color: "#10B981", margin: 0 }}>VERSION INTÉGRALEMENT CORRIGÉE EN ANGLAIS</div>
+                          {practiceWritingFeedback.correctedText && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <button
+                                type="button"
+                                onClick={() => togglePlayAudio(practiceWritingFeedback.correctedText, "editor-corrected")}
+                                className={`ev-history-audio-btn ${playingAudioId === "editor-corrected" ? "is-playing" : ""}`}
+                                title={playingAudioId === "editor-corrected" ? "Arrêter la lecture" : "Écouter la version corrigée"}
+                              >
+                                {playingAudioId === "editor-corrected" ? (
+                                  <>
+                                    <span className="ev-audio-stop-icon" />
+                                    <span>Arrêter</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Volume2 size={13} />
+                                    <span>Écouter la correction</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCopyText(practiceWritingFeedback.correctedText, "editor-active")}
+                                className="ev-history-copy-btn"
+                              >
+                                {copiedDraftId === "editor-active" ? <Check size={13} color="#10B981" /> : <Copy size={13} />}
+                                <span>{copiedDraftId === "editor-active" ? "Copié !" : "Copier"}</span>
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                        {practiceWritingFeedback.correctedText ? (
+                          <div className="ev-ielts-detail-text" style={{ fontSize: 14, lineHeight: 1.75, whiteSpace: "pre-wrap", color: "var(--mm-fg)", fontWeight: 500 }}>
+                            {practiceWritingFeedback.correctedText}
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 13, color: "var(--mm-fg-muted)", padding: "8px 0" }}>
+                            Le texte correctif s'affichera ici pour chaque nouvelle évaluation IELTS.
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {(ieltsActiveTab === "mistakes" || ieltsActiveTab === "all") && practiceWritingFeedback.mistakes && practiceWritingFeedback.mistakes.length > 0 && (
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="danger" style={{ borderLeft: "4px solid #EF4444" }}>
+                        <div className="ev-ielts-detail-label" style={{ color: "#EF4444", marginBottom: 12 }}>DIAGNOSTIC PÉDAGOGIQUE — POURQUOI &amp; PIÈGES D&apos;EXAMEN</div>
+                        {renderDetailedMistakes(practiceWritingFeedback.mistakes)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+              </>
+            ) : (
+              /* VUE HISTORIQUE NATIVE IN-PAGE (ZERO POPUP) */
+              <div className="ev-history-inpage">
+                {/* Barre d'outils de recherche */}
+                <div className="ev-history-inpage-header">
+                  <div className="ev-history-search-wrap">
+                    <Search size={15} style={{ position: "absolute", left: 12, opacity: 0.5, pointerEvents: "none" }} />
+                    <input
+                      type="text"
+                      value={draftSearchQuery}
+                      onChange={(e) => setDraftSearchQuery(e.target.value)}
+                      placeholder="Rechercher par sujet ou contenu..."
+                      className="ev-history-search-input"
+                      style={{ paddingLeft: 34 }}
+                    />
+                    {draftSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setDraftSearchQuery("")}
+                        style={{
+                          position: "absolute",
+                          right: 10,
+                          background: "none",
+                          border: "none",
+                          cursor: "pointer",
+                          fontSize: 12,
+                          opacity: 0.6,
+                          color: "inherit"
+                        }}
+                        title="Effacer la recherche"
+                      >
+                        ✕
                       </button>
                     )}
                   </div>
-                  <div className="ep-write-annotated-body">
-                    {renderInlineTextWithMistakes()}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    {filteredDrafts.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const allOpen = {};
+                            filteredDrafts.forEach(d => { allOpen[d.id] = true; });
+                            setExpandedDraftIds(allOpen);
+                          }}
+                          className="ev-history-bulk-toggle"
+                          title="Déplier tous les écrits"
+                        >
+                          Tout ouvrir
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedDraftIds({})}
+                          className="ev-history-bulk-toggle"
+                          title="Replier tous les écrits"
+                        >
+                          Tout replier
+                        </button>
+                      </div>
+                    )}
+                    <span className="ev-history-count-badge">
+                      {filteredDrafts.length} {filteredDrafts.length > 1 ? "écrits sauvegardés" : "écrit sauvegardé"}
+                    </span>
                   </div>
-                  {/* Fallback old-style magic ink in case LLM failed to return array */}
-                  {(!practiceWritingFeedback.mistakes || practiceWritingFeedback.mistakes.length === 0) && (practiceWritingFeedback.magicInkText || practiceWritingFeedback.correctedText) && (
-                    <div
-                      className="liquid-morph-text"
-                      style={{ marginTop: 20 }}
-                      dangerouslySetInnerHTML={safeHTML((practiceWritingFeedback.magicInkText || practiceWritingFeedback.correctedText || "").replace(/\n/g, "<br/>"))}
-                    />
-                  )}
                 </div>
+
+                {/* Grille des sessions & dual-cards */}
+                {filteredDrafts.length === 0 ? (
+                  <div className="ev-history-empty">
+                    <div className="ev-history-empty-icon">📜</div>
+                    <h3 className="ev-history-empty-title">
+                      {practiceWritingDrafts.length === 0 ? "Aucun écrit enregistré" : "Aucun résultat pour cette recherche"}
+                    </h3>
+                    <p className="ev-history-empty-desc">
+                      {practiceWritingDrafts.length === 0
+                        ? "Rédigez votre premier essai IELTS dans le Writing Lab pour voir apparaître vos textes et leurs corrections complètes ici."
+                        : "Essayez un autre mot-clé pour retrouver votre essai."}
+                    </p>
+                    {practiceWritingDrafts.length === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setWritingTabMode("editor")}
+                        className="ev-wl-btn-primary"
+                        style={{ marginTop: 16 }}
+                      >
+                        <PenLine size={14} />
+                        Commencer à rédiger
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="ev-history-list" style={{ padding: 0 }}>
+                    {filteredDrafts.map((draft) => {
+                      const score = draft.feedback?.score || null;
+                      const scoreColor = score ? getBandScoreColor(score) : null;
+                      const wordCount = (draft.text || "").trim().split(/\s+/).filter(Boolean).length;
+                      const formattedDate = draft.date
+                        ? new Date(draft.date).toLocaleDateString("fr-FR", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })
+                        : "Date inconnue";
+                      const isExpanded = !!expandedDraftIds[draft.id];
+
+                      return (
+                        <div key={draft.id} className={`ev-history-session-card ${isExpanded ? "is-open" : "is-collapsed"}`}>
+                          {/* Entête de la session cliquable en accordéon */}
+                          <div
+                            className="ev-history-card-header"
+                            onClick={() => toggleDraftExpand(draft.id)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                toggleDraftExpand(draft.id);
+                              }
+                            }}
+                            title={isExpanded ? "Cliquer pour replier l'écrit" : "Cliquer pour afficher l'évaluation et l'audio"}
+                          >
+                            <div className="ev-history-card-info">
+                              <div className="ev-history-meta-row">
+                                <span className="ev-history-date">📅 {formattedDate}</span>
+                                {score ? (
+                                  <span
+                                    className="ev-history-score-badge"
+                                    style={{
+                                      backgroundColor: `${scoreColor}18`,
+                                      color: scoreColor,
+                                      borderColor: `${scoreColor}40`
+                                    }}
+                                  >
+                                    Band {score} / 9.0
+                                  </span>
+                                ) : (
+                                  <span className="ev-history-draft-badge">Brouillon / Non évalué</span>
+                                )}
+                                <span className="ev-history-meta-words">{wordCount} mots</span>
+                              </div>
+                              <h4 className="ev-history-prompt-title">
+                                {draft.prompt || "Essai libre sans sujet spécifique"}
+                              </h4>
+                            </div>
+
+                            <div className="ev-history-actions">
+                              <button
+                                type="button"
+                                className="ev-history-toggle-pill"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleDraftExpand(draft.id);
+                                }}
+                                title={isExpanded ? "Replier le détail" : "Ouvrir l'évaluation et l'audio"}
+                              >
+                                <span>{isExpanded ? "Masquer" : "Voir l'évaluation"}</span>
+                                <span className="ev-history-chevron">
+                                  <ChevronDown size={14} />
+                                </span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  loadDraft(draft.id);
+                                }}
+                                className="ev-history-load-btn"
+                                title="Recharger dans l'éditeur pour retravailler ou revoir le rapport"
+                              >
+                                <ExternalLink size={13} style={{ marginRight: 6, verticalAlign: "middle" }} />
+                                Revoir dans l'éditeur
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteDraft(draft.id, e);
+                                }}
+                                className="ev-history-delete-btn"
+                                title="Supprimer cet essai"
+                              >
+                                <Trash2 size={14} color="#EF4444" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Corps dépliable : révélé au clic */}
+                          {isExpanded && (
+                            <div className="ev-history-card-body">
+
+
+                          {/* Grille Dual-Card : Mon texte d'un côté, la correction de l'autre */}
+                          <div className="ev-history-dual-grid">
+                            {/* CARTE 1 : Ce que j'ai écrit */}
+                            <div className="ev-history-subcard ev-history-subcard--text">
+                              <div className="ev-history-subcard-header">
+                                <span className="ev-history-subcard-title">📝 Mon texte rédigé</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  {draft.text && (
+                                    <button
+                                      type="button"
+                                      onClick={() => togglePlayAudio(draft.text, `text_${draft.id}`)}
+                                      className={`ev-history-audio-btn ev-history-audio-btn--muted ${playingAudioId === `text_${draft.id}` ? "is-playing" : ""}`}
+                                      title={playingAudioId === `text_${draft.id}` ? "Arrêter" : "Écouter ce que j'ai écrit"}
+                                    >
+                                      {playingAudioId === `text_${draft.id}` ? (
+                                        <>
+                                          <span className="ev-audio-stop-icon" />
+                                          <span>Arrêter</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Volume2 size={12} />
+                                          <span>Écouter</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                  <span className="ev-history-subcard-meta">{wordCount} mots</span>
+                                </div>
+                              </div>
+                              <div className="ev-history-text-content">
+                                {draft.text || <em style={{ opacity: 0.5 }}>Texte vide</em>}
+                              </div>
+                            </div>
+
+
+                            {/* CARTE 2 : La correction & analyse */}
+                            <div className="ev-history-subcard ev-history-subcard--feedback">
+                              <div className="ev-history-subcard-header">
+                                <span className="ev-history-subcard-title">🎯 Évaluation &amp; Correction</span>
+                                {score && (
+                                  <span className="ev-history-subcard-meta" style={{ fontWeight: 800, color: scoreColor }}>
+                                    Score: {score}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="ev-history-feedback-content">
+                                {draft.feedback ? (
+                                  <>
+                                    {draft.feedback.overallComment && (
+                                      <div className="ev-history-feedback-overall">
+                                        {draft.feedback.overallComment}
+                                      </div>
+                                    )}
+                                    {draft.feedback.grammarFeedback && (
+                                      <div className="ev-history-feedback-item">
+                                        <span className="ev-history-crit-tag" style={{ color: "var(--mm-primary)" }}>Grammaire :</span>
+                                        <span>{draft.feedback.grammarFeedback}</span>
+                                      </div>
+                                    )}
+                                    {draft.feedback.vocabularyFeedback && (
+                                      <div className="ev-history-feedback-item">
+                                        <span className="ev-history-crit-tag" style={{ color: "var(--mm-primary)" }}>Vocabulaire :</span>
+                                        <span>{draft.feedback.vocabularyFeedback}</span>
+                                      </div>
+                                    )}
+                                    {draft.feedback.structureFeedback && (
+                                      <div className="ev-history-feedback-item">
+                                        <span className="ev-history-crit-tag" style={{ color: "#10B981" }}>Structure :</span>
+                                        <span>{draft.feedback.structureFeedback}</span>
+                                      </div>
+                                    )}
+                                    {(draft.feedback.magicInkText || draft.feedback.correctedText) && (
+                                      <div className="ev-history-feedback-magic">
+                                        <div className="ev-history-magic-label">Magic Ink (Version bonifiée) :</div>
+                                        <div
+                                          className="ev-history-magic-text"
+                                          dangerouslySetInnerHTML={safeHTML((draft.feedback.magicInkText || draft.feedback.correctedText || "").replace(/\n/g, "<br/>"))}
+                                        />
+                                      </div>
+                                    )}
+
+                                    {/* Diagnostic pédagogique détaillé (Pourquoi & Piège) */}
+                                    {draft.feedback.mistakes && draft.feedback.mistakes.length > 0 && (
+                                      renderDetailedMistakes(draft.feedback.mistakes)
+                                    )}
+                                  </>
+                                ) : (
+                                  <div className="ev-history-no-feedback">
+                                    <span>⏳ Aucun rapport IELTS n'a encore été généré pour ce texte.</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => loadDraft(draft.id)}
+                                      className="ev-history-eval-now-btn"
+                                    >
+                                      Lancer l'évaluation IELTS ⚡
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* SECTION BASSE : TEXTE INTÉGRALEMENT CORRIGÉ (POUR TOUS LES ÉCRITS) */}
+                          <div className="ev-history-corrected-section">
+                            <div className="ev-history-corrected-header">
+                              <div className="ev-history-corrected-title">
+                                <Sparkles size={14} className="ev-history-corrected-icon" />
+                                <span>TEXTE CORRIGÉ &amp; BONIFIÉ</span>
+                                <span className="ev-history-corrected-pill">English Version</span>
+                              </div>
+                              {draft.feedback?.correctedText && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePlayAudio(draft.feedback.correctedText, `corr_${draft.id}`)}
+                                    className={`ev-history-audio-btn ${playingAudioId === `corr_${draft.id}` ? "is-playing" : ""}`}
+                                    title={playingAudioId === `corr_${draft.id}` ? "Arrêter la lecture" : "Écouter la correction en anglais"}
+                                  >
+                                    {playingAudioId === `corr_${draft.id}` ? (
+                                      <>
+                                        <span className="ev-audio-stop-icon" />
+                                        <span>Arrêter</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Volume2 size={13} />
+                                        <span>Écouter la correction</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCopyText(draft.feedback.correctedText, draft.id)}
+                                    className="ev-history-copy-btn"
+                                    title="Copier la version anglaise corrigée"
+                                  >
+                                    {copiedDraftId === draft.id ? <Check size={13} color="#10B981" /> : <Copy size={13} />}
+                                    <span>{copiedDraftId === draft.id ? "Copié !" : "Copier"}</span>
+                                  </button>
+                                </div>
+                              )}
+
+                            </div>
+
+                            {draft.feedback?.correctedText && (
+                              <div className="ev-history-corrected-text" style={{ marginBottom: (!draft.feedback?.mistakes || draft.feedback.mistakes.length === 0 || !draft.feedback.mistakes[0]?.why) ? 14 : 0 }}>
+                                {draft.feedback.correctedText}
+                              </div>
+                            )}
+
+                            {(!draft.feedback?.correctedText || !draft.feedback?.mistakes || draft.feedback.mistakes.length === 0 || !draft.feedback.mistakes[0]?.why) && (
+                              <div className="ev-history-generate-box">
+                                <p className="ev-history-generate-desc">
+                                  {!draft.feedback?.correctedText
+                                    ? "Cet écrit ne dispose pas encore de sa version corrigée et de son analyse approfondie."
+                                    : "Enrichir cet écrit avec le diagnostic pédagogique (le « Pourquoi » de chaque faute)."
+                                  }
+                                </p>
+                                <button
+                                  type="button"
+                                  disabled={generatingCorrectedId === draft.id}
+                                  onClick={() => generateMissingCorrectedText(draft)}
+                                  className="ev-history-generate-btn"
+                                >
+                                  {generatingCorrectedId === draft.id ? (
+                                    <>
+                                      <Loader2 size={13} className="ev-wl-cta-spinner" />
+                                      <span>Diagnostic d&apos;élite en cours...</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Sparkles size={13} />
+                                      <span>Diagnostic approfondi &amp; Texte correctif ✨</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -4560,7 +6193,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     isDarkMode={isDarkMode}
                   />
                 </div>
-                <button onClick={() => { if (customAgent.isConnected) return; answerIelts(practiceInput); setPracticeInput(""); }} disabled={customAgent.isConnected || !practiceInput.trim()} style={{ width: 50, height: 50, borderRadius: 16, background: (!customAgent.isConnected && practiceInput.trim()) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg, border: `1px solid ${!customAgent.isConnected && practiceInput.trim() ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`, cursor: (!customAgent.isConnected && practiceInput.trim()) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (!customAgent.isConnected && practiceInput.trim()) ? "0 8px 20px rgba(139, 92, 246,0.4)" : "none", color: (!customAgent.isConnected && practiceInput.trim()) ? "white" : theme.textMuted }}>➤</button>
+                <button onClick={() => { if (customAgent.isConnected) return; answerIelts(practiceInput); setPracticeInput(""); }} disabled={customAgent.isConnected || !practiceInput.trim()} style={{ width: 50, height: 50, borderRadius: 16, background: (!customAgent.isConnected && practiceInput.trim()) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${!customAgent.isConnected && practiceInput.trim() ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (!customAgent.isConnected && practiceInput.trim()) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (!customAgent.isConnected && practiceInput.trim()) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (!customAgent.isConnected && practiceInput.trim()) ? "white" : theme.textMuted }}>➤</button>
               </div>
               {agentError && (
                 <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
@@ -4673,10 +6306,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   { icon: "⚡", val: xp.toLocaleString(), label: "Total XP", color: "#F59E0B" },
                   { icon: "🔥", val: practiceStats.streak || 0, label: "Streak (jours)", color: "#EF4444" },
                   { icon: "🪙", val: (practiceStats.coins || 0).toLocaleString(), label: "Coins", color: "#FCD34D" },
-                  { icon: "🏅", val: `Lv.${lvl}`, label: getLbl(lvl), color: "#C084FC" },
+                  { icon: "🏅", val: `Lv.${lvl}`, label: getLbl(lvl), color: "var(--mm-primary-glow)" },
                   { icon: "💬", val: practiceStats.totalMessages, label: "Messages", color: "var(--mm-primary)" },
-                  { icon: "🎓", val: practiceStats.sessionsCompleted, label: "Sessions", color: "#A855F7" },
-                  { icon: "📖", val: practiceStats.levelEstimate, label: "Niveau estimé", color: "#A855F7" },
+                  { icon: "🎓", val: practiceStats.sessionsCompleted, label: "Sessions", color: "var(--mm-primary)" },
+                  { icon: "📖", val: practiceStats.levelEstimate, label: "Niveau estimé", color: "var(--mm-primary)" },
                   { icon: "📚", val: practiceStats.vocabDiversity || 0, label: "Mots uniques", color: "#059669" },
                 ].map(({ icon, val, label, color }) => (
                   <div key={label} style={{ background: theme.inputBg, borderRadius: 14, padding: 16, textAlign: "center" }}>
@@ -4723,12 +6356,12 @@ ${SPEECH_HYGIENE_PROMPT}`,
             className="ep-glass-panel"
             style={{
               position: "relative", borderRadius: 24,
-              border: `1px solid ${isDarkMode ? "rgba(225,29,72,0.3)" : "rgba(225,29,72,0.2)"}`,
+              border: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.4)" : "rgba(59, 130, 246, 0.35)"}`,
               overflow: "hidden",
               background: isDarkMode
-                ? "radial-gradient(circle at 50% 0%, rgba(225, 29, 72, 0.15), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
-                : "radial-gradient(circle at 50% 0%, rgba(225, 29, 72, 0.08), transparent 70%), #FFFFFF",
-              boxShadow: isDarkMode ? "0 16px 40px rgba(0,0,0,0.4)" : "0 10px 30px rgba(15,23,42,0.06)",
+                ? "radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.2), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
+                : "radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.12), transparent 70%), #FFFFFF",
+              boxShadow: isDarkMode ? "0 16px 40px rgba(0,0,0,0.4)" : "0 10px 30px rgba(37, 99, 235, 0.08)",
               transition: "background 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
               animation: debateShatter > 0 && Date.now() - debateShatter < 1000 ? "shake-ring 0.4s" : "none"
             }}
@@ -4747,15 +6380,15 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div style={{
               position: "relative", zIndex: 1,
               background: isDarkMode
-                ? "linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(225, 29, 72, 0.4))"
-                : "linear-gradient(135deg, rgba(238, 242, 255, 0.95), rgba(254, 226, 226, 0.9))",
+                ? "linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(99, 102, 241, 0.35))"
+                : "linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.22))",
               padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
               backdropFilter: "blur(16px)",
-              borderBottom: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.1)" : "rgba(0,0,0,0.08)"}`
+              borderBottom: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.35)" : "rgba(59, 130, 246, 0.25)"}`
             }}>
               <div>
                 <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🌌 Cosmic Arena Debate</div>
-                {practiceDebateTopic && <div style={{ fontSize: 12, color: isDarkMode ? "#FDA4AF" : "#E11D48", marginTop: 2, fontWeight: 700 }}>Topic : {practiceDebateTopic}</div>}
+                {practiceDebateTopic && <div style={{ fontSize: 12, color: isDarkMode ? "#93C5FD" : "#1D4ED8", marginTop: 2, fontWeight: 700 }}>Topic : {practiceDebateTopic}</div>}
               </div>
               <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeDebateTopic(""); setPracticeDebateHistory([]); setDebateBalance(50); }} style={{ background: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
             </div>
@@ -4764,12 +6397,55 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 <p style={{ color: "var(--mm-fg)", marginTop: 0, marginBottom: 20, fontSize: 14, fontWeight: 700 }}>Choisis un sujet de débat. L'IA va te challenger en anglais. Chaque argument fort fait reculer ton adversaire !</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
                   {["Social media does more harm than good", "AI will replace human jobs", "Remote work is better than office", "Climate change is the biggest threat", "Video games improve cognitive skills"].map(topic => (
-                    <button key={topic} onClick={() => startDebate(topic)} style={{ padding: "8px 14px", borderRadius: 20, border: `2px solid ${practiceDebateTopic === topic ? "#E11D48" : "var(--mm-border)"}`, background: practiceDebateTopic === topic ? "#E11D48" : "var(--mm-bg-card)", color: practiceDebateTopic === topic ? "white" : "var(--mm-fg)", fontWeight: 600, cursor: "pointer", fontSize: 13, transition: "all 0.2s", boxShadow: practiceDebateTopic === topic ? "0 4px 15px rgba(225, 29, 72, 0.4)" : "none" }}>{topic}</button>
+                    <button
+                      key={topic}
+                      onClick={() => startDebate(topic)}
+                      style={{
+                        padding: "8px 14px",
+                        borderRadius: 20,
+                        border: `2px solid ${practiceDebateTopic === topic ? "#2563EB" : "var(--mm-border)"}`,
+                        background: practiceDebateTopic === topic ? "#2563EB" : "var(--mm-bg-card)",
+                        color: practiceDebateTopic === topic ? "white" : "var(--mm-fg)",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        transition: "all 0.2s ease",
+                        boxShadow: practiceDebateTopic === topic ? "0 4px 15px rgba(37, 99, 235, 0.4)" : "none"
+                      }}
+                    >
+                      {topic}
+                    </button>
                   ))}
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <input value={practiceDebateTopic} onChange={e => setPracticeDebateTopic(e.target.value)} placeholder="Ou tape ton propre sujet…" style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid var(--mm-border)`, background: "var(--mm-bg-elev)", color: "var(--mm-fg)", fontSize: 14, outline: "none" }} onKeyDown={e => e.key === "Enter" && startDebate(practiceDebateTopic)} onFocus={e => e.target.style.borderColor = "var(--mm-primary)"} onBlur={e => e.target.style.borderColor = "var(--mm-border)"} />
-                  <button onClick={() => startDebate(practiceDebateTopic)} disabled={!practiceDebateTopic.trim()} style={{ padding: "12px 24px", background: "linear-gradient(135deg,var(--mm-primary),#E11D48)", color: "white", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer", boxShadow: "0 4px 15px rgba(225, 29, 72, 0.4)" }}>⚔️ Engage!</button>
+                  <input
+                    value={practiceDebateTopic}
+                    onChange={e => setPracticeDebateTopic(e.target.value)}
+                    placeholder="Ou tape ton propre sujet…"
+                    style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid var(--mm-border)`, background: "var(--mm-bg-elev)", color: "var(--mm-fg)", fontSize: 14, outline: "none" }}
+                    onKeyDown={e => e.key === "Enter" && startDebate(practiceDebateTopic)}
+                    onFocus={e => e.target.style.borderColor = "#2563EB"}
+                    onBlur={e => e.target.style.borderColor = "var(--mm-border)"}
+                  />
+                  <button
+                    onClick={() => startDebate(practiceDebateTopic)}
+                    disabled={!practiceDebateTopic.trim()}
+                    style={{
+                      padding: "12px 24px",
+                      background: !practiceDebateTopic.trim()
+                        ? "rgba(37, 99, 235, 0.45)"
+                        : "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                      color: "white",
+                      border: "none",
+                      borderRadius: 12,
+                      fontWeight: 900,
+                      cursor: !practiceDebateTopic.trim() ? "not-allowed" : "pointer",
+                      boxShadow: !practiceDebateTopic.trim() ? "none" : "0 4px 15px rgba(37, 99, 235, 0.45)",
+                      transition: "all 0.2s ease"
+                    }}
+                  >
+                    ⚔️ Engage!
+                  </button>
                 </div>
               </div>
             )}
@@ -4833,7 +6509,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),#E11D48)" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px rgba(225, 29, 72, 0.4)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
+                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,#2563EB,#1D4ED8)" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px rgba(37, 99, 235, 0.4)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
                   </div>
                   {agentError && (
                     <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
@@ -4869,7 +6545,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
             }}>
               <div>
                 <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🎭 Roleplay en anglais</div>
-                {practiceRoleplayScenario && <div style={{ fontSize: 12, color: isDarkMode ? "#DDD6FE" : "#6D28D9", marginTop: 2, fontWeight: 700 }}>Scénario : {practiceRoleplayScenario}</div>}
+                {practiceRoleplayScenario && <div style={{ fontSize: 12, color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary-deep)", marginTop: 2, fontWeight: 700 }}>Scénario : {practiceRoleplayScenario}</div>}
               </div>
               <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeRoleplayScenario(""); setPracticeRoleplayHistory([]); }} style={{ background: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
             </div>
@@ -4893,7 +6569,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         className="ep-glass-panel ep-glass-panel-hover"
                         style={{
                           padding: "16px 16px", borderRadius: 16,
-                          border: `2px solid ${isSelected ? "#8b5cf6" : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)")}`,
+                          border: `2px solid ${isSelected ? "var(--mm-primary)" : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)")}`,
                           background: isSelected
                             ? (isDarkMode ? "rgba(139, 92, 246,0.2)" : "rgba(139, 92, 246,0.1)")
                             : (isDarkMode ? "rgba(15,23,42,0.4)" : "#FFFFFF"),
@@ -4927,7 +6603,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     disabled={!practiceRoleplayScenario.trim()}
                     style={{
                       padding: "12px 24px",
-                      background: "linear-gradient(135deg, #8b5cf6, #8b5cf6)",
+                      background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                       color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer",
                       boxShadow: "0 4px 16px rgba(139, 92, 246,0.35)", transition: "all 0.2s"
                     }}
@@ -4998,7 +6674,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px rgba(123,47,190,0.4)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
+                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
                   </div>
                   {agentError && (
                     <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
@@ -5057,7 +6733,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
                   <div className="ep-dict-listen-card">
                     <button
-                      onClick={() => speakText(practiceDictationSentences[practiceDictationCurrentIndex])}
+                      onClick={() => {
+                        liveKitVoiceBus.interrupt();
+                        speakText(practiceDictationSentences[practiceDictationCurrentIndex]);
+                      }}
                       className="ep-dict-play-btn"
                       aria-label="Écouter la phrase"
                     >
@@ -5088,11 +6767,23 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   />
 
                   <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                    {practiceDictationCurrentIndex > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          liveKitVoiceBus.interrupt();
+                          setPracticeDictationCurrentIndex(prev => prev - 1);
+                        }}
+                        className="mm-btn ep-dict-prev-btn"
+                      >
+                        ← Phrase précédente
+                      </button>
+                    )}
                     {practiceDictationCurrentIndex < practiceDictationSentences.length - 1 ? (
                       <button
                         onClick={() => {
+                          liveKitVoiceBus.interrupt();
                           setPracticeDictationCurrentIndex(prev => prev + 1);
-                          setTimeout(() => speakText(practiceDictationSentences[practiceDictationCurrentIndex + 1]), 300);
                         }}
                         disabled={!(practiceDictationInputs[practiceDictationCurrentIndex] || "").trim()}
                         className="mm-btn mm-btn-primary ep-dict-next-btn"
@@ -5101,7 +6792,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       </button>
                     ) : (
                       <button
-                        onClick={checkDictation}
+                        onClick={() => {
+                          liveKitVoiceBus.interrupt();
+                          checkDictation();
+                        }}
                         disabled={!(practiceDictationInputs[practiceDictationCurrentIndex] || "").trim()}
                         className="ep-tier ep-dict-finish-btn"
                         data-tier="high"
@@ -5134,10 +6828,18 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         </button>
                       )}
 
-                      <div style={{ marginTop: 24 }}>
-                        <div className="ep-lab-eyebrow" style={{ marginBottom: 8 }}>Texte original complet</div>
-                        <div className="ep-dict-original-text">
-                          {practiceDictationText}
+                      <div style={{ marginTop: 24, display: "grid", gap: 16 }}>
+                        <div>
+                          <div className="ep-lab-eyebrow" style={{ marginBottom: 8 }}>Ton texte saisi</div>
+                          <div className="ep-dict-history-text" style={{ padding: 12, borderRadius: 8, background: "var(--mm-bg-elev)", border: `1px solid ${theme.border}` }}>
+                            {practiceDictationInputs.join(" ")}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="ep-lab-eyebrow" style={{ marginBottom: 8 }}>Texte original complet attendu</div>
+                          <div className="ep-dict-original-text">
+                            {practiceDictationText}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -5154,7 +6856,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
           const themes = [...new Set(brainMapWords.map(w => w.theme))];
           const filtered = brainMapFilter === "all" ? brainMapWords : brainMapWords.filter(w => w.theme === brainMapFilter);
           const THEME_COLORS = {
-            "Business": { glow: "#8B5CF6", node: "#4C1D95", text: "#DDD6FE" },
+            "Business": { glow: "var(--mm-primary)", node: "var(--mm-primary-deep)", text: "color-mix(in srgb, var(--mm-primary) 22%, white)" },
             "Academic": { glow: "#10B981", node: "#064E3B", text: "#A7F3D0" },
             "Daily Life": { glow: "#F97316", node: "#7C2D12", text: "#FED7AA" },
             "Technology": { glow: "var(--mm-primary)", node: "#312E81", text: "#E9D5FF" },
@@ -5205,7 +6907,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 {brainMapWords.length > 0 && (
                   <div style={{ display: "flex", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, color: theme.textMuted }}>✨ Rareté :</span>
-                    {[["🟡 Or pulsant", "Mot rare (C1/C2)", "#FACC15"], ["🔵 Halo violet", "Intermédiaire (B1/B2)", "#C084FC"], ["⚪ Standard", "Commun (A1/A2)", "var(--mm-fg-muted)"]].map(([label, desc, col]) => (
+                    {[["🟡 Or pulsant", "Mot rare (C1/C2)", "#FACC15"], ["🔵 Halo violet", "Intermédiaire (B1/B2)", "var(--mm-primary-glow)"], ["⚪ Standard", "Commun (A1/A2)", "var(--mm-fg-muted)"]].map(([label, desc, col]) => (
                       <span key={label} style={{ fontSize: 11, color: col, fontWeight: 600 }}>{label} <span style={{ color: theme.textMuted, fontWeight: 400 }}>= {desc}</span></span>
                     ))}
                   </div>
@@ -5369,7 +7071,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             background: isDarkMode ? 'rgba(15, 23, 42, 0.75)' : 'rgba(255, 255, 255, 0.85)',
                             backdropFilter: 'blur(20px)',
                             WebkitBackdropFilter: 'blur(20px)',
-                            border: `1px solid ${getColors(hw.theme).glow}60`,
+                            border: `1px solid ${colorMix(getColors(hw.theme).glow, 38)}`,
                             borderRadius: 16,
                             padding: '14px 18px',
                             boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
@@ -5393,7 +7095,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
                     {/* Word detail panel */}
                     {brainMapSelected && (
-                      <div style={{ width: 240, flexShrink: 0, background: "var(--mm-bg-elev)", borderRadius: 18, border: `1.5px solid ${getColors(brainMapSelected.theme).glow}40`, overflow: "hidden", boxShadow: "var(--mm-shadow)" }}>
+                      <div style={{ width: 240, flexShrink: 0, background: "var(--mm-bg-elev)", borderRadius: 18, border: `1.5px solid ${colorMix(getColors(brainMapSelected.theme).glow, 25)}`, overflow: "hidden", boxShadow: "var(--mm-shadow)" }}>
                         {/* Panel header */}
                         <div style={{ background: getColors(brainMapSelected.theme).node, padding: "14px 18px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -5402,7 +7104,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                           </div>
                           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
                             <span style={{ fontSize: 10, fontWeight: 800, background: "rgba(255,255,255,0.15)", color: "white", padding: "3px 8px", borderRadius: 20 }}>{brainMapSelected.theme}</span>
-                            <span style={{ fontSize: 10, fontWeight: 800, background: brainMapSelected.rarity === 3 ? "#FACC15" : brainMapSelected.rarity === 2 ? "#C084FC" : "rgba(255,255,255,0.1)", color: brainMapSelected.rarity === 3 ? "#1C1917" : "white", padding: "3px 8px", borderRadius: 20 }}>
+                            <span style={{ fontSize: 10, fontWeight: 800, background: brainMapSelected.rarity === 3 ? "#FACC15" : brainMapSelected.rarity === 2 ? "var(--mm-primary-glow)" : "rgba(255,255,255,0.1)", color: brainMapSelected.rarity === 3 ? "#1C1917" : "white", padding: "3px 8px", borderRadius: 20 }}>
                               {brainMapSelected.level} · {brainMapSelected.rarity === 3 ? "✨ Rare" : brainMapSelected.rarity === 2 ? "🔵 Intermédiaire" : "⚪ Commun"}
                             </span>
                           </div>
@@ -5423,7 +7125,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 </div>
                               )}
                               {brainMapSelected.example && (
-                                <div style={{ background: isDarkMode ? "#1E1040" : "#EDE9FE", borderRadius: 12, padding: "10px 14px" }}>
+                                <div style={{ background: isDarkMode ? "#1E1040" : "color-mix(in srgb, var(--mm-primary) 10%, white)", borderRadius: 12, padding: "10px 14px" }}>
                                   <div style={{ fontSize: 10, fontWeight: 800, color: getColors(brainMapSelected.theme).glow, letterSpacing: 2, marginBottom: 4 }}>EXEMPLE</div>
                                   <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.5, fontStyle: "italic" }}>"{brainMapSelected.example}"</div>
                                   <button onClick={() => speakText(brainMapSelected.example)} style={{ marginTop: 6, background: "none", border: "none", color: getColors(brainMapSelected.theme).glow, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0 }}>🔊 Écouter</button>
@@ -5458,19 +7160,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
         })()
       }
 
-      {/* ══ AI ACCENT COACH / DOJO PHONETIQUE ══ */}
-      {
-        practiceSubView === "accent" && (
-          <AccentTraining
-            callClaude={callClaude}
-            storage={storage}
-            theme={theme}
-            isDarkMode={isDarkMode}
-            showToast={showToast}
-            awardXP={awardXP}
-          />
-        )
-      }
+
 
       {/* ══ CARNET ANGLAIS ══ */}
       {
@@ -5573,7 +7263,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
             {/* ── Preview des fiches générées ── */}
             {notebookCards.length > 0 && (
-              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `2px solid var(--mm-primary)40` }}>
+              <div style={{ background: theme.cardBg, borderRadius: 24, padding: 24, border: `2px solid color-mix(in srgb, var(--mm-primary) 25%, transparent)` }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
                   <div>
                     <div style={{ fontWeight: 900, fontSize: 16, color: theme.text }}>
@@ -5585,10 +7275,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     {["vocab", "grammar", "idiom", "phrase"].map(tag => {
                       const count = notebookCards.filter(c => c.tag === tag).length;
                       if (!count) return null;
-                      const colors = { vocab: "#8B5CF6", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
+                      const colors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
                       const labels = { vocab: "Vocab", grammar: "Gram.", idiom: "Idiome", phrase: "Phrase" };
                       return (
-                        <span key={tag} style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: `${colors[tag]}20`, color: colors[tag] }}>
+                        <span key={tag} style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: `${colorMix(colors[tag], 13)}`, color: colors[tag] }}>
                           {labels[tag]} ×{count}
                         </span>
                       );
@@ -5599,7 +7289,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 {/* Cards list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
                   {notebookCards.map((card, i) => {
-                    const tagColors = { vocab: "#8B5CF6", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
+                    const tagColors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
                     const tc = tagColors[card.tag] || "var(--mm-fg)";
                     return (
                       <div key={i} style={{ background: isDarkMode ? "#0F0F0F" : "#F9FAFB", borderRadius: 16, padding: "16px 20px", border: `1.5px solid ${tc}30`, position: "relative" }}>
@@ -5607,7 +7297,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                           {card.tag || "vocab"}
                         </div>
                         <div style={{ fontWeight: 900, fontSize: 16, color: theme.text, marginBottom: 6, paddingRight: 60 }}>{card.front}</div>
-                        <div style={{ fontSize: 14, color: isDarkMode ? "#C4B5FD" : "#6D28D9", fontWeight: 700, marginBottom: card.example ? 8 : 0 }}>{card.back}</div>
+                        <div style={{ fontSize: 14, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", fontWeight: 700, marginBottom: card.example ? 8 : 0 }}>{card.back}</div>
                         {card.example && (
                           <div style={{ fontSize: 12, color: theme.textMuted, fontStyle: "italic", borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
                             💡 {card.example}
@@ -5946,7 +7636,7 @@ Analyze pronunciation word by word.`
                                         color, background: bg,
                                         border: `2px solid ${isSelected ? color : "transparent"}`,
                                         animation: `coachWordIn 0.3s ease ${i * 0.04}s both`,
-                                        boxShadow: isSelected ? `0 4px 16px ${color}40` : "none"
+                                        boxShadow: isSelected ? `0 4px 16px ${colorMix(color, 25)}` : "none"
                                       }}
                                     >{w.word}</span>
                                   );
@@ -5977,7 +7667,7 @@ Analyze pronunciation word by word.`
                                 )}
                               </div>
                               {coachWordTip.tip && (
-                                <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "#6D28D9", lineHeight: 1.5 }}>💡 {coachWordTip.tip}</div>
+                                <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {coachWordTip.tip}</div>
                               )}
                             </div>
                           )}
@@ -6129,7 +7819,7 @@ Analyze pronunciation word by word.`
                                     )}
                                   </div>
                                   {w.tip && (
-                                    <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "#6D28D9", lineHeight: 1.5 }}>💡 {w.tip}</div>
+                                    <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {w.tip}</div>
                                   )}
                                 </div>
                               </div>
@@ -6148,7 +7838,7 @@ Analyze pronunciation word by word.`
                             marginTop: 20, padding: "14px 18px",
                             background: isDarkMode ? "rgba(139, 92, 246,0.1)" : "rgba(139, 92, 246,0.06)",
                             borderRadius: 14, border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.3)" : "rgba(139, 92, 246,0.2)"}`,
-                            fontSize: 13, color: isDarkMode ? "#C4B5FD" : "#6D28D9", lineHeight: 1.5
+                            fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5
                           }}>
                             🤖 {coachFeedback.nextPhrase}
                           </div>
@@ -6216,7 +7906,7 @@ Analyze pronunciation word by word.`
                     <button key={sec} onClick={() => startExamMode(sec)} style={{
                       padding: "12px 20px", borderRadius: 14,
                       background: practiceExamSection === sec
-                        ? "linear-gradient(135deg, var(--mm-primary), #8b5cf6)"
+                        ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
                         : "rgba(255,255,255,0.05)",
                       color: practiceExamSection === sec ? "white" : theme?.textMuted,
                       border: `1px solid ${practiceExamSection === sec ? "transparent" : "var(--mm-border)"}`,
@@ -6279,7 +7969,7 @@ Analyze pronunciation word by word.`
                   onClick={submitExam}
                   disabled={practiceExamAnswers.filter(Boolean).length < practiceExamQuestions.length}
                   style={{
-                    padding: "14px 28px", background: "linear-gradient(135deg, var(--mm-primary), #8b5cf6)",
+                    padding: "14px 28px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                     color: "white", border: "none", borderRadius: 14,
                     fontWeight: 800, fontSize: 15, cursor: "pointer",
                     opacity: practiceExamAnswers.filter(Boolean).length < practiceExamQuestions.length ? 0.5 : 1,
@@ -6330,7 +8020,7 @@ Analyze pronunciation word by word.`
                 </div>
                 <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
                   <button onClick={() => startExamMode(practiceExamSection)} style={{
-                    padding: "12px 24px", background: "linear-gradient(135deg, var(--mm-primary), #8b5cf6)",
+                    padding: "12px 24px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                     color: "white", border: "none", borderRadius: 12,
                     fontWeight: 800, fontSize: 14, cursor: "pointer",
                   }}>
@@ -6355,6 +8045,22 @@ Analyze pronunciation word by word.`
               </div>
             )}
           </div>
+        )
+      }
+
+      {/* ── TAB : RealLife (immersion 3 passes) ───────────────────────────── */}
+      {
+        practiceSubView === "reallife" && (
+          <RealLife
+            callClaude={callClaude}
+            storage={storage}
+            expressions={expressions}
+            setExpressions={setExpressions}
+            showToast={showToast}
+            today={today}
+            awardXP={awardXP}
+            isDarkMode={isDarkMode}
+          />
         )
       }
 
@@ -6399,83 +8105,31 @@ Analyze pronunciation word by word.`
         )
       }
 
-      {/* ── TAB : CEFR Tracker ────────────────────────────────────────────── */}
-      {
-        practiceSubView === "cefr" && (
-          <CEFRTracker
-            cefrState={cefrState}
-            isAnalyzing={isAnalyzing}
-            triggerAnalysis={triggerAnalysis}
-            callClaude={callClaude}
-            theme={theme}
-            isDarkMode={isDarkMode}
-          />
-        )
-      }
+
       {/* ── Fiches détectées par l'agent ElevenLabs ─────────────────────── */}
 
 
-      {/* ── MODAL : Historique des Brouillons ─────────────────────────────────── */}
-      {showDraftsModal && (
-        <div style={{
-          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
-          background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          zIndex: 9999, padding: 20
-        }} onClick={() => setShowDraftsModal(false)}>
-          <div style={{
-            background: "var(--mm-bg-card)", borderRadius: 24, padding: 24,
-            width: "100%", maxWidth: 600, maxHeight: "80vh", overflowY: "auto",
-            boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)", border: `1px solid ${theme.border}`
-          }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-              <h3 style={{ margin: 0, fontSize: 22, color: theme.text }}>📜 Historique des brouillons</h3>
-              <button onClick={() => setShowDraftsModal(false)} style={{ background: "transparent", border: "none", fontSize: 24, cursor: "pointer", color: theme.textMuted }}>×</button>
-            </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {practiceWritingDrafts.map(d => (
-                <div
-                  key={d.id}
-                  onClick={() => {
-                    loadDraft(d.id);
-                    setShowDraftsModal(false);
-                  }}
-                  style={{
-                    padding: 16, borderRadius: 16, background: "var(--mm-bg-elev)",
-                    border: practiceWritingActiveId === d.id ? `2px solid var(--mm-primary)` : `1px solid ${theme.border}`,
-                    cursor: "pointer", transition: "all 0.2s"
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.transform = "scale(1.02)"}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = "scale(1)"}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <span style={{ fontSize: 13, fontWeight: "bold", color: "var(--mm-primary)" }}>{new Date(d.date).toLocaleString()}</span>
-                    {d.feedback && <span style={{ fontSize: 12, background: d.feedback.score >= 7 ? "#10B981" : d.feedback.score >= 5.5 ? "#F59E0B" : "#EF4444", color: "white", padding: "2px 8px", borderRadius: 12, fontWeight: "bold" }}>Score: {d.feedback.score}</span>}
-                  </div>
-                  <div style={{ fontSize: 15, color: theme.text, fontWeight: "bold", marginBottom: 4 }}>{d.prompt || "Sujet libre"}</div>
-                  <div style={{ fontSize: 13, color: theme.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {d.text || "Aucun texte..."}
-                  </div>
-                </div>
-              ))}
-              {practiceWritingDrafts.length === 0 && (
-                <div style={{ textAlign: "center", padding: 40, color: theme.textMuted }}>Aucun brouillon sauvegardé.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* LIVEKIT VOICE ASSISTANT (GLOBAL OVERLAY) */}
       {customAgent.isConnected && (
         <LiveKitVoiceAssistant
-          onClose={() => agent.stop()}
+          onClose={() => {
+            agent.stop();
+            // Débriefing & gratification de production active si des cibles ont été prononcées
+            if (spokenTargetIds.size > 0 && effectiveTargetExpressions.length > 0) {
+              const count = spokenTargetIds.size;
+              awardXP(count * 15, count * 5, `🎯 ${count} fiche(s) du jour validée(s) à l'oral`);
+              showToast(`🎯 Superbe ! ${count} expression(s) du jour ancrée(s) à l'oral avec Nova ! (+${count * 15} XP)`, "success");
+            }
+          }}
           isDarkMode={isDarkMode}
           onTranscriptionsUpdate={setLiveKitTranscriptions}
           onStateChange={setLiveKitState}
           systemPrompt={liveKitSystemPrompt}
           studentName={studentName}
+          sessionGoal={effectiveSessionGoal}
+          targetExpressions={effectiveTargetExpressions}
         />
       )}
 
@@ -6509,9 +8163,7 @@ const _providerMountedRef = { current: false };
 
 export default function EnglishPractice(props) {
   return (
-    <ConversationProvider>
-      <EnglishPracticeInner {...props} />
-    </ConversationProvider>
+    <EnglishPracticeInner {...props} />
   );
 }
 

@@ -28,19 +28,19 @@ function isDebug() {
   try {
     if (typeof window !== "undefined" && window.__AGENT_CARD_DEBUG) return true;
     if (typeof localStorage !== "undefined" &&
-        localStorage.getItem("agentCardDebug") === "1") return true;
-  } catch (_) {}
+      localStorage.getItem("agentCardDebug") === "1") return true;
+  } catch (_) { }
   return false;
 }
 function dlog(...args) {
   if (isDebug()) {
-    try { console.log("%c[AgentCardDetector]", "color:#7c3aed;font-weight:bold", ...args); } catch (_) {}
+    try { console.log("%c[AgentCardDetector]", "color:#2563eb;font-weight:bold", ...args); } catch (_) { }
   }
 }
 function dgroup(label, fn) {
   if (!isDebug()) return fn?.();
   try {
-    console.groupCollapsed(`%c[AgentCardDetector] ${label}`, "color:#7c3aed;font-weight:bold");
+    console.groupCollapsed(`%c[AgentCardDetector] ${label}`, "color:#2563eb;font-weight:bold");
     const r = fn?.();
     console.groupEnd();
     return r;
@@ -50,7 +50,7 @@ function dgroup(label, fn) {
 function robustJsonParse(raw) {
   if (!raw) return null;
   let text = String(raw).replace(/```json|```/gi, "").trim();
-  try { return JSON.parse(text); } catch (_) {}
+  try { return JSON.parse(text); } catch (_) { }
   const start = text.indexOf("{");
   if (start === -1) return null;
   let depth = 0, end = -1;
@@ -63,24 +63,41 @@ function robustJsonParse(raw) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PROMPT v7 — RÉTRO-INGÉNIERIE SÉMANTIQUE & TRANSITION MÉTAPHORTIQUE :
-//   Fiches ultra-concises (~30-40 lignes) basées UNIQUEMENT sur les erreurs
-//   de l'UTILISATEUR (ex: "do you hear me" → "Can you hear me?").
+// PROMPT v8 — RECTO ÉPURÉ & ANCRAGE CONTEXTUEL LIVE NOVA :
+//   - Recto ("front") : STRICTEMENT l'expression anglaise correcte.
+//   - Verso ("back") : Contexte Live Nova (Tu as dit vs En réalité) + Comparatif
+//     + Anti-Pattern + Exemples. (Transition Métaphorique réservée aux idioms/phrasal verbs).
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Tu es un ingénieur linguistique. Ton objectif est de générer des fiches d'anglais ultra-concises basées sur la RÉTRO-INGÉNIERIE SÉMANTIQUE. Pas de blabla, longueur maximale : ~30-40 lignes.
-
-RÈGLE OBLIGATOIRE DE TRANSITION SÉMANTIQUE :
-Dans la section Décomposition, tu dois TOUJOURS expliquer le GLISSEMENT MÉTAPHORIQUE : pourquoi un mot physique (ex: "pick up" = ramasser) prend un sens abstrait dans ce contexte précis, et comment la particule transforme l'action physique en concept d'état ou de workflow.
+const SYSTEM_PROMPT = `Tu es un ingénieur linguistique d'élite. Ton objectif est de générer des fiches d'anglais ultra-précises basées sur les erreurs réelles de l'utilisateur en discussion live avec Nova. Pas de blabla inutile.
 
 CONDITION STRICTE DE GÉNÉRATION (CORRECTION UTILISATEUR EXCLUSIVE) :
 - L'utilisateur a fait une erreur ou une formulation imparfaite (grammaire, préposition, article, temps, collocation, faux-ami, structure, ordre des mots, choix lexical comme "do you hear me" au lieu de "can you hear me?").
 - L'agent la corrige EXPLICITEMENT ("we say X, not Y") ou IMPLICITEMENT (l'agent réutilise la même idée en reformulant correctement).
-- → Crée une fiche avec front = la forme CORRECTE (ex: "Can you hear me?").
+- → Crée une fiche avec front = STRICTEMENT la forme anglaise CORRECTE (ex: "Can you hear me?"). Zéro fioriture sur le recto.
 - Met impérativement "source": "user_error".
 
 EXCLUSION STRICTE :
 - Si l'utilisateur n'a fait AUCUNE erreur et que l'agent produit simplement du vocabulaire enrichi, du small talk ou des explications générales → RENVOIE STRICTEMENT {"cards": []}.
 - Ne crée JAMAIS de fiche si le message utilisateur était 100% correct.
+
+RÈGLE DU VERSO ("back") :
+1. En-tête obligatoire "### 🎙️ Contexte Live Nova" :
+* 🔴 **Tu as dit :** "<ce que l'utilisateur a dit>" ❌
+* 🟢 **En réalité, on dit :** "<la forme correcte>" ✅
+* 📖 **Traduction :** <traduction française naturelle>
+
+2. Le Réflexe Natif & Transition Métaphorique :
+En 1 ou 2 phrases limpides, explique la logique ou l'image mentale (Transition Métaphorique si idiom/phrasal verb) :
+💡 **Le réflexe natif :** <pourquoi le natif utilise cette tournure, sans jargon>
+
+3. Mini-dialogue en contexte :
+💬 **Mini-dialogue :**
+* **A :** \`<réplique A en anglais, courte et naturelle>\`
+* **B :** \`<réplique B en anglais>\`
+↳ *<traduction française du dialogue>*
+
+4. Attention au piège :
+⚠️ **Attention au piège :** <le calque du français à bannir ou la nuance de registre (familier vs formel)>.
 
 RÉPONSE : UNIQUEMENT JSON valide, sans texte autour, sans markdown.
 INTERDIT : sauts de ligne réels dans une valeur JSON. Utiliser "\\n".
@@ -93,30 +110,11 @@ Schéma :
       "type": "correction" | "grammar" | "vocabulary" | "phrasal_verb" | "idiom",
       "difficulty": "A2" | "B1" | "B2" | "C1" | "C2",
       "source": "user_error",
-      "back": "Traduction : Est-ce que tu m'entends ?\\n\\n### ⚙️ 1. Décomposition & Transition Métaphorique\\n* **Can :** Sens physique : *Tester la capacité active en temps réel* ➔ **Glissement sémantique :** Utilisé pour vérifier si le canal audio/signal passe.\\n* **Hear :** Sens physique : *Réception auditive passive dans l'oreille* ➔ **Glissement sémantique :** Perception du flux vocal sans effort d'écoute actif.\\n* **Le Modèle Mental :** L'anglais vérifie l'état technique de la connexion (capacité physique), pas l'attention de l'interlocuteur.\\n\\n### 🔍 2. Comparatif (Pourquoi A et pas B ?)\\n* **Option A (Can you hear me?) :** Teste la disponibilité du canal audio en temps réel.\\n* **Option B (Do you hear me?) :** Exige l'obéissance ou interroge une habitude ('Tu m'écoutes quand je te parle ?').\\n\\n### ⚠️ 3. Anti-Pattern (Le piège)\\n* **Erreur :** Traduire du français 'Est-ce que tu m'entends ?' par 'Do you hear me?' ➔ **Problème :** Perçu comme agressif ou autoritaire au lieu de tester le micro.\\n\\n### 💻 4. Exemples (Format court)\\n* **Tech/Workflow :** \`Can you hear me clearly on this Zoom link?\` ↳ *M'entends-tu clairement sur ce lien Zoom ?*\\n* **Quotidien :** \`Hey, I just plugged in my headphones, can you hear me?\` ↳ *Hé, je viens de brancher mes écouteurs, tu m'entends ?*",
+      "back": "### 🎙️ Contexte Live Nova\\n* 🔴 **Tu as dit :** \\\"Do you hear me?\\\" ❌\\n* 🟢 **En réalité, on dit :** \\\"Can you hear me?\\\" ✅\\n* 📖 **Traduction :** Est-ce que tu m'entends ?\\n\\n💡 **Le réflexe natif :**\\nEn anglais, \\\"Can you hear me?\\\" teste le signal audio. \\\"Do you hear me?\\\" questionne plutôt l'obéissance ou l'attention (comme un parent fâché).\\n\\n💬 **Mini-dialogue :**\\n* **A :** \`Can you hear me clearly on this Zoom link, or should I switch my mic?\`\\n* **B :** \`Loud and clear!\`\\n↳ *M'entends-tu clairement sur ce lien Zoom, ou je change de micro ? — Cinq sur cinq !*\\n\\n⚠️ **Attention au piège :**\\nCalquer le présent français « Tu m'entends ? » avec l'auxiliaire « Do ».",
       "example": "Can you hear me clearly on this Zoom call?"
     }
   ]
 }
-
-RÈGLES DE FORMAT du champ "back" (impératif, EXACTEMENT CE FORMAT MARKDOWN) :
-Traduction : <traduction française littérale>
-
-### ⚙️ 1. Décomposition & Transition Métaphorique
-* **<Mot clé> :** Sens physique : *<sens brut>* ➔ **Glissement sémantique :** <explication>
-* **Le Modèle Mental :** <l'image mécanique globale en 1 phrase>
-
-### 🔍 2. Comparatif (Pourquoi A et pas B ?)
-* **Option A (<front>) :** <ce que le native visualise>
-* **Option B (<Alternative/Faux-ami>) :** <pourquoi le sens dévie>
-
-### ⚠️ 3. Anti-Pattern (Le piège)
-* **Erreur :** <erreur commise> ➔ **Problème :** <sens perçu par un anglophone>
-
-### 💻 4. Exemples (Format court)
-* **Exemple 1 :** \`<phrase EN 1>\` ↳ *<traduction FR 1>*
-* **Exemple 2 :** \`<phrase EN 2>\` ↳ *<traduction FR 2>*
-* **Exemple 3 :** \`<phrase EN 3>\` ↳ *<traduction FR 3>*
 
 Phonétique ("ipa") : LISIBLE par un francophone qui ne connaît PAS l'IPA ("the" → "ze").`;
 
@@ -176,12 +174,12 @@ export function useAgentCardDetector({
       const rawText = typeof raw === "string" ? raw : (raw?.text || "");
       dlog(`LLM répondu en ${Date.now() - t0}ms — ${rawText.length} chars`);
       if (isDebug()) {
-        try { console.log("[AgentCardDetector] Réponse brute:\n" + rawText); } catch (_) {}
+        try { console.log("[AgentCardDetector] Réponse brute:\n" + rawText); } catch (_) { }
       }
 
       let parsed = null;
       if (safeParseJSON) {
-        try { parsed = safeParseJSON(rawText); } catch (_) {}
+        try { parsed = safeParseJSON(rawText); } catch (_) { }
       }
       if (!parsed) parsed = robustJsonParse(rawText);
 
@@ -189,56 +187,93 @@ export function useAgentCardDetector({
       if (!parsed?.cards?.length) { dlog("rejet: LLM a renvoyé 0 carte (cards=[])"); return; }
       dlog(`LLM a proposé ${parsed.cards.length} carte(s) brute(s):`, parsed.cards.map(c => c.front));
 
-      // Dédoublonnage contre l'existant
+      const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const overlaps = (f, existingSet) => {
+        if (existingSet.has(f)) return true;
+        for (const ex of existingSet) {
+          if (ex.length > 3 && (ex.includes(f) || f.includes(ex))) return true;
+        }
+        return false;
+      };
+      // Une fiche Live Nova n'est valable que si elle est COMPLÈTE :
+      // recto non vide + verso réellement explicatif.
+      const isComplete = (c) => {
+        const front = String(c?.front || "").trim();
+        const back = String(c?.back || "").trim();
+        if (!front || !back) return false;
+        if (/undefined|null/i.test(front)) return false;
+        if (back.length < 40) return false;
+        return true;
+      };
+
+      // Dédoublonnage contre l'existant + à l'intérieur du même lot
       const existingFronts = new Set(
-        expressions.map(e => (e.front || "").toLowerCase().trim()).filter(Boolean)
+        expressions.map(e => norm(e.front)).filter(Boolean)
       );
       const rejected = [];
+      const batchFronts = new Set();
       const newCards = parsed.cards.filter(c => {
-        const f = (c.front || "").toLowerCase().trim();
+        const f = norm(c.front);
         if (!f) { rejected.push([c.front, "front vide"]); return false; }
         if (c.source && c.source !== "user_error") { rejected.push([c.front, "source non user_error"]); return false; }
-        if (existingFronts.has(f)) { rejected.push([c.front, "déjà en base (exact)"]); return false; }
-        for (const ex of existingFronts) {
-          if (ex.length > 3 && (ex.includes(f) || f.includes(ex))) {
-            rejected.push([c.front, `chevauche "${ex}"`]);
-            return false;
-          }
-        }
+        if (!isComplete(c)) { rejected.push([c.front, "fiche incomplète (verso manquant/trop court)"]); return false; }
+        if (batchFronts.has(f)) { rejected.push([c.front, "doublon dans le même lot"]); return false; }
+        if (overlaps(f, existingFronts)) { rejected.push([c.front, "déjà en base"]); return false; }
+        batchFronts.add(f);
         return true;
       });
       if (rejected.length) dlog("Cartes rejetées:", rejected);
       if (!newCards.length) { dlog("rejet: toutes les cartes dédoublonnées ou invalides"); return; }
 
-      const enriched = newCards.map(c => ({
-        id: (typeof crypto !== "undefined" && crypto.randomUUID)
-          ? crypto.randomUUID()
-          : "agent-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
-        front: (c.front || "").trim(),
-        back: (c.back || "").trim(),
-        example: (c.example || "").trim(),
-        ipa: c.ipa?.trim() || null,
-        category: englishCategory || "🇬🇧 Anglais",
-        level: 0,
-        nextReview: localToday(),
-        createdAt: localToday(),
-        easeFactor: 2.5,
-        interval: 1,
-        repetitions: 0,
-        reviewHistory: [],
-        imageUrl: null,
-        _agentDetected: true,
-        _type: c.type || "correction",
-        _difficulty: c.difficulty || "B1",
-        _source: "user_error",
-        _pairIndex: pairIndex,
-      }));
+      const nowIso = new Date().toISOString();
+      const enriched = newCards.map(c => {
+        const back = String(c.back || "").trim();
+        return {
+          id: (typeof crypto !== "undefined" && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : "agent-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+          front: String(c.front || "").trim(),
+          back,
+          example: String(c.example || "").trim(),
+          ipa: c.ipa?.trim() || null,
+          category: englishCategory || "🇬🇧 Anglais",
+          level: 0,
+          nextReview: localToday(),
+          createdAt: localToday(),
+          updatedAt: nowIso,
+          easeFactor: 2.5,
+          interval: 1,
+          repetitions: 0,
+          reviewHistory: [],
+          imageUrl: null,
+          _agentDetected: true,
+          // Les fiches produites par le prompt v8 sont déjà au bon format :
+          // on les marque pour qu'elles n'apparaissent jamais en "à moderniser".
+          _novaV8: back.includes("Contexte Live Nova")
+            && back.includes("Tu as dit")
+            && back.includes("En réalité, on dit"),
+          _type: c.type || "correction",
+          _difficulty: c.difficulty || "B1",
+          _source: "user_error",
+          _pairIndex: pairIndex,
+        };
+      });
 
-      // AUTO-SAVE SILENCIEUX
+      // AUTO-SAVE SILENCIEUX — le dédoublonnage complet est refait sur l'état
+      // le plus frais pour éliminer toute course entre deux analyses.
+      let actuallyAdded = [];
       setExpressions(prev => {
-        const seen = new Set(prev.map(e => (e.front || "").toLowerCase().trim()));
-        const toAdd = enriched.filter(c => !seen.has(c.front.toLowerCase().trim()));
-        if (!toAdd.length) { dlog("rejet final: race — déjà ajoutées"); return prev; }
+        const list = Array.isArray(prev) ? prev : [];
+        const seen = new Set(list.map(e => norm(e?.front)).filter(Boolean));
+        const toAdd = [];
+        for (const c of enriched) {
+          const f = norm(c.front);
+          if (!f || overlaps(f, seen)) continue;
+          seen.add(f);
+          toAdd.push(c);
+        }
+        if (!toAdd.length) { dlog("rejet final: race — déjà ajoutées"); return list; }
+        actuallyAdded = toAdd;
         __createdCount += toAdd.length;
         try {
           console.info(
@@ -248,11 +283,19 @@ export function useAgentCardDetector({
           toAdd.forEach(c => console.info(
             `  • ${c._source === "user_error" ? "🩹" : "📘"} ${c.front}  (${c._difficulty}, ${c._type})`
           ));
-        } catch (_) {}
-        return [...toAdd, ...prev];
+        } catch (_) { }
+        return [...toAdd, ...list];
       });
 
-      setSessionCreatedCards(prev => [...prev, ...enriched]);
+      // On n'affiche en fin de session QUE les fiches réellement enregistrées.
+      if (actuallyAdded.length) {
+        setSessionCreatedCards(prev => {
+          const seen = new Set(prev.map(c => norm(c?.front)));
+          const fresh = actuallyAdded.filter(c => !seen.has(norm(c.front)));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+      }
+
     } catch (e) {
       console.warn("[AgentCardDetector] Erreur analyse:", e);
     } finally {
@@ -263,7 +306,7 @@ export function useAgentCardDetector({
   // Sérialise les analyses : chaque paire est traitée à son tour, aucune n'est perdue.
   const analyzePair = useCallback((userMsg, agentMsg, pairIndex) => {
     queueRef.current = queueRef.current
-      .catch(() => {})
+      .catch(() => { })
       .then(() => runAnalyzePair(userMsg, agentMsg, pairIndex));
     return queueRef.current;
   }, [runAnalyzePair]);
@@ -300,8 +343,8 @@ export function useAgentCardDetector({
 
   // ── Compat API : ces méthodes ne servent plus (auto-save) ─────────────────
   const pendingCards = [];
-  const confirmCard = useCallback(() => {}, []);
-  const dismissCard = useCallback(() => {}, []);
+  const confirmCard = useCallback(() => { }, []);
+  const dismissCard = useCallback(() => { }, []);
   const clearPending = useCallback(() => {
     lastAnalyzedIndexRef.current = -1;
     setSessionCreatedCards([]);

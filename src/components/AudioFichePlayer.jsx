@@ -49,7 +49,7 @@ export default function AudioFichePlayer({ card }) {
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
         onEnded={() => setIsPlaying(false)}
-        color="#8B5CF6"
+        color="var(--mm-primary)"
       />
     </div>
   );

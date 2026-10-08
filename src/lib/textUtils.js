@@ -33,6 +33,51 @@ export function repairUnescapedQuotes(s) {
   return result;
 }
 
+// Répare un flux JSON tronqué en plein vol (coupure de token / LLM)
+export function repairTruncatedJSON(str) {
+  if (!str || typeof str !== "string") return "{}";
+  let s = str.trim();
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+  }
+  if (inString) s += '"';
+
+  s = s.replace(/,\s*"[^"]*"\s*:\s*$/, "");
+  s = s.replace(/:\s*$/, ": null");
+  s = s.replace(/,\s*"[^"]*"\s*$/, "");
+  s = s.replace(/,\s*$/, "");
+
+  const finalStack = [];
+  inString = false;
+  escape = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (!inString) {
+      if (ch === '{') finalStack.push('}');
+      else if (ch === '[') finalStack.push(']');
+      else if (ch === '}' || ch === ']') {
+        if (finalStack.length && finalStack[finalStack.length - 1] === ch) {
+          finalStack.pop();
+        }
+      }
+    }
+  }
+
+  while (finalStack.length > 0) {
+    s += finalStack.pop();
+  }
+  return s;
+}
+
 // Parse une réponse IA en JSON, même imparfaite (markdown fences, virgules, etc.)
 export function safeParseJSON(raw) {
   if (!raw || typeof raw !== "string") throw new Error("Réponse IA vide");
@@ -41,15 +86,25 @@ export function safeParseJSON(raw) {
   const open = isArray ? "[" : "{";
   const close = isArray ? "]" : "}";
   const first = s.indexOf(open);
+  if (first === -1) throw new Error("Aucun objet JSON trouvé dans la réponse");
   const last = s.lastIndexOf(close);
-  if (first === -1 || last === -1) throw new Error("Aucun objet JSON trouvé dans la réponse");
-  s = s.substring(first, last + 1);
+  if (last === -1 || last < first) {
+    s = s.substring(first);
+    s = repairTruncatedJSON(s);
+  } else {
+    s = s.substring(first, last + 1);
+  }
   s = repairUnescapedQuotes(s);
   s = s.replace(/,\s*([}\]])/g, "$1");
   try { return JSON.parse(s); } catch {
-    // eslint-disable-next-line no-control-regex
-    const aggressive = s.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/,\s*([}\]])/g, "$1");
-    return JSON.parse(aggressive);
+    try {
+      // eslint-disable-next-line no-control-regex
+      const aggressive = s.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/,\s*([}\]])/g, "$1");
+      return JSON.parse(aggressive);
+    } catch {
+      const repaired = repairTruncatedJSON(s);
+      return JSON.parse(repaired);
+    }
   }
 }
 

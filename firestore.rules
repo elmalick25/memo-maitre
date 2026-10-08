@@ -20,13 +20,16 @@ service cloud.firestore {
     match /users/{userId}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
-    // Espace de discussion pour les bêta-testeurs (le testeur et le propriétaire y ont accès)
+    // Espace de discussion pour les bêta-testeurs : Salon Général ou Salon Privé
     match /chats/{testerUid} {
-      allow read, write: if request.auth != null && (request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
+      allow read, write: if request.auth != null && (testerUid == 'group' || request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
       
       match /messages/{msgId} {
-        allow read, write: if request.auth != null && (request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
+        allow read, write: if request.auth != null && (testerUid == 'group' || request.auth.uid == testerUid || request.auth.uid == 'huOVzj2YnVZbdhw34hJ2BeZlHdD3');
       }
+    }
+    match /group_chat/{msgId} {
+      allow read, write: if request.auth != null;
     }
 
     // Le reste est restreint au propriétaire par défaut (si d'autres documents existent à la racine)

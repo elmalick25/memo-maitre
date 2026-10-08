@@ -9,6 +9,7 @@
 // suite. Le delta est affiché au centre, avec l'aiguille de tendance.
 // ═══════════════════════════════════════════════════════════════════════════
 import React, { useEffect, useState } from "react";
+import { colorMix } from "../lib/colorMix";
 
 const TAU = Math.PI * 2;
 // Arc ouvert en bas (style "gauge") : 270° utiles.
@@ -34,7 +35,7 @@ export default function RadialDuelChart({
   delta = 0,
   isDarkMode = true,
   height = 260,
-  recentColor = "#c084fc",
+  recentColor = "var(--mm-primary-glow)",
   previousColor,
   labelRecent = "30 derniers jours",
   labelPrevious = "Période précédente",
@@ -80,7 +81,7 @@ export default function RadialDuelChart({
         <defs>
           <linearGradient id="rdc-recent" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor={recentColor} />
-            <stop offset="100%" stopColor="#7c3aed" />
+            <stop offset="100%" stopColor="var(--mm-primary)" />
           </linearGradient>
         </defs>
 
@@ -100,7 +101,7 @@ export default function RadialDuelChart({
             strokeWidth={16}
             fill="none"
             strokeLinecap="round"
-            style={{ filter: `drop-shadow(0 0 8px ${recentColor}66)` }}
+            style={{ filter: `drop-shadow(0 0 8px ${colorMix(recentColor, 40)})` }}
           />
         )}
 

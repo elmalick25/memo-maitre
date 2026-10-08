@@ -37,8 +37,9 @@ test('LiveKitVoiceAssistant : Transmet metadata au niveau racine du JWT', () => 
   assert.match(src, /metadata:\s*(?:metadataString|JSON\.stringify)/, "LiveKitVoiceAssistant doit transmettre metadata dans le token JWT");
 });
 
-test('agent.py : Ne surcharge pas le greeting on_enter avec un texte générique hors-sujet', () => {
-  const agentPyPath = path.resolve(__dirname, '../../agent.py');
+const AGENT_PY_PATH = path.resolve(__dirname, '../../agent.py');
+test('agent.py : Ne surcharge pas le greeting on_enter avec un texte générique hors-sujet', { skip: !fs.existsSync(AGENT_PY_PATH) && "agent.py (serveur vocal) absent de ce dossier" }, () => {
+  const agentPyPath = AGENT_PY_PATH;
   const agentPy = fs.readFileSync(agentPyPath, 'utf8');
   assert.doesNotMatch(agentPy, /instructions="""Greet the user and offer your assistance\."""/, "on_enter ne doit pas surcharger le prompt avec une salutation générique");
   assert.match(agentPy, /extract_instructions/, "agent.py doit utiliser la fonction d'extraction d'instructions multi-sources");

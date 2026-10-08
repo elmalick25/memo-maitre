@@ -2,7 +2,7 @@ import { sanitizeInput } from "./textUtils.js";
 import { callGeminiGenerateContent as defaultGeminiCall, getGeminiKeyCount as defaultKeyCount, isGeminiLikelyUnavailable as defaultGeminiUnavailable } from "./geminiClient.js";
 import { aiCall as defaultAiCall } from "./aiRouter.js";
 
-const GEMINI_MODEL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) || "gemini-2.5-flash";
+const GEMINI_MODEL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) || "gemini-3.5-flash-lite";
 
 export async function callClaude(systemPrompt, userMessage, isVisionOrOptions = false, imageUrl = null, deps = {}) {
   const isVision = isVisionOrOptions === true;
@@ -69,6 +69,27 @@ export async function callClaude(systemPrompt, userMessage, isVisionOrOptions = 
       return wrapReturn(text, []);
     } catch (err) {
       console.warn(`aiRouter task '${t}' failed:`, err?.message || err);
+    }
+  }
+
+  // ─── Filet de sécurité ultime : Google Gemini ──────────────────────────────
+  if (getKeyCountFn() > 0 && !isGeminiUnavailableFn()) {
+    try {
+      const data = await geminiCallFn({
+        model: GEMINI_MODEL,
+        body: {
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userContent }] }],
+          generationConfig: { maxOutputTokens: maxTokens, temperature }
+        }
+      });
+      const candidate = data?.candidates?.[0];
+      const text = candidate?.content?.parts?.[0]?.text;
+      if (text) {
+        return wrapReturn(text, []);
+      }
+    } catch (gErr) {
+      console.warn("Gemini ultimate fallback error:", gErr?.message || gErr);
     }
   }
 

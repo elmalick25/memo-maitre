@@ -1,0 +1,214 @@
+/* ════════════════════════════════════════════════════════════════════════════
+ * SOBER REFIT — couche finale
+ * Objectif : supprimer les néons, halos, dégradés animés et micro-animations
+ * agitées hérités des anciennes feuilles de style, sans toucher au balisage.
+ * Chargée en dernier dans main.jsx.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Typographie ─────────────────────────────────────────────────────────── */
+html {
+  font-size: 13px;
+  background: var(--mm-bg) !important;
+  color: var(--mm-fg);
+}
+
+body,
+#root {
+  font-family: var(--mm-font-body);
+  font-size: 13px;
+  line-height: 1.4;
+  font-feature-settings: "kern" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0;
+}
+
+h1, h2, h3, h4,
+.mm-title,
+.section-title,
+.view-title,
+.card-title {
+  font-family: var(--mm-font-display) !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none !important;
+  color: var(--mm-fg);
+}
+
+h1,
+.dash-hero-title {
+  font-size: clamp(15px, 1.8vw, 19px) !important;
+  line-height: 1.2 !important;
+}
+
+h2,
+.view-title {
+  font-size: 1.15rem !important;
+}
+
+h3,
+.section-title {
+  font-size: 1rem !important;
+}
+
+h4,
+.card-title {
+  font-size: 0.88rem !important;
+}
+
+.nav-logo-text {
+  font-size: 14px !important;
+}
+
+.nav-title-sub {
+  font-size: 8.5px !important;
+}
+
+/* Fini les titres en dégradé découpé */
+h1, h2, h3, h4, h5, h6,
+[class*="gradient-text"],
+[class*="text-gradient"],
+[class*="holo"],
+[class*="neon"] {
+  -webkit-text-fill-color: currentColor !important;
+  background-image: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  text-shadow: none !important;
+}
+
+/* ── Halos, néons, ombres colorées ───────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  text-shadow: none !important;
+}
+
+[class*="glow"],
+[class*="neon"],
+[class*="aura"],
+[class*="halo"],
+[class*="shine"],
+[class*="sparkle"],
+[class*="particles"],
+[class*="beam"],
+[class*="scanline"] {
+  box-shadow: var(--mm-shadow-sm) !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+  animation: none !important;
+}
+
+/* Éléments purement décoratifs : on les retire */
+.mm-glow-orb,
+.bg-aurora,
+.bg-grid-glow,
+.particle-layer,
+.scanlines,
+.noise-overlay {
+  display: none !important;
+}
+
+/* ── Fonds animés du body ────────────────────────────────────────────────── */
+body::before,
+body::after {
+  background: none !important;
+  animation: none !important;
+  opacity: 0 !important;
+  content: none !important;
+}
+
+body {
+  background: var(--mm-bg) !important;
+  color: var(--mm-fg);
+}
+
+/* ── Verre dépoli : version discrète ─────────────────────────────────────── */
+[class*="glass"],
+.mm-card,
+.dashboard-card,
+.panel,
+.card {
+  backdrop-filter: var(--mm-blur);
+  -webkit-backdrop-filter: var(--mm-blur);
+  background-color: var(--mm-bg-card);
+  border: 1px solid var(--mm-border);
+  box-shadow: var(--mm-shadow-sm);
+  border-radius: var(--mm-radius);
+}
+
+.mm-card:hover,
+.dashboard-card:hover {
+  box-shadow: var(--mm-shadow) !important;
+  border-color: var(--mm-border-strong) !important;
+  transform: none !important;
+}
+
+/* ── Mouvement : calme et court ──────────────────────────────────────────── */
+* {
+  transition-duration: 160ms !important;
+  transition-timing-function: var(--mm-ease) !important;
+  animation-duration: 320ms;
+  animation-timing-function: var(--mm-ease-out);
+}
+
+/* Les animations en boucle décoratives sont coupées ;
+   les barres de progression et spinners restent utiles. */
+[class*="pulse"],
+[class*="float"],
+[class*="shimmer"],
+[class*="wobble"],
+[class*="bounce"],
+[class*="flicker"],
+[class*="rainbow"],
+[class*="breath"] {
+  animation: none !important;
+}
+
+button:hover,
+a:hover,
+[role="button"]:hover {
+  transform: none !important;
+}
+
+button:active,
+[role="button"]:active {
+  transform: translateY(1px);
+}
+
+/* ── Boutons ─────────────────────────────────────────────────────────────── */
+button,
+.btn,
+[role="button"] {
+  font-family: var(--mm-font-body);
+  border-radius: var(--mm-radius-sm);
+  letter-spacing: 0;
+}
+
+.btn-primary,
+[class*="btn-primary"] {
+  background: var(--mm-primary) !important;
+  color: #fffaf5 !important;
+  border: 1px solid var(--mm-primary) !important;
+  box-shadow: none !important;
+}
+
+.btn-primary:hover,
+[class*="btn-primary"]:hover {
+  background: var(--mm-primary-glow) !important;
+}
+
+/* ── Accessibilité ───────────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--mm-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

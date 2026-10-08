@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import AudioPlayButton from "./AudioPlayButton";
+import { extractEnglishSpeechText } from "../lib/speakUtils";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Langages reconnus
@@ -141,8 +142,8 @@ function sniffLanguage(code) {
   if (/^\s*(def |class |import |from .+ import |print\()/m.test(s)) return "python";
   // Java
   if (/\b(public|private|protected)\s+(static\s+)?(class|void|int|String|boolean)\b/.test(s)
-      || /^\s*import\s+java\./m.test(s)
-      || /System\.out\.println/.test(s)) return "java";
+    || /^\s*import\s+java\./m.test(s)
+    || /System\.out\.println/.test(s)) return "java";
   // TypeScript / JS
   if (/\b(interface|type)\s+\w+\s*[=<{]/.test(s) || /:\s*(string|number|boolean)\b/.test(s)) return "typescript";
   if (/\b(const|let|var)\s+\w+\s*=/.test(s) || /=>\s*[{(]/.test(s) || /console\.log\(/.test(s)) return "javascript";
@@ -209,6 +210,14 @@ function preprocessContent(content) {
   return text;
 }
 
+function extractTextFromReactNode(node) {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(extractTextFromReactNode).join("");
+  if (React.isValidElement(node)) return extractTextFromReactNode(node.props?.children);
+  return "";
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Composant principal
 // ───────────────────────────────────────────────────────────────────────────
@@ -221,24 +230,24 @@ const styleCodeScroll = `
     border-radius: 12px;
   }
   .code-scroll-wrapper::-webkit-scrollbar-thumb {
-    background: rgba(139, 92, 246, 0.5) !important;
+    background: color-mix(in srgb, var(--mm-primary) 50.0%, transparent) !important;
     border-radius: 12px;
     border: 2px solid transparent;
     background-clip: content-box !important;
   }
   .code-scroll-wrapper::-webkit-scrollbar-thumb:hover {
-    background: rgba(139, 92, 246, 0.8) !important;
+    background: color-mix(in srgb, var(--mm-primary) 80.0%, transparent) !important;
     background-clip: content-box !important;
   }
 `;
 
-export default function RichText({ content, style = {}, isDarkMode = true }) {
+export default function RichText({ content, style = {}, isDarkMode = true, showAudio = false }) {
   const processed = useMemo(() => preprocessContent(content), [content]);
 
   const tableBorder = isDarkMode ? "rgba(255,255,255,0.10)" : "rgba(15,23,42,0.10)";
   const tableHeaderBg = isDarkMode
-    ? "linear-gradient(180deg, rgba(139, 92, 246,0.25), rgba(139, 92, 246,0.12))"
-    : "linear-gradient(180deg, rgba(139, 92, 246,0.18), rgba(139, 92, 246,0.06))";
+    ? "linear-gradient(180deg, color-mix(in srgb, var(--mm-primary) 25.0%, transparent), color-mix(in srgb, var(--mm-primary) 12.0%, transparent))"
+    : "linear-gradient(180deg, color-mix(in srgb, var(--mm-primary) 18.0%, transparent), color-mix(in srgb, var(--mm-primary) 6.0%, transparent))";
   const tableRowAltBg = isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(15,23,42,0.025)";
   const textColor = isDarkMode ? "#E6EDFF" : "#0F172A";
   const codeTheme = isDarkMode ? vscDarkPlus : oneLight;
@@ -269,9 +278,9 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                   margin: "12px 0",
                   borderRadius: 12,
                   overflow: "hidden",
-                  border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
+                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)"}`,
                   background: codeBg,
-                  boxShadow: isDarkMode ? "0 6px 18px rgba(0,0,0,0.18)" : "0 6px 18px rgba(139, 92, 246,0.08)",
+                  boxShadow: isDarkMode ? "0 6px 18px rgba(0,0,0,0.18)" : "0 6px 18px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
                   maxWidth: "100%",
                 }}>
                   <div style={{
@@ -287,19 +296,19 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57", display: "inline-block" }} />
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E", display: "inline-block" }} />
                       <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#28C840", display: "inline-block" }} />
-                      <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 800, color: isDarkMode ? "#C084FC" : "#8B5CF6", letterSpacing: "0.08em" }}>
+                      <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 800, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", letterSpacing: "0.08em" }}>
                         {langLabel}
                       </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <AudioPlayButton text={codeString} size="sm" isDarkMode={isDarkMode} />
+                      {showAudio && <AudioPlayButton text={codeString} size="sm" isDarkMode={isDarkMode} />}
                       <button
                         type="button"
                         onClick={async () => { try { await navigator.clipboard.writeText(codeString); } catch { /* noop */ } }}
                         style={{
-                          background: isDarkMode ? "rgba(192,132,252,0.12)" : "rgba(139,92,246,0.10)",
-                          border: `1px solid ${isDarkMode ? "rgba(192,132,252,0.25)" : "rgba(139,92,246,0.25)"}`,
-                          color: isDarkMode ? "#DDD6FE" : "#8B5CF6",
+                          background: isDarkMode ? "rgba(192,132,252,0.12)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
+                          border: `1px solid ${isDarkMode ? "rgba(192,132,252,0.25)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)"}`,
+                          color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
                           fontSize: 10, fontWeight: 700, padding: "3px 9px",
                           borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
                         }}
@@ -340,30 +349,33 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
               );
             }
 
-          // Inline code avec bouton d'écoute audio TTS automatique pour chaque phrase exemple en anglais
+            // Inline code avec bouton d'écoute audio TTS automatique uniquement pour les vraies expressions anglaises idiomatiques
             const rawInlineText = Array.isArray(children) ? children.join("") : String(children || "");
             const cleanText = rawInlineText.replace(/`+/g, "").trim();
-            const isEnglishPhrase = cleanText.length >= 3 && /[a-zA-Z]/.test(cleanText);
+            const englishSpeech = extractEnglishSpeechText(rawInlineText);
+            const isCodeToken = /[()\[\]{};$=><+\/*_]/.test(cleanText) ||
+              /^(cond|nil|t|car|cdr|cons|defun|setq|setf|let|lambda|if|when|unless|return|def|var|val|function|expr|test)$/i.test(cleanText);
+            const isEnglishPhrase = !isCodeToken && Boolean(englishSpeech) && cleanText.split(/\s+/).length >= 2;
 
             return (
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "middle" }}>
                 <code
                   style={{
-                    background: isDarkMode ? "rgba(139, 92, 246,0.16)" : "rgba(139, 92, 246,0.08)",
-                    color: isDarkMode ? "#C4B5FD" : "#7C3AED",
+                    background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 16.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                    color: isDarkMode ? "#C4B5FD" : "var(--mm-primary)",
                     padding: "2px 7px",
                     borderRadius: 6,
                     fontFamily: "'JetBrains Mono','Fira Code',monospace",
                     fontSize: "0.88em",
                     fontWeight: 600,
-                    border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
+                    border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)"}`,
                   }}
                   {...props}
                 >
                   {children}
                 </code>
-                {isEnglishPhrase && (
-                  <AudioPlayButton text={cleanText} size="sm" showLabel={false} isDarkMode={isDarkMode} />
+                {showAudio && isEnglishPhrase && (
+                  <AudioPlayButton text={englishSpeech} /* AudioPlayButton text={cleanText} */ size="sm" showLabel={false} isDarkMode={isDarkMode} />
                 )}
               </span>
             );
@@ -372,38 +384,38 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
           h1({ children }) {
             const headingText = String(children || "");
             return (
-              <h1 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.35em", fontWeight: 800, margin: "14px 0 8px 0", color: isDarkMode ? "#DDD6FE" : "#7C3AED" }}>
+              <h1 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.35em", fontWeight: 800, margin: "14px 0 8px 0", color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)" }}>
                 <span>{children}</span>
-                <AudioPlayButton text={headingText} size="md" isDarkMode={isDarkMode} />
+                {showAudio && <AudioPlayButton text={headingText} size="md" isDarkMode={isDarkMode} />}
               </h1>
             );
           },
           h2({ children }) {
             const headingText = String(children || "");
             return (
-              <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.15em", fontWeight: 800, margin: "12px 0 6px 0", color: isDarkMode ? "#DDD6FE" : "#8B5CF6" }}>
+              <h2 style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: "1.15em", fontWeight: 800, margin: "12px 0 6px 0", color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)" }}>
                 <span>{children}</span>
-                <AudioPlayButton text={headingText} size="sm" isDarkMode={isDarkMode} />
+                {showAudio && <AudioPlayButton text={headingText} size="sm" isDarkMode={isDarkMode} />}
               </h2>
             );
           },
           h3({ children }) {
             const str = Array.isArray(children) ? children.join("") : String(children || "");
             let themeStyle = {
-              bg: isDarkMode ? "rgba(139,92,246,0.12)" : "rgba(139,92,246,0.07)",
-              border: isDarkMode ? "rgba(139,92,246,0.3)" : "rgba(139,92,246,0.2)",
-              color: isDarkMode ? "#DDD6FE" : "#7C3AED",
+              bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 12.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 7.0%, transparent)",
+              border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)",
+              color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
             };
             if (str.includes("⚙️") || /décomposition/i.test(str)) {
               themeStyle = {
-                bg: isDarkMode ? "rgba(139, 92, 246,0.14)" : "rgba(139, 92, 246,0.08)",
-                border: isDarkMode ? "rgba(139, 92, 246,0.35)" : "rgba(139, 92, 246,0.25)",
-                color: isDarkMode ? "#DDD6FE" : "#6D28D9",
+                bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)",
+                color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary-deep)",
               };
             } else if (str.includes("🔍") || /comparatif/i.test(str)) {
               themeStyle = {
-                bg: isDarkMode ? "rgba(168, 85, 247,0.14)" : "rgba(168, 85, 247,0.08)",
-                border: isDarkMode ? "rgba(168, 85, 247,0.35)" : "rgba(168, 85, 247,0.25)",
+                bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)",
                 color: isDarkMode ? "#BAE6FD" : "#0369A1",
               };
             } else if (str.includes("⚠️") || /anti-pattern/i.test(str)) {
@@ -440,20 +452,68 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
             );
           },
 
-          p({ children }) { return <p style={{ margin: "6px 0", lineHeight: 1.65 }}>{children}</p>; },
+          p({ children }) {
+            const rawText = extractTextFromReactNode(children);
+            const englishSpeech = extractEnglishSpeechText(rawText);
+            if (!englishSpeech) {
+              return <p style={{ margin: "6px 0", lineHeight: 1.65 }}>{children}</p>;
+            }
+            return (
+              <div style={{
+                margin: "6px 0",
+                lineHeight: 1.65,
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: 0 }}>{children}</p>
+                </div>
+                {showAudio && englishSpeech ? (
+                  <div style={{ flexShrink: 0, marginTop: 2 }}>
+                    <AudioPlayButton text={englishSpeech} size="sm" showLabel={false} isDarkMode={isDarkMode} />
+                  </div>
+                ) : null}
+              </div>
+            );
+          },
           strong({ children }) {
             return (
               <strong style={{
                 display: "inline",
                 fontWeight: 700,
-                color: isDarkMode ? "#C4B5FD" : "#7C3AED",
+                color: isDarkMode ? "#C4B5FD" : "var(--mm-primary)",
                 letterSpacing: "0.01em",
               }}>{children}</strong>
             );
           },
           ul({ children }) { return <ul style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.65 }}>{children}</ul>; },
           ol({ children }) { return <ol style={{ margin: "8px 0", paddingLeft: 18, lineHeight: 1.65 }}>{children}</ol>; },
-          li({ children }) { return <li style={{ marginBottom: 6, lineHeight: 1.65 }}>{children}</li>; },
+          li({ children }) {
+            const rawText = extractTextFromReactNode(children);
+            const englishSpeech = extractEnglishSpeechText(rawText);
+            return (
+              <li style={{ marginBottom: 6, lineHeight: 1.65 }}>
+                <div style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  width: "100%",
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {children}
+                  </div>
+                  {showAudio && englishSpeech ? (
+                    <div style={{ flexShrink: 0, marginTop: 2 }}>
+                      <AudioPlayButton text={englishSpeech} size="sm" showLabel={false} isDarkMode={isDarkMode} />
+                    </div>
+                  ) : null}
+                </div>
+              </li>
+            );
+          },
 
           // ── VRAIS tableaux ───────────────────────────────────────────
           table({ children }) {
@@ -472,7 +532,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                     background: ${isDarkMode ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.025)"};
                   }
                   .rich-table-wrap table tbody tr:hover td {
-                    background: ${isDarkMode ? "rgba(192, 132, 252,0.08)" : "rgba(139, 92, 246,0.06)"};
+                    background: ${isDarkMode ? "rgba(192, 132, 252,0.08)" : "color-mix(in srgb, var(--mm-primary) 6.0%, transparent)"};
                   }
                 `}</style>
                 <table style={{
@@ -509,7 +569,7 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
                 fontSize: 12,
                 letterSpacing: "0.04em",
                 textTransform: "uppercase",
-                color: isDarkMode ? "#DDD6FE" : "#8B5CF6",
+                color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
                 borderBottom: `1px solid ${tableBorder}`,
                 position: "sticky",
                 top: 0,
@@ -543,15 +603,28 @@ export default function RichText({ content, style = {}, isDarkMode = true }) {
             return <hr style={{ border: "none", borderTop: `1px solid ${tableBorder}`, margin: "10px 0" }} />;
           },
           blockquote({ children }) {
+            const rawText = extractTextFromReactNode(children);
+            const englishSpeech = extractEnglishSpeechText(rawText);
             return (
               <blockquote style={{
-                borderLeft: `3px solid ${isDarkMode ? "#C084FC" : "#8B5CF6"}`,
+                borderLeft: `3px solid ${isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)"}`,
                 paddingLeft: 12,
                 margin: "8px 0",
                 color: "inherit",
                 opacity: 0.85,
                 fontStyle: "italic",
-              }}>{children}</blockquote>
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 10,
+              }}>
+                <div style={{ flex: 1 }}>{children}</div>
+                {englishSpeech && (
+                  <div style={{ flexShrink: 0, marginTop: 2 }}>
+                    <AudioPlayButton text={englishSpeech} size="sm" showLabel={false} isDarkMode={isDarkMode} />
+                  </div>
+                )}
+              </blockquote>
             );
           },
         }}

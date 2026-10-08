@@ -127,7 +127,7 @@ export default function AppStatusBar({
                   background: isDarkMode ? "rgba(13,21,53,0.95)" : "rgba(255,255,255,0.95)",
                   backdropFilter: "blur(24px)",
                   WebkitBackdropFilter: "blur(24px)",
-                  border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(139, 92, 246,0.15)"}`,
+                  border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)"}`,
                   borderRadius: 20,
                   padding: 18,
                   boxShadow: "0 20px 50px rgba(0,0,0,0.3)",
@@ -156,7 +156,7 @@ export default function AppStatusBar({
                       width: 44,
                       height: 44,
                       borderRadius: 14,
-                      background: "linear-gradient(135deg, #7C3AED, #8B5CF6)",
+                      background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                       color: "white",
                       border: "none",
                       cursor: "pointer",
@@ -164,7 +164,7 @@ export default function AppStatusBar({
                       alignItems: "center",
                       justifyContent: "center",
                       fontSize: 20,
-                      boxShadow: "0 4px 12px rgba(139, 92, 246,0.4)",
+                      boxShadow: "0 4px 12px color-mix(in srgb, var(--mm-primary) 40.0%, transparent)",
                     }}
                   >
                     {lofiPlaying ? "⏸" : "▶"}
@@ -180,7 +180,7 @@ export default function AppStatusBar({
                   </div>
                 </div>
 
-                <div style={{ display: "flex", alignItems: "center", gap: 10, background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.05)", padding: "8px 12px", borderRadius: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, background: isDarkMode ? "rgba(255,255,255,0.05)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)", padding: "8px 12px", borderRadius: 10 }}>
                   <span style={{ fontSize: 13 }}>🔉</span>
                   <input
                     type="range"
@@ -189,7 +189,7 @@ export default function AppStatusBar({
                     step="0.05"
                     value={lofiVolume}
                     onChange={(e) => setLofiVolume(parseFloat(e.target.value))}
-                    style={{ flex: 1, accentColor: theme?.highlight || "#8B5CF6", cursor: "pointer" }}
+                    style={{ flex: 1, accentColor: theme?.highlight || "var(--mm-primary)", cursor: "pointer" }}
                   />
                 </div>
 
@@ -201,7 +201,7 @@ export default function AppStatusBar({
                     style={{
                       padding: "8px 12px",
                       borderRadius: 10,
-                      border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(139, 92, 246,0.2)"}`,
+                      border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.15)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)"}`,
                       background: "transparent",
                       color: theme?.text || "#0F172A",
                       fontSize: 11,
@@ -245,7 +245,7 @@ export default function AppStatusBar({
                               gap: 8,
                               padding: "8px 10px",
                               borderRadius: 10,
-                              background: lofiStation === idx ? (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)") : "transparent",
+                              background: lofiStation === idx ? (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)") : "transparent",
                               border: "none",
                               color: theme?.text || "#0F172A",
                               cursor: disabled ? "not-allowed" : "pointer",
@@ -265,12 +265,12 @@ export default function AppStatusBar({
                             {station.live && (
                               <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: 0.5, color: "#EF4444", border: "1px solid #EF4444", borderRadius: 5, padding: "1px 4px" }}>EN DIRECT</span>
                             )}
-                            {lofiStation === idx && lofiPlaying && <span style={{ color: theme?.highlight || "#8B5CF6", fontSize: 12 }}>♪</span>}
+                            {lofiStation === idx && lofiPlaying && <span style={{ color: theme?.highlight || "var(--mm-primary)", fontSize: 12 }}>♪</span>}
                           </button>
                           {!station.live && (
                             progress != null ? (
                               <div title="Téléchargement…" style={{ width: 34, height: 4, borderRadius: 3, background: isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.1)", overflow: "hidden", flexShrink: 0 }}>
-                                <div style={{ width: `${Math.round(progress * 100)}%`, height: "100%", background: theme?.highlight || "#8B5CF6", transition: "width 0.2s" }} />
+                                <div style={{ width: `${Math.round(progress * 100)}%`, height: "100%", background: theme?.highlight || "var(--mm-primary)", transition: "width 0.2s" }} />
                               </div>
                             ) : (
                               <button
@@ -290,8 +290,8 @@ export default function AppStatusBar({
                 </div>
               </div>
             )}
-            <button onClick={() => setShowLofiPlayer((p) => !p)} className="hov" style={{ background: "none", border: "none", color: lofiPlaying ? (theme?.highlight || "#8B5CF6") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }} title="Lecteur Audio">
-              🎧 {lofiPlaying && <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 10, opacity: 0.8 }}><span style={{ width: 2, height: "60%", background: theme?.highlight || "#8B5CF6", animation: "pulse 0.8s infinite alternate" }} /><span style={{ width: 2, height: "100%", background: theme?.highlight || "#8B5CF6", animation: "pulse 0.8s infinite alternate 0.2s" }} /><span style={{ width: 2, height: "40%", background: theme?.highlight || "#8B5CF6", animation: "pulse 0.8s infinite alternate 0.4s" }} /></span>}
+            <button onClick={() => setShowLofiPlayer((p) => !p)} className="hov" style={{ background: "none", border: "none", color: lofiPlaying ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }} title="Lecteur Audio">
+              🎧 {lofiPlaying && <span style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 10, opacity: 0.8 }}><span style={{ width: 2, height: "60%", background: theme?.highlight || "var(--mm-primary)", animation: "pulse 0.8s infinite alternate" }} /><span style={{ width: 2, height: "100%", background: theme?.highlight || "var(--mm-primary)", animation: "pulse 0.8s infinite alternate 0.2s" }} /><span style={{ width: 2, height: "40%", background: theme?.highlight || "var(--mm-primary)", animation: "pulse 0.8s infinite alternate 0.4s" }} /></span>}
             </button>
           </div>
 
@@ -310,21 +310,21 @@ export default function AppStatusBar({
             <button
               onClick={() => setShowAgentPanel((p) => !p)}
               className="hov robot-assistant-btn"
-              style={{ background: "none", border: "none", color: showAgentPanel ? (theme?.highlight || "#8B5CF6") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
+              style={{ background: "none", border: "none", color: showAgentPanel ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
               title="Assistant IA (⌘J)"
             >
               <span className="robot-assistant-icon">🤖</span>
             </button>
           </div>
 
-          <button onClick={() => setIsPomoActive(!isPomoActive)} style={{ background: "none", border: "none", color: isPomoActive ? (theme?.highlight || "#8B5CF6") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: "bold" }}>
+          <button onClick={() => setIsPomoActive(!isPomoActive)} style={{ background: "none", border: "none", color: isPomoActive ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: "bold" }}>
             ⏱ {Math.floor(pomoTime / 60)}:{String(pomoTime % 60).padStart(2, "0")}
           </button>
 
           <button onClick={() => setIsDarkMode((d) => !d)} className="hov" style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", fontSize: 13 }} title="Mode Sombre/Clair">
             {isDarkMode ? "🌙" : "☀️"}
           </button>
-          <button onClick={() => setZenFocusMode((z) => !z)} className="hov" style={{ background: "none", border: "none", color: zenFocusMode ? (theme?.highlight || "#8B5CF6") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", fontSize: 13 }} title="Mode Zen/Focus">
+          <button onClick={() => setZenFocusMode((z) => !z)} className="hov" style={{ background: "none", border: "none", color: zenFocusMode ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", fontSize: 13 }} title="Mode Zen/Focus">
             👁️
           </button>
         </div>

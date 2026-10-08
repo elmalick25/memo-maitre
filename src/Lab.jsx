@@ -8,6 +8,13 @@ import { aiCall } from "./lib/aiRouter";
 import { today as localToday } from "./utils/dateUtils";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
 import SoundwavePlayer from "./components/SoundwavePlayer";
+import { colorMix } from "./lib/colorMix";
+import { findSimilarCards } from "./lib/textUtils";
+import {
+  CONCEPT_MINING_SYSTEM_PROMPT,
+  auditDocumentCoverage,
+  buildTargetedGenerationPrompt,
+} from "./lib/conceptMiningEngine";
 
 // ── IndexedDB Helper pour la persistance des Blobs audio ─────────────────────
 const DB_NAME = "lab_audio_db";
@@ -131,7 +138,7 @@ const HoloCard = ({ children, className, style, theme, glowColor, onClick, onDra
       {/* Lueur radiale de survol (Aura) */}
       <div style={{
         position: "absolute", inset: 0,
-        background: `radial-gradient(circle 350px at ${coord.x}px ${coord.y}px, ${glowColor || '#8B5CF6'}30, transparent 100%)`,
+        background: `radial-gradient(circle 350px at ${coord.x}px ${coord.y}px, ${colorMix(glowColor || 'var(--mm-primary)', 19)}, transparent 100%)`,
         opacity: hover ? 1 : 0, transition: "opacity 0.4s ease", pointerEvents: "none", zIndex: 0
       }} />
       <div style={innerStyle}>{children}</div>
@@ -139,77 +146,132 @@ const HoloCard = ({ children, className, style, theme, glowColor, onClick, onDra
   );
 };
 
-// ── 🌌 GOD MODE : Vortex Drop Zone (Drag & Drop) ──────────────────────────
-const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, color, icon, title, subtitle, theme, disabled }) => (
-  <div
-    onDragOver={onDragOver}
-    onDragLeave={onDragLeave}
-    onDrop={onDrop}
-    onClick={disabled ? undefined : onClick}
-    style={{
-      position: "relative",
-      background: isDragging ? `${color}15` : "var(--mm-bg-card)",
-      border: `2px ${isDragging ? 'solid' : 'dashed'} ${isDragging ? color : "var(--mm-border)"}`,
-      borderRadius: 24,
-      padding: "40px 20px",
-      textAlign: "center",
-      cursor: disabled ? "default" : "pointer",
-      overflow: "hidden",
-      transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
-      transform: isDragging ? "scale(1.03)" : "scale(1)",
-      boxShadow: isDragging ? `0 0 60px ${color}50, inset 0 0 30px ${color}30` : "var(--mm-shadow)",
-      minHeight: 220,
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      backdropFilter: "blur(20px)",
-    }}
-  >
-    {/* Default minimal neon ring */}
-    <div style={{
-      position: "absolute", top: "50%", left: "50%", width: 100, height: 100,
-      marginTop: -50, marginLeft: -50, borderRadius: "50%",
-      border: `2px solid ${color}30`, boxShadow: `0 0 15px ${color}20`,
-      opacity: isDragging ? 0 : 1, transition: "all 0.4s", pointerEvents: "none"
-    }} />
+// ── 🌌 GOD MODE : Vortex Drop Zone (Drag & Drop Liquid Glass) ──────────
+const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, color, icon, title, subtitle, theme, disabled, isDarkMode }) => {
+  const isDark = isDarkMode ?? (typeof document !== "undefined" && document.documentElement.getAttribute("data-theme") === "dark");
+  return (
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onClick={disabled ? undefined : onClick}
+      style={{
+        position: "relative",
+        background: isDragging
+          ? colorMix(color, 14)
+          : (isDark ? "rgba(15, 23, 42, 0.65)" : "rgba(255, 255, 255, 0.95)"),
+        border: `2px ${isDragging ? 'solid' : 'dashed'} ${isDragging ? color : (isDark ? "rgba(59, 130, 246, 0.35)" : "rgba(37, 99, 235, 0.22)")}`,
+        borderRadius: 24,
+        padding: "36px 20px",
+        textAlign: "center",
+        cursor: disabled ? "default" : "pointer",
+        overflow: "hidden",
+        transition: "all 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
+        transform: isDragging ? "scale(1.02)" : "scale(1)",
+        boxShadow: isDragging
+          ? `0 0 50px ${colorMix(color, 35)}, inset 0 0 25px ${colorMix(color, 20)}`
+          : (isDark ? "0 10px 30px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.06)"),
+        minHeight: 220,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        backdropFilter: "blur(20px)",
+        WebkitBackdropFilter: "blur(20px)",
+      }}
+    >
+      {/* Default minimal neon ring */}
+      <div style={{
+        position: "absolute", top: "50%", left: "50%", width: 100, height: 100,
+        marginTop: -50, marginLeft: -50, borderRadius: "50%",
+        border: `2px solid ${colorMix(color, 19)}`, boxShadow: `0 0 15px ${colorMix(color, 13)}`,
+        opacity: isDragging ? 0 : 1, transition: "all 0.4s", pointerEvents: "none"
+      }} />
 
-    {/* Active Vortex Rings */}
-    <div style={{
-      position: "absolute", top: "50%", left: "50%", width: 140, height: 140,
-      marginTop: -70, marginLeft: -70, borderRadius: "50%",
-      border: `3px solid transparent`, borderTopColor: color, borderBottomColor: color,
-      animation: isDragging ? "vortex-spin 1.5s linear infinite, vortex-pulse 2s ease-in-out infinite" : "none",
-      opacity: isDragging ? 1 : 0, transition: "opacity 0.4s", pointerEvents: "none"
-    }} />
-    <div style={{
-      position: "absolute", top: "50%", left: "50%", width: 200, height: 200,
-      marginTop: -100, marginLeft: -100, borderRadius: "50%",
-      border: `1px dashed ${color}`,
-      animation: isDragging ? "vortex-spin 2.5s linear infinite reverse" : "none",
-      opacity: isDragging ? 0.5 : 0, transition: "opacity 0.4s", pointerEvents: "none"
-    }} />
+      {/* Active Vortex Rings */}
+      <div style={{
+        position: "absolute", top: "50%", left: "50%", width: 140, height: 140,
+        marginTop: -70, marginLeft: -70, borderRadius: "50%",
+        border: `3px solid transparent`, borderTopColor: color, borderBottomColor: color,
+        animation: isDragging ? "vortex-spin 1.5s linear infinite, vortex-pulse 2s ease-in-out infinite" : "none",
+        opacity: isDragging ? 1 : 0, transition: "opacity 0.4s", pointerEvents: "none"
+      }} />
+      <div style={{
+        position: "absolute", top: "50%", left: "50%", width: 200, height: 200,
+        marginTop: -100, marginLeft: -100, borderRadius: "50%",
+        border: `1px dashed ${color}`,
+        animation: isDragging ? "vortex-spin 2.5s linear infinite reverse" : "none",
+        opacity: isDragging ? 0.5 : 0, transition: "opacity 0.4s", pointerEvents: "none"
+      }} />
 
-    {/* Particles */}
-    {isDragging && Array.from({ length: 24 }).map((_, i) => {
-      const angle = (i / 24) * Math.PI * 2;
-      const dist = 140;
-      const dx = Math.cos(angle) * dist;
-      const dy = Math.sin(angle) * dist;
-      return (
-        <div key={i} style={{
-          position: "absolute", top: "50%", left: "50%", width: 6, height: 6, borderRadius: "50%",
-          background: color, boxShadow: `0 0 15px ${color}, 0 0 30px ${color}`, "--dx": `${dx}px`, "--dy": `${dy}px`,
-          animation: `particle-suck 1.2s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.05}s infinite`,
-          opacity: 0, pointerEvents: "none"
-        }} />
-      );
-    })}
+      {/* Particles */}
+      {isDragging && Array.from({ length: 24 }).map((_, i) => {
+        const angle = (i / 24) * Math.PI * 2;
+        const dist = 140;
+        const dx = Math.cos(angle) * dist;
+        const dy = Math.sin(angle) * dist;
+        return (
+          <div key={i} style={{
+            position: "absolute", top: "50%", left: "50%", width: 6, height: 6, borderRadius: "50%",
+            background: color, boxShadow: `0 0 15px ${color}, 0 0 30px ${color}`, "--dx": `${dx}px`, "--dy": `${dy}px`,
+            animation: `particle-suck 1.2s cubic-bezier(0.4, 0, 0.2, 1) ${i * 0.05}s infinite`,
+            opacity: 0, pointerEvents: "none"
+          }} />
+        );
+      })}
 
-    <div style={{ position: "relative", zIndex: 10 }}>
-      <div style={{ fontSize: 48, marginBottom: 12, transform: isDragging ? "scale(1.2)" : "scale(1)", transition: "transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)", filter: isDragging ? `drop-shadow(0 0 15px ${color}80)` : "none" }}>{icon}</div>
-      <div style={{ fontWeight: 900, color: theme.text, fontSize: 18, marginBottom: 6 }}>{isDragging ? "Lâche pour aspirer les données..." : title}</div>
-      <div style={{ color: theme.textMuted, fontSize: 13, maxWidth: 350, margin: "0 auto", lineHeight: 1.5 }}>{subtitle}</div>
+      <div style={{ position: "relative", zIndex: 10, width: "100%", maxWidth: 460, margin: "0 auto" }}>
+        {/* Médaillon circulaire lumineux */}
+        <div style={{
+          width: 64, height: 64, borderRadius: "50%",
+          background: isDragging
+            ? colorMix(color, 25)
+            : (isDark ? "rgba(37, 99, 235, 0.16)" : "rgba(37, 99, 235, 0.08)"),
+          border: `1px solid ${isDragging ? color : (isDark ? "rgba(59, 130, 246, 0.35)" : "rgba(37, 99, 235, 0.2)")}`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 30, margin: "0 auto 12px",
+          boxShadow: `0 4px 18px ${colorMix(color, 20)}`,
+          transform: isDragging ? "scale(1.15)" : "scale(1)",
+          transition: "transform 0.3s ease"
+        }}>
+          {icon}
+        </div>
+        <div style={{ fontWeight: 900, color: theme?.text || (isDark ? "#F8FAFC" : "#0F172A"), fontSize: 17, marginBottom: 6, letterSpacing: "-0.2px" }}>
+          {isDragging ? "Lâchez pour aspirer le cours..." : title}
+        </div>
+        <div style={{ color: theme?.textMuted || "#64748b", fontSize: 12.5, lineHeight: 1.5, margin: "0 auto 12px" }}>
+          {subtitle}
+        </div>
+
+        {/* Bouton d'action direct (parfait pour tactile mobile) */}
+        {!disabled && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "8px 18px", borderRadius: 12,
+            background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))",
+            color: "white", fontWeight: 800, fontSize: 12.5,
+            boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
+            margin: "4px auto 10px",
+            cursor: "pointer"
+          }}>
+            <span>📁</span> Parcourir un fichier
+          </div>
+        )}
+
+        {/* Chips formats supportés */}
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
+          {["📄 PDF", "💻 Code", "📊 Tableaux CSV", "📝 Textes & Notes"].map(fmt => (
+            <span key={fmt} style={{
+              fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 6,
+              background: isDark ? "rgba(255,255,255,0.06)" : "rgba(37,99,235,0.05)",
+              color: isDark ? "#93C5FD" : "#2563EB",
+              border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(37,99,235,0.12)"}`
+            }}>
+              {fmt}
+            </span>
+          ))}
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ── 🧠 GOD MODE : Visualiseur Cerveau IA (Neuromorphic Loading) ───────────────
 const NeuromorphicLoader = ({ text, color, theme, isDone }) => {
@@ -237,8 +299,8 @@ const NeuromorphicLoader = ({ text, color, theme, isDone }) => {
     return (
       <div style={{
         marginTop: 12, padding: "14px 20px",
-        background: `${color}15`, borderRadius: 16,
-        border: `1px solid ${color}40`, color,
+        background: `${colorMix(color, 8)}`, borderRadius: 16,
+        border: `1px solid ${colorMix(color, 25)}`, color,
         fontWeight: 800, fontSize: 14, textAlign: "center",
         animation: "fadeUp 0.4s ease"
       }}>
@@ -251,10 +313,10 @@ const NeuromorphicLoader = ({ text, color, theme, isDone }) => {
     <div style={{
       marginTop: 16, padding: "24px 20px",
       background: "var(--mm-bg-card)", borderRadius: 16,
-      border: `1px solid ${color}40`,
+      border: `1px solid ${colorMix(color, 25)}`,
       display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
       position: "relative", overflow: "hidden",
-      boxShadow: `inset 0 0 30px ${color}20, 0 8px 30px rgba(0,0,0,0.3)`,
+      boxShadow: `inset 0 0 30px ${colorMix(color, 13)}, 0 8px 30px rgba(0,0,0,0.3)`,
       backdropFilter: "blur(20px)",
       "--glow-color": color
     }}>
@@ -275,7 +337,7 @@ const NeuromorphicLoader = ({ text, color, theme, isDone }) => {
               boxShadow: `0 0 15px ${color}`,
               animation: `ai-pulse 1.2s ${i * 0.4}s infinite alternate ease-in-out`
             }} />
-            {i < 2 && <div style={{ width: 20, height: 2, background: `${color}40` }} />}
+            {i < 2 && <div style={{ width: 20, height: 2, background: `${colorMix(color, 25)}` }} />}
           </React.Fragment>
         ))}
       </div>
@@ -366,10 +428,10 @@ function normalizeCard(c) {
 // Modèle Gemini par défaut (corrige l'ancien "GEMINI_MODEL is not defined").
 const GEMINI_MODEL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) ||
-  "gemini-2.0-flash-lite";
+  "gemini-3.5-flash-lite";
 
 async function callGroq(systemPrompt, userMsg, maxTokens = 4000, isJson = false) {
-  // Délègue à aiRouter (qui utilise le proxy)
+  // 1. Délègue à aiRouter (Groq -> OpenRouter -> Mistral -> Cohere)
   try {
     const { text } = await aiCall({
       task: isJson ? "batch-json" : "chat",
@@ -380,8 +442,32 @@ async function callGroq(systemPrompt, userMsg, maxTokens = 4000, isJson = false)
     });
     if (text) return text;
   } catch (err) { 
-    console.error("aiRouter failed in Lab.jsx:", err?.message || err);
+    console.warn("[Lab.jsx] aiRouter failed, trying Gemini ultimate fallback:", err?.message || err);
   }
+
+  // 2. Filet de sécurité ultime : Google Gemini direct avec mode JSON strict
+  if (getGeminiKeyCount() > 0 && !isGeminiLikelyUnavailable()) {
+    try {
+      const body = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userMsg.slice(0, 24000) }] }],
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          temperature: 0.2,
+          ...(isJson ? { responseMimeType: "application/json" } : {}),
+        },
+      };
+      const data = await callGeminiGenerateContent({
+        model: GEMINI_MODEL,
+        body,
+      });
+      const t = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (t) return t;
+    } catch (gErr) {
+      console.warn("[Lab.jsx] Gemini ultimate fallback error:", gErr?.message || gErr);
+    }
+  }
+
   throw new Error("Tous les services AI sont épuisés.");
 }
 
@@ -431,6 +517,72 @@ async function callVisionAI(systemPrompt, userMsg, base64Data, mimeType = "image
 
 /** @deprecated alias — utilise callVisionAI */
 const callGeminiVision = callVisionAI;
+
+// ════════════════════════════════════════════════════════════════════════════
+// 📄 Pré-processeur Intelligent de Documents (Anti-Doublons Beamer / PowerPoint)
+// ────────────────────────────────────────────────────────────────────────────
+export function cleanCodeKerning(text) {
+  if (!text) return "";
+  // 1. Dé-espacement des mots-clés de programmation mono-space LaTeX (ex: "p r i n t" -> "print")
+  return text.replace(/\b([a-zA-Z])\s+([a-zA-Z])\s+([a-zA-Z])(?:\s+([a-zA-Z]))*(?=\s|\b|[():;,])/g, (m) => {
+    const compact = m.replace(/\s+/g, "");
+    const COMMON_KEYWORDS = [
+      "defun", "setq", "setf", "print", "format", "read", "car", "cdr", "nth",
+      "list", "cons", "reduce", "addition", "carre", "map", "sum", "import",
+      "functools", "from", "return", "def", "lambda", "class", "while", "for",
+      "yield", "async", "await", "null", "true", "false", "nil"
+    ];
+    if (COMMON_KEYWORDS.includes(compact.toLowerCase())) return compact;
+    return m;
+  }).replace(/\(\s*([a-zA-Z])\s+([a-zA-Z])\s+([a-zA-Z0-9_\-]+)(?:\s+([a-zA-Z0-9_\-]+))*/g, (match) => {
+    return match.replace(/\s+/g, " ");
+  });
+}
+
+export function preprocessPdfDocument(rawText) {
+  if (!rawText || typeof rawText !== "string") return "";
+
+  // Découpage par balises [Page N] insérées par extractPdfText
+  const pageChunks = rawText.split(/\[Page \d+\]/i).map(p => p.trim()).filter(Boolean);
+  if (pageChunks.length <= 1) return cleanCodeKerning(rawText);
+
+  // 1. Nettoyage des footers / headers répétitifs de slides
+  const sanitized = pageChunks.map(page => {
+    const lines = page.split("\n").filter(l => {
+      const s = l.trim();
+      if (!s) return false;
+      if (/^Dr\.?\s+Gomis/i.test(s)) return false;
+      if (/^Programmation fonctionnelle\s*\d*$/i.test(s)) return false;
+      if (/^Plan$/i.test(s)) return false;
+      return true;
+    });
+    return lines.join("\n").trim();
+  }).filter(Boolean);
+
+  // 2. Déduplication des slides incrémentales (Beamer overlays / pauses)
+  const consolidated = [];
+  for (let i = 0; i < sanitized.length; i++) {
+    const cur = sanitized[i];
+    const next = sanitized[i + 1];
+
+    if (next) {
+      // Si la slide suivante contient l'essentiel de la slide actuelle (animation progressive)
+      const wordsCur = cur.split(/\s+/).filter(w => w.length > 3);
+      if (wordsCur.length > 5) {
+        const matches = wordsCur.filter(w => next.includes(w)).length;
+        const ratio = matches / wordsCur.length;
+        if (ratio > 0.85) {
+          // 'cur' n'est qu'un état transitoire incomplet de 'next'
+          continue;
+        }
+      }
+    }
+
+    consolidated.push(cleanCodeKerning(cur));
+  }
+
+  return consolidated.join("\n\n---\n\n");
+}
 
 async function extractPdfText(file) {
   return new Promise((resolve, reject) => {
@@ -546,6 +698,141 @@ const RICH_CONTENT_RULE = `RÈGLE DE CONTENU RICHE — le champ "back" accepte d
 - Pour un EXAMEN DE CODE : crée des fiches du style « Que fait cette fonction ? », « Quelle est la sortie ? », « Corrige le bug », « Complète la ligne manquante » — et inclus toujours le bloc de code complet dans "back" pour pouvoir réviser.
 - Champ "type" obligatoire : "qa" | "code" | "table" | "definition" | "concept" | "mixed".
 `;
+
+export const GOD_TIER_PROFILES = {
+  EXAM: {
+    id: "EXAM",
+    label: "🎓 Examen & Pièges",
+    desc: "Focus sur les évaluations de code, pièges d'examen, comparatifs et cas limites",
+    promptDirective: `PROFIL EXAMEN & CONCOURS UNIVERSITAIRE (PRIORITÉ BLOOM 3-4-5) :
+- 40% Évaluation concrète & Application : demande de prédire la sortie exacte d'un code, de tracer l'exécution ou de convertir une structure.
+- 30% Pièges d'examen & Subtilités : pose des questions sur les cas limites (NIL, division par zéro, effets de bord masqués, différences subtiles entre opérateurs).
+- 30% Synthèses comparatives : compare 2 approches concurrentes (ex: impératif vs fonctionnel, récursion naïve vs récursion terminale).`,
+  },
+  FLASH: {
+    id: "FLASH",
+    label: "⚡ Flash Atomique",
+    desc: "Mémorisation rapide, principes fondamentaux et définitions chirurgicales (Wozniak #4)",
+    promptDirective: `PROFIL FLASH ATOMIQUE (MINIMUM INFORMATION PRINCIPLE - WOZNIAK #4) :
+- Chaque fiche teste UN SEUL fait, règle ou terme précis.
+- Formulation ultra-concise : la question va droit au but, la réponse en 1 phrase ou 2 points d'ancrage.
+- Zéro surcharge cognitive : pas de pavés, pas de listes de plus de 3 éléments.`,
+  },
+  MASTERY: {
+    id: "MASTERY",
+    label: "🧠 Maîtrise & Trous",
+    desc: "Mix complet incluant textes à trous contextuels (Cloze Deletions) et concepts fondamentaux",
+    promptDirective: `PROFIL MAÎTRISE COMPLÈTE & CLOZE DELETIONS :
+- Intègre des fiches CLOZE DELETION (textes à trous) : le recto présente une phrase clé ou un bloc de code avec un mot-clé essentiel masqué par [...] (ex: "Complète le mot-clé : (defun fib (n) (if [...] n ...))").
+- Le verso donne le mot ou l'expression masquée en gras immédiat, suivi de la justification.
+- Alterne définitions fondamentales, mécanismes sous le capot et textes à trous contextuels.`,
+  },
+};
+
+const GOD_TIER_PEDAGOGY_RULE = `RÈGLES D'EXCELLENCE PÉDAGOGIQUE (GOD TIER - NIVEAU 10) :
+Fondées sur les 20 Règles de Formulation de Connaissances du Dr Piotr Wozniak (SuperMemo) et la Taxonomie Cognitive de Bloom.
+Objectif : créer des flashcards stimulantes, hyper-efficaces, rapides à auto-évaluer (en < 3 secondes) et garantissant la réussite aux examens universitaires et concours.
+
+1. PRINCIPE D'INFORMATION MINIMALE & ATOMICITÉ STRICTE (Wozniak Règle #4) :
+   - 1 FICHE = 1 SEULE QUESTION = 1 SEUL RETRAIT COGNITIF.
+   - BANNISSEMENT FORMEL DES QUESTIONS DOUBLES : Ne JAMAIS poser une question contenant "ET" qui combine deux interrogations (ex: BANNIR ABSOLUMENT "Quelle est la syntaxe de X ET que renvoie-t-il si Y ?").
+     → Scinde OBLIGATOIREMENT en DEUX fiches séparées : Fiche 1 sur la structure/syntaxe, Fiche 2 sur le cas limite / valeur par défaut.
+   - BANNISSEMENT ABSOLU des questions tautologiques ou miroirs ("Quelle approche procédurale... ? → procédurale").
+   - Zéro répétition : chaque notion apparaît une seule fois dans tout le deck.
+
+2. TAXONOMIE COGNITIVE DE BLOOM & VARIÉTÉ DES DÉFIS :
+   Attribue à chaque fiche un "bloomLevel" adéquat :
+   - "Remember" : Règle, définition chirurgicale, rôle d'une commande.
+   - "Understand" : Pourquoi ce mécanisme ? Qu'est-ce qui se passe sous le capot ?
+   - "Apply" : Prédire le résultat d'un code ("Que retourne l'évaluation de... ?"), tracer l'exécution.
+   - "Analyze" : Différence fondamentale entre A et B ("Compare setq et setf", "Pourquoi cette fonction est impure ?").
+   - "Evaluate" : Trouver le piège d'examen, le bug dissimulé ou le cas limite.
+
+3. MISE EN PAGE DU CODE PROPRE, INDENTÉE & AÉRÉE :
+   - DÈS QU'UNE SYNTAXE OU UN EXEMPLE COMPORTE PLUSIEURS LIGNES OU EXPRESSIONS (LISP, JS, Python...) : utilise OBLIGATOIREMENT un bloc Markdown fenced indenté propre avec le langage :
+     \`\`\`lisp
+     (cond (test1 expr1)
+           (test2 expr2)
+           (t expr-default))
+     \`\`\`
+   - INTERDICTION STRICTE d'écraser une expression ou fonction Lisp longue sur une seule ligne en code inline au milieu d'un paragraphe. Le code doit être clair et indenté.
+
+4. STRUCTURE DU VERSO POUR UNE AUTO-NOTATION INSTANTANÉE (FSRS-Friendly) :
+   - Ligne 1 : La réponse brute directe en GRAS (**réponse directe immédiate**). L'étudiant sait en 2s s'il a bon ou faux.
+   - Lignes 2-4 : Explication courte, déroulé d'arbre ou bloc de code propre indenté.
+   - Ligne finale : Puce mnémotechnique "💡 Retiens : ..." ou alerte "⚠️ Piège d'examen : ...".
+   - CODE STRICTEMENT PROPRE : syntaxe mono-espace sans espaces insérés au milieu des mots (ex: \`print\`, \`format\`, \`setq\`, \`car\`, \`cdr\`, \`nth\`).
+5. ÉVALUATION DE CODE DANS LE RECTO (CHAMP 'front') :
+   - Pour toute question demandant de prédire la sortie, de tracer une fonction ou d'analyser un comportement :
+     Inclus TOUJOURS le code dans un bloc Markdown fenced séparé de la question par un saut de ligne :
+     "front": "Dans l'exemple suivant, quelle sera la sortie affichée ?\\n\`\`\`lisp\\n(setq x 10)\\n(+ x 5)\\n\`\`\`"
+   - INTERDICTION FORMELLE de coller le code à la suite du texte sur la même ligne sans bloc Markdown fenced.
+`;
+
+function renderInlineCodeChips(text, isDarkMode) {
+  const parts = text.split(/(`[^`]+`)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return (
+        <code
+          key={idx}
+          style={{
+            background: isDarkMode ? "rgba(59, 130, 246, 0.2)" : "#EFF6FF",
+            color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+            padding: "2px 7px",
+            borderRadius: 6,
+            fontFamily: "'JetBrains Mono','Fira Code',monospace",
+            fontSize: "0.92em",
+            fontWeight: 700,
+            border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.35)" : "rgba(59, 130, 246, 0.2)"}`,
+            verticalAlign: "baseline",
+            margin: "0 2px",
+          }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+}
+
+function renderFormattedQuestion(text, isDarkMode, theme) {
+  if (!text || typeof text !== "string") return text;
+
+  // 1. Si le texte contient déjà un bloc Markdown fenced ```
+  if (text.includes("```")) {
+    return <GodTierContent text={text} theme={theme} isDarkMode={isDarkMode} showAudio={false} />;
+  }
+
+  // 2. Détection intelligente : code attaché après le point d'interrogation
+  const qIdx = text.lastIndexOf("?");
+  if (qIdx !== -1) {
+    const questionPart = text.slice(0, qIdx + 1).trim();
+    const rest = text.slice(qIdx + 1).trim();
+    const langMatch = rest.match(/^(lisp|python|py|javascript|js|typescript|ts|c|cpp|java|sql)\s+(.+)$/is);
+    let lang = "lisp";
+    let snippet = rest;
+    if (langMatch) {
+      lang = langMatch[1].toLowerCase();
+      snippet = langMatch[2].trim();
+    }
+    const isCode = Boolean(langMatch) || (snippet.startsWith("(") && snippet.endsWith(")")) || (snippet.startsWith("{") && snippet.endsWith("}"));
+    if (isCode && snippet.length > 3) {
+      return (
+        <div>
+          <div>{renderInlineCodeChips(questionPart, isDarkMode)}</div>
+          <div style={{ marginTop: 8 }}>
+            <GodTierContent text={`\`\`\`${lang}\n${snippet}\n\`\`\``} theme={theme} isDarkMode={isDarkMode} showAudio={false} />
+          </div>
+        </div>
+      );
+    }
+  }
+
+  // 3. Fallback pour inline code `mot-clé`
+  return renderInlineCodeChips(text, isDarkMode);
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // 🧠 GOD-TIER SUMMARY PIPELINE — onglet "Résumé Complet"
@@ -876,7 +1163,7 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
       onMouseMove={e => e.stopPropagation()}
       style={{
         width: "100%", padding: "10px 36px 10px 14px",
-        background: theme.inputBg, border: `1.5px solid ${value ? "#8B5CF6" : theme.border}`,
+        background: theme.inputBg, border: `1.5px solid ${value ? "var(--mm-primary)" : theme.border}`,
         borderRadius: 12, color: theme.text, fontSize: 14, fontWeight: 600,
         cursor: "pointer",
         appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
@@ -895,7 +1182,7 @@ const ModuleSelect = ({ value, onChange, label = "Module cible", categories, the
   </div>
 );
 
-export default function Lab({ theme, isDarkMode, categories = [], onAddCards, onShowToast }) {
+export default function Lab({ theme, isDarkMode, categories = [], expressions = [], onAddCards, onShowToast }) {
   const [tab, setTab] = useState("pdf");
 
   // ── 🔍 GOD MODE : Rayon-X Sémantique ───────────────────────────────────────
@@ -908,10 +1195,13 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfParsing, setPdfParsing] = useState(false);
   const [pdfModule, setPdfModule] = useState("");
+  const [pdfProfile, setPdfProfile] = useState("EXAM"); // "EXAM" | "FLASH" | "MASTERY"
   const [pdfCards, setPdfCards] = useState([]);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfProgress, setPdfProgress] = useState("");
   const [pdfPreview, setPdfPreview] = useState(false);
+  const [pdfCoverage, setPdfCoverage] = useState(null); // { coveragePercent, total, coveredCount, covered, missed }
+  const [pdfMinedConcepts, setPdfMinedConcepts] = useState([]);
   const pdfInputRef = useRef(null);
 
   // ─── Sélection de fiches (pour ajout groupé) ───────────────────────────────
@@ -1039,7 +1329,8 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
   };
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PDF → FICHES : génère des fiches en plusieurs passes si le doc est long
+  // PDF → FICHES : Générateur Forensique Zero-Drop (Niveau 10)
+  // Double-passe : Inventaire exhaustif des concepts -> Génération ciblée 1:1 -> Audit de couverture
   // ══════════════════════════════════════════════════════════════════════════
   const generatePdfCards = async () => {
     if (!pdfText.trim()) { toast("Charge d'abord un PDF.", "error"); return; }
@@ -1047,78 +1338,234 @@ export default function Lab({ theme, isDarkMode, categories = [], onAddCards, on
 
     setPdfLoading(true);
     setPdfCards([]);
-    setPdfProgress("Découpage du document...");
+    setPdfCoverage(null);
+    setPdfMinedConcepts([]);
+    setPdfProgress("🔍 Phase 1/3 : Inventaire forensique de toutes les notions du document...");
 
-    // Découpage intelligent : coupure aux paragraphes + overlap de 400 chars pour ne rien rater
-    const CHUNK = 8000;
-    const OVERLAP = 400;
+    // 1. Pré-traitement consolidé (déduplication Beamer/PPT et nettoyage de code)
+    const normalizedDoc = preprocessPdfDocument(pdfText);
+
+    // Découpage pour l'inventaire : sections de ~10 000 caractères avec overlap
+    const CHUNK = 10000;
+    const OVERLAP = 500;
     const chunks = [];
     let pos = 0;
-    while (pos < pdfText.length) {
-      let end = Math.min(pos + CHUNK, pdfText.length);
-      // Recule jusqu'à une fin de paragraphe pour ne pas couper un concept
-      if (end < pdfText.length) {
-        const boundary = pdfText.lastIndexOf("\n\n", end);
-        if (boundary > pos + 2000) end = boundary;
+    while (pos < normalizedDoc.length) {
+      let end = Math.min(pos + CHUNK, normalizedDoc.length);
+      if (end < normalizedDoc.length) {
+        const boundary = normalizedDoc.lastIndexOf("\n\n", end);
+        if (boundary > pos + 3000) end = boundary;
       }
-      const chunk = pdfText.slice(pos, end).trim();
-      if (chunk.length > 50) chunks.push(chunk); // ignore les chunks quasi-vides
-      // Avance en laissant un overlap pour ne pas rater les concepts à cheval
-      pos = end - (end < pdfText.length ? OVERLAP : 0);
-      if (pos <= 0 || (end === pdfText.length)) break; // sécurité anti-boucle infinie
+      const chunk = normalizedDoc.slice(pos, end).trim();
+      if (chunk.length > 50) chunks.push(chunk);
+      pos = end - (end < normalizedDoc.length ? OVERLAP : 0);
+      if (pos <= 0 || (end === normalizedDoc.length)) break;
     }
 
-    const allCards = [];
+    // ── PASSE 1 : Inventaire Forensique (Concept Mining) ──
+    const allMinedConcepts = [];
+    const seenConceptNames = new Set();
+
     for (let ci = 0; ci < chunks.length; ci++) {
-      setPdfProgress(`Génération des fiches — partie ${ci + 1}/${chunks.length}...`);
+      setPdfProgress(`🔍 Phase 1/3 : Cartographie des notions — section ${ci + 1}/${chunks.length}...`);
+      if (ci > 0) await new Promise(r => setTimeout(r, 1200));
+
       try {
-        const raw = await callGroq(
-          `Tu es un système de création de fiches de révision atomiques (FSRS).
-${FIDELITY_RULE}
-${RICH_CONTENT_RULE}
-Génère UNE FICHE PAR CONCEPT — entre 6 et 30 fiches selon la densité. RÈGLE ABSOLUE : ne saute AUCUN concept, AUCUNE définition, AUCUNE formule, AUCUN exemple. Adapte le TYPE : code → "code" ; tableau → "table" ; définition → "definition" ; mélange → "mixed".
-${ATOMIC_CARD_RULES}
-Réponds UNIQUEMENT en JSON valide, sans markdown autour :
-{"cards":[{"front":"Question précise","back":"Réponse markdown (peut contenir \`\`\`code\`\`\` et tables |...|)","type":"qa|code|table|definition|concept|mixed","keyword":"mot-clé EXACT du texte","hint":"astuce courte optionnelle"}]}`,
-          `MODULE CIBLE : ${pdfModule}\n\nPASSAGE DU DOCUMENT :\n${chunks[ci]}`,
-          8000,
+        const rawMining = await callGroq(
+          CONCEPT_MINING_SYSTEM_PROMPT,
+          `MODULE : ${pdfModule}\n\nEXTRAIS TOUTES LES NOTIONS, FONCTIONS, SYNTAXES ET PIÈGES SANS AUCUNE OMISSION :\n${chunks[ci]}`,
+          4000,
           true
         );
-        const parsed = safeJsonParse(raw);
-        const cards = (Array.isArray(parsed?.cards) ? parsed.cards : []).map(c => ({
-          ...normalizeCard(c),
-          category: pdfModule,
-          source: "pdf",
-        }));
-        allCards.push(...cards);
-      } catch (e) {
-        // En cas d'erreur JSON (réponse tronquée), on réessaie en demandant moins de fiches
+        const parsed = safeJsonParse(rawMining);
+        const list = Array.isArray(parsed?.concepts) ? parsed.concepts : [];
+        for (const c of list) {
+          const cName = String(c.name || "").trim().toLowerCase();
+          if (cName && !seenConceptNames.has(cName)) {
+            seenConceptNames.add(cName);
+            allMinedConcepts.push({
+              name: c.name || "Concept",
+              coreSyntaxOrRule: c.coreSyntaxOrRule || "",
+              trapOrDetail: c.trapOrDetail || "",
+              bloomLevel: c.bloomLevel || "Understand",
+              type: c.type || "qa",
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[Lab Concept Mining] Erreur sur section ${ci + 1}:`, err);
+      }
+    }
+
+    setPdfMinedConcepts(allMinedConcepts);
+
+    // Extraction des questions déjà existantes pour ce module afin d'instruire l'IA
+    const existingInModule = (expressions || []).filter(
+      (e) => (e.category || "").trim().toLowerCase() === (pdfModule || "").trim().toLowerCase()
+    );
+    const existingQuestionsSnippet = existingInModule.length > 0
+      ? `\n\nCONCEPTS DÉJÀ PRÉSENTS DANS CE MODULE (INTERDIT ABSOLU DE RE-GÉNÉRER DES DOUBLONS SUR CES SUJETS) :\n${existingInModule.slice(0, 35).map(e => `- ${e.front || ""}`).join("\n")}`
+      : "";
+
+    const activeProfile = GOD_TIER_PROFILES[pdfProfile] || GOD_TIER_PROFILES.EXAM;
+    const allCards = [];
+
+    // ── PASSE 2 : Génération Ciblée 1:1 par grappes de concepts ──
+    if (allMinedConcepts.length > 0) {
+      setPdfProgress(`⚡ Phase 2/3 : Génération d'élite 1:1 (${allMinedConcepts.length} notions identifiées)...`);
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < allMinedConcepts.length; i += BATCH_SIZE) {
+        const batch = allMinedConcepts.slice(i, i + BATCH_SIZE);
+        const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(allMinedConcepts.length / BATCH_SIZE);
+        setPdfProgress(`⚡ Phase 2/3 : Génération des fiches — lot ${batchNum}/${totalBatches} (${batch.map(b => b.name).join(", ")})...`);
+
+        if (i > 0) await new Promise(r => setTimeout(r, 1400));
+
         try {
-          const raw2 = await callGroq(
-            `Tu es un système de création de fiches de révision.
-${FIDELITY_RULE}
-Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQUEMENT en JSON valide :
-{"cards":[{"front":"Question","back":"Réponse","type":"qa","keyword":"mot-clé","hint":""}]}`,
-            `MODULE CIBLE : ${pdfModule}\n\nPASSAGE DU DOCUMENT :\n${chunks[ci].slice(0, 6000)}`,
-            4000,
+          const targetedPrompt = buildTargetedGenerationPrompt(batch, activeProfile.promptDirective, GOD_TIER_PEDAGOGY_RULE);
+          const rawCards = await callGroq(
+            targetedPrompt,
+            `MODULE CIBLE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${normalizedDoc.slice(0, 16000)}`,
+            6000,
             true
           );
-          const parsed2 = safeJsonParse(raw2);
-          const cards2 = (Array.isArray(parsed2?.cards) ? parsed2.cards : []).map(c => ({
-            ...normalizeCard(c), category: pdfModule, source: "pdf",
+          const parsedCards = safeJsonParse(rawCards);
+          const cards = (Array.isArray(parsedCards?.cards) ? parsedCards.cards : []).map(c => ({
+            ...normalizeCard(c),
+            category: pdfModule,
+            source: "pdf",
+            bloomLevel: c.bloomLevel || "Understand",
+            type: c.type || "qa",
           }));
-          allCards.push(...cards2);
-        } catch (e2) {
-          toast(`Partie ${ci + 1} ignorée après 2 tentatives`, "error");
+          if (cards.length > 0) {
+            allCards.push(...cards);
+          }
+        } catch (e) {
+          console.warn(`[Lab Targeted Gen] Lot ${batchNum} KO:`, e);
+        }
+      }
+    } else {
+      // Secours : si aucun concept extrait, fallback sur la génération par chunks
+      setPdfProgress("Génération directe des fiches maîtresses...");
+      for (let ci = 0; ci < chunks.length; ci++) {
+        if (ci > 0) await new Promise(r => setTimeout(r, 1500));
+        try {
+          const prompt = `Tu es le meilleur concepteur mondial de flashcards universitaires d'élite (FSRS & Active Recall Niveau 10).
+${GOD_TIER_PEDAGOGY_RULE}
+${RICH_CONTENT_RULE}
+${activeProfile.promptDirective}
+Génère entre 6 et 14 fiches MAÎTRESSES couvrant TOUS les aspects de ce passage.
+Réponds UNIQUEMENT en JSON valide :
+{"cards":[{"front":"Question précise","back":"**Réponse directe en gras**\\nExplication","type":"qa|code|trap|cloze","bloomLevel":"Remember|Understand|Apply|Analyze|Evaluate","keyword":"mot-clé","hint":""}]}`;
+          const raw = await callGroq(prompt, `MODULE : ${pdfModule}\n\n${chunks[ci]}`, 8000, true);
+          const parsed = safeJsonParse(raw);
+          const cards = (Array.isArray(parsed?.cards) ? parsed.cards : []).map(c => ({
+            ...normalizeCard(c),
+            category: pdfModule,
+            source: "pdf",
+            bloomLevel: c.bloomLevel || "Understand",
+            type: c.type || "qa",
+          }));
+          if (cards.length > 0) allCards.push(...cards);
+        } catch (err) {
+          console.warn(`[Lab Fallback] Chunk ${ci + 1} KO:`, err);
         }
       }
     }
 
-    setPdfCards(allCards);
-    setPdfProgress(`✅ ${allCards.length} fiches générées !`);
+    // ── PASSE 3 : Audit Zero-Drop & Rattrapage ──
+    if (allMinedConcepts.length > 0) {
+      setPdfProgress("🛡️ Phase 3/3 : Audit de couverture Zero-Drop...");
+      let coverage = auditDocumentCoverage(allMinedConcepts, allCards);
+      setPdfCoverage(coverage);
+
+      if (coverage.missed.length > 0 && coverage.missed.length <= 8) {
+        setPdfProgress(`🔧 Rattrapage Zero-Drop de ${coverage.missed.length} notion(s) omise(s)...`);
+        try {
+          const recoveryPrompt = buildTargetedGenerationPrompt(coverage.missed, activeProfile.promptDirective, GOD_TIER_PEDAGOGY_RULE);
+          const recoveryRaw = await callGroq(
+            recoveryPrompt,
+            `MODULE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${normalizedDoc.slice(0, 16000)}`,
+            5000,
+            true
+          );
+          const parsedRecovery = safeJsonParse(recoveryRaw);
+          const recoveredCards = (Array.isArray(parsedRecovery?.cards) ? parsedRecovery.cards : []).map(c => ({
+            ...normalizeCard(c),
+            category: pdfModule,
+            source: "pdf",
+            bloomLevel: c.bloomLevel || "Understand",
+            type: c.type || "qa",
+          }));
+          if (recoveredCards.length > 0) {
+            allCards.push(...recoveredCards);
+            coverage = auditDocumentCoverage(allMinedConcepts, allCards);
+            setPdfCoverage(coverage);
+          }
+        } catch (recErr) {
+          console.warn("[Lab Recovery] Échec du rattrapage:", recErr);
+        }
+      }
+    }
+
+    // 🧹 Déduplication sémantique post-génération :
+    // Élimine les doublons stricts ou les questions quasi-identiques
+    const uniqueCards = [];
+    const seenSignatures = new Set();
+    for (const card of allCards) {
+      const sig = (card.front || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "")
+        .slice(0, 35);
+      if (!sig || seenSignatures.has(sig)) continue;
+
+      let isDuplicate = false;
+      for (const existing of seenSignatures) {
+        if (existing.includes(sig) || sig.includes(existing)) {
+          if (Math.min(existing.length, sig.length) > 12) {
+            isDuplicate = true;
+            break;
+          }
+        }
+      }
+      if (!isDuplicate) {
+        seenSignatures.add(sig);
+        uniqueCards.push(card);
+      }
+    }
+
+    // 🛡️ Détection & marquage des doublons avec les fiches déjà existantes dans le deck
+    const finalCards = uniqueCards.map(card => {
+      const similars = findSimilarCards(card.front, expressions, 0.75);
+      if (similars.length > 0) {
+        return {
+          ...card,
+          isExistingDuplicate: true,
+          duplicateOf: similars[0]?.card?.front || "fiche existante",
+          similarityScore: Math.round((similars[0]?.similarity || 0.75) * 100),
+        };
+      }
+      return card;
+    });
+
+    setPdfCards(finalCards);
+    // Par défaut, ne pré-sélectionner QUE les nouvelles fiches (ignorer les doublons déjà présents)
+    const freshIndexes = new Set();
+    finalCards.forEach((c, idx) => {
+      if (!c.isExistingDuplicate) freshIndexes.add(idx);
+    });
+    setSelectedCardIndexes(freshIndexes);
+
+    const dupCount = finalCards.filter(c => c.isExistingDuplicate).length;
+    setPdfProgress(dupCount > 0
+      ? `✅ ${finalCards.length} fiches générées (${dupCount} doublon(s) existant(s) écarté(s) par défaut)`
+      : `✅ ${finalCards.length} fiches maîtresses générées !`);
     setPdfLoading(false);
     setPdfPreview(true);
-    toast(`📄 ${allCards.length} fiches prêtes — vérifie avant d'ajouter !`);
+    toast(dupCount > 0
+      ? `📄 ${finalCards.length} fiches prêtes (${dupCount} doublon(s) avec ton deck détecté(s))`
+      : `📄 ${finalCards.length} fiches prêtes — vérifie avant d'ajouter !`);
   };
 
   const addPdfCardsToDeck = (indexesToAdd = null) => {
@@ -1132,6 +1579,7 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
     const result = onAddCards ? onAddCards(cardsToAdd.map(c => ({
       front: c.front, back: c.back, example: c.hint || "",
       category: c.category, type: c.type || "qa",
+      bloomLevel: c.bloomLevel || "Understand", keyword: c.keyword || "",
     })), { source: 'pdf', silent: true }) : null;
     const added = result?.added ?? cardsToAdd.length;
     const skipped = result?.skipped ?? 0;
@@ -1175,8 +1623,9 @@ Génère entre 5 et 10 fiches sur les points CLÉS de ce passage. Réponds UNIQU
     try {
       if (isPdf) {
         const { text, pages } = await extractPdfText(file);
-        setPdfText(text); setPdfPages(pages);
-        toast(`✅ ${pages} pages · ${text.split(" ").length.toLocaleString()} mots extraits`);
+        const clean = preprocessPdfDocument(text);
+        setPdfText(clean); setPdfPages(pages);
+        toast(`✅ ${pages} pages analysées (${clean.split(" ").length.toLocaleString()} mots consolidés)`);
       } else if (/\.ipynb$/i.test(file.name)) {
         // Notebook Jupyter : on extrait code + markdown en préservant les blocs
         const raw = await file.text();
@@ -1740,10 +2189,10 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
   // Palette de couleurs pour les onglets
   const TABS = [
-    { id: "pdf", icon: "📄", label: "PDF → Fiches", color: "#8B5CF6" },
-    { id: "resume", icon: "📝", label: "Résumé Complet", color: "#7C3AED" },
+    { id: "pdf", icon: "📄", label: "PDF → Fiches", color: "var(--mm-primary)" },
+    { id: "resume", icon: "📝", label: "Résumé Complet", color: "var(--mm-primary)" },
     {
-      id: "audio", icon: "🎵", label: "Audio → Fiche", color: "#EA580C",
+      id: "audio", icon: "🎵", label: "Audio → Fiche", color: "var(--mm-primary-deep)",
       badge: audioCards.length > 0 ? audioCards.length : null
     },
     {
@@ -1759,27 +2208,29 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
   // Mapping des couleurs d'aura selon l'onglet actif
   const tabColors = {
-    pdf: "#8B5CF6",    // Bleu
-    resume: "#7C3AED", // Violet
-    audio: "#EA580C",  // Orange
+    pdf: "var(--mm-primary)",    // Bleu
+    resume: "var(--mm-primary)", // Violet
+    audio: "var(--mm-primary-deep)",  // Orange
     photo: "#059669",  // Émeraude
   };
-  const activeColor = tabColors[tab] || "#8B5CF6";
+  const activeColor = tabColors[tab] || "var(--mm-primary)";
 
   return (
     <div style={{
       animation: "fadeUp 0.4s ease",
       background: isDarkMode
-        ? `radial-gradient(circle at 50% -20%, ${activeColor}25 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(139, 92, 246,0.15) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(139, 92, 246,0.15) 0%, transparent 60%)`
-        : `radial-gradient(circle at 50% -20%, ${activeColor}15 0%, transparent 80%), radial-gradient(circle at -20% 50%, rgba(139, 92, 246,0.05) 0%, transparent 60%), radial-gradient(circle at 120% 50%, rgba(139, 92, 246,0.05) 0%, transparent 60%)`,
+        ? `radial-gradient(circle at 50% -20%, ${colorMix(activeColor, 15)} 0%, transparent 80%), radial-gradient(circle at -20% 50%, color-mix(in srgb, var(--mm-primary) 15.0%, transparent) 0%, transparent 60%), radial-gradient(circle at 120% 50%, color-mix(in srgb, var(--mm-primary) 15.0%, transparent) 0%, transparent 60%)`
+        : `radial-gradient(circle at 50% -20%, ${colorMix(activeColor, 8)} 0%, transparent 80%), radial-gradient(circle at -20% 50%, color-mix(in srgb, var(--mm-primary) 5.0%, transparent) 0%, transparent 60%), radial-gradient(circle at 120% 50%, color-mix(in srgb, var(--mm-primary) 5.0%, transparent) 0%, transparent 60%)`,
       transition: "background 0.6s ease-in-out",
       position: "relative",
+      paddingBottom: "calc(80px + env(safe-area-inset-bottom, 24px))"
     }}>
       <style>{`
           @media (max-width: 768px) {
             .lab-split-screen { flex-direction: column !important; }
             .lab-sticky-panel { position: relative !important; top: 0 !important; width: 100% !important; margin-bottom: 20px; }
             .lab-card-mobile { padding: 16px !important; }
+            .lab-hero-card { padding: 14px 16px !important; }
           }
         `}</style>
       <style>{`
@@ -1796,40 +2247,70 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
         @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       `}</style>
-      {/* En-tête */}
-      <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.highlight, margin: 0 }}>🧪 Laboratoire</h1>
-        <p style={{ color: theme.textMuted, fontSize: 14, margin: "4px 0 0" }}>
-          PDF · Résumé complet · Fiches Audio · Fiches Photo — tout s'organise dans tes modules
+
+      {/* ── En-tête Héro Studio IA ── */}
+      <div className="lab-hero-card" style={{
+        background: isDarkMode ? "rgba(15, 23, 42, 0.75)" : "#FFFFFF",
+        borderRadius: 20, padding: "16px 22px", marginBottom: 16,
+        border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(0,0,0,0.08)"}`,
+        boxShadow: isDarkMode ? "0 10px 24px rgba(0,0,0,0.3)" : "0 4px 16px rgba(37,99,235,0.06)",
+        position: "relative", overflow: "hidden"
+      }}>
+        {isDarkMode && (
+          <div style={{ position: "absolute", top: -80, right: -80, width: 220, height: 220, background: "radial-gradient(circle, rgba(37, 99, 235, 0.2) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
+        )}
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 8, background: isDarkMode ? "rgba(37, 99, 235, 0.2)" : "rgba(37, 99, 235, 0.08)", color: isDarkMode ? "#93C5FD" : "#2563EB", fontSize: 10.5, fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase" }}>
+          <span>🧪</span> Studio IA d'Extraction
+        </div>
+        <h1 style={{ fontSize: 21, fontWeight: 900, color: isDarkMode ? "#F8FAFC" : "#0F172A", margin: "6px 0 3px", letterSpacing: "-0.3px" }}>
+          Laboratoire de Cours
+        </h1>
+        <p style={{ color: theme.textMuted, fontSize: 12.5, margin: 0, lineHeight: 1.4 }}>
+          Transformez vos PDF, cours, audios et photos en fiches mémorisables haute fidélité
         </p>
       </div>
 
-      {/* Onglets */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 28, flexWrap: "wrap" }}>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding: "10px 20px", borderRadius: 14, position: "relative",
-            background: tab === t.id
-              ? `linear-gradient(135deg, ${t.color}, ${t.color}cc)`
-              : theme.cardBg,
-            color: tab === t.id ? "white" : theme.textMuted,
-            border: `1.5px solid ${tab === t.id ? "transparent" : theme.border}`,
-            fontWeight: 700, fontSize: 13, cursor: "pointer",
-            transition: "all 0.2s",
-            boxShadow: tab === t.id ? `0 4px 16px ${t.color}44` : "none",
-          }}>
-            {t.icon} {t.label}
-            {t.badge && (
-              <span style={{
-                position: "absolute", top: -6, right: -6,
-                background: "#EF4444", color: "white",
-                borderRadius: "50%", width: 20, height: 20,
-                fontSize: 11, fontWeight: 900,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>{t.badge}</span>
-            )}
-          </button>
-        ))}
+      {/* ── Segmented Control Liquid Glass (1 ligne fluide) ── */}
+      <div className="lab-segmented-bar" style={{
+        display: "flex", gap: 6, padding: 5, borderRadius: 16,
+        background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(241, 245, 249, 0.9)",
+        backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
+        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}`,
+        overflowX: "auto", marginBottom: 20
+      }}>
+        {TABS.map(t => {
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              style={{
+                flex: "1 1 auto", minHeight: 40, padding: "8px 14px", borderRadius: 12, position: "relative",
+                background: isActive ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))" : "transparent",
+                color: isActive ? "white" : theme.textMuted,
+                border: "none", fontWeight: 800, fontSize: 12.5,
+                cursor: "pointer", transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+                boxShadow: isActive ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none"
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{t.icon}</span>
+              <span>{t.label}</span>
+              {t.badge && (
+                <span style={{
+                  position: "absolute", top: -4, right: -4,
+                  background: "#EF4444", color: "white",
+                  borderRadius: "50%", width: 18, height: 18,
+                  fontSize: 10, fontWeight: 900,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 2px 6px rgba(239, 68, 68, 0.4)"
+                }}>
+                  {t.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* ════════════════════════════════════════════════════════════════════
@@ -1850,6 +2331,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               subtitle={pdfText ? <><strong style={{ color: activeColor, display: "block", marginBottom: 8 }}>{pdfPages} pages · {pdfText.split(" ").length.toLocaleString()} mots</strong><span style={{ fontSize: 12 }}>Clique ou glisse un autre fichier pour le modifier</span></> : "Glisse un PDF, texte, code ou examen ici (.pdf .py .js .ts .java .sql .ipynb .csv .json .md…). L'IA conserve le vocabulaire exact, le code dans des blocs et les tableaux."}
               theme={theme}
               disabled={pdfParsing}
+              isDarkMode={isDarkMode}
             />
             <input ref={pdfInputRef} type="file" accept=".pdf,.txt,.md,.markdown,.csv,.tsv,.log,.tex,.json,.jsonl,.yaml,.yml,.toml,.ini,.env,.html,.htm,.xml,.svg,.css,.scss,.sass,.less,.js,.jsx,.mjs,.cjs,.ts,.tsx,.py,.ipynb,.java,.kt,.kts,.c,.h,.cc,.cpp,.cxx,.hpp,.cs,.go,.rs,.rb,.php,.swift,.sql,.sh,.bash,.zsh,.ps1,.bat,.pl,.pm,.lua,.r,.scala,.dart,.ex,.exs,.erl,.hs,.clj,.cljs,.fs,.fsx,.m,.mm,.gradle,.dockerfile,.graphql,.gql,.proto,.vue,.svelte,.astro" style={{ display: "none" }} onChange={e => handlePdfUpload(e.target.files[0])} disabled={pdfParsing} />
             {!pdfText && (
@@ -1863,6 +2345,44 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
             <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
               <ModuleSelect value={pdfModule} onChange={setPdfModule} label="Module cible pour les fiches" categories={categories} theme={theme} isDarkMode={isDarkMode} />
 
+              {/* 🎯 Sélecteur de Profil Pédagogique Niveau 10 */}
+              <div style={{ marginTop: 16, marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.8, color: theme.textMuted }}>
+                    🎯 Style d'Extraction Pédagogique (Niveau 10)
+                  </label>
+                  <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, background: `${colorMix(activeColor, 12)}`, color: activeColor }}>
+                    Taxonomie de Bloom & Wozniak
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+                  {Object.values(GOD_TIER_PROFILES).map(p => {
+                    const isSel = pdfProfile === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPdfProfile(p.id)}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: 14,
+                          border: `1.5px solid ${isSel ? activeColor : theme.border}`,
+                          background: isSel ? `${colorMix(activeColor, 12)}` : theme.inputBg,
+                          color: isSel ? activeColor : theme.text,
+                          cursor: "pointer",
+                          textAlign: "left",
+                          transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
+                          boxShadow: isSel ? `0 4px 14px ${colorMix(activeColor, 20)}` : "none",
+                        }}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 2 }}>{p.label}</div>
+                        <div style={{ fontSize: 10.5, color: isSel ? theme.text : theme.textMuted, lineHeight: 1.3 }}>{p.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <button
                 onClick={generatePdfCards}
                 disabled={pdfLoading || !pdfModule}
@@ -1870,7 +2390,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                   width: "100%", padding: "14px 20px",
                   background: pdfLoading || !pdfModule
                     ? theme.inputBg
-                    : "linear-gradient(135deg,#7C3AED,#8B5CF6)",
+                    : "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
                   color: pdfLoading || !pdfModule ? theme.textMuted : "white",
                   border: "none", borderRadius: 14, fontWeight: 800, fontSize: 15,
                   cursor: pdfLoading || !pdfModule ? "default" : "pointer",
@@ -1922,7 +2442,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         <div style={{ animation: "fadeIn 0.3s ease" }}>
                           <div style={{ fontSize: 10, fontWeight: 900, color: activeColor, marginBottom: 8, letterSpacing: 1 }}>🔍 RAYON-X SÉMANTIQUE</div>
                           <em style={{ opacity: 0.7 }}>{start > 0 ? "..." : ""}{before}</em>
-                          <mark style={{ background: `${activeColor}33`, color: activeColor, textShadow: `0 0 12px ${activeColor}`, fontWeight: 900, borderRadius: 4, padding: "2px 4px", boxShadow: `0 0 10px ${activeColor}40` }}>{match}</mark>
+                          <mark style={{ background: `${colorMix(activeColor, 20)}`, color: activeColor, textShadow: `0 0 12px ${activeColor}`, fontWeight: 900, borderRadius: 4, padding: "2px 4px", boxShadow: `0 0 10px ${colorMix(activeColor, 25)}` }}>{match}</mark>
                           <em style={{ opacity: 0.7 }}>{after}{end < pdfText.length ? "..." : ""}</em>
                         </div>
                       );
@@ -1931,6 +2451,28 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                   <div style={{ marginTop: 24, borderTop: `1px solid ${theme.border}`, paddingTop: 16 }}>
                     <h4 style={{ margin: "0 0 4px", color: theme.text, fontSize: 15 }}>🃏 {pdfCards.length} fiches extraites</h4>
                     <p style={{ color: theme.textMuted, fontSize: 13, margin: "0 0 4px" }}>Module : <strong style={{ color: activeColor }}>{pdfModule}</strong></p>
+                    {pdfCoverage && (
+                      <div style={{
+                        margin: "8px 0 10px", padding: "8px 10px", borderRadius: 10,
+                        background: isDarkMode ? "rgba(16, 185, 129, 0.15)" : "#ECFDF5",
+                        border: "1px solid rgba(16, 185, 129, 0.3)", color: isDarkMode ? "#6EE7B7" : "#065F46",
+                        fontSize: 12, fontWeight: 700, lineHeight: 1.4,
+                        display: "flex", alignItems: "center", justifyContent: "space-between"
+                      }}>
+                        <span>🎯 Couverture Zero-Drop :</span>
+                        <span style={{ fontWeight: 900, color: "#10B981" }}>{pdfCoverage.coveredCount}/{pdfCoverage.total} notions ({pdfCoverage.coveragePercent}%)</span>
+                      </div>
+                    )}
+                    {pdfCards.some(c => c.isExistingDuplicate) && (
+                      <div style={{
+                        margin: "8px 0 10px", padding: "8px 10px", borderRadius: 10,
+                        background: isDarkMode ? "rgba(239, 68, 68, 0.15)" : "#FEF2F2",
+                        border: "1px solid rgba(239, 68, 68, 0.3)", color: isDarkMode ? "#FCA5A5" : "#DC2626",
+                        fontSize: 12, fontWeight: 700, lineHeight: 1.4,
+                      }}>
+                        ⚡ {pdfCards.filter(c => c.isExistingDuplicate).length} doublon(s) déjà dans ton deck (désélectionnés par défaut).
+                      </div>
+                    )}
 
                     {/* Sélection rapide */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 14px" }}>
@@ -1982,7 +2524,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       animation: `fadeUp 0.5s ease forwards`,
                       animationDelay: `${i * 0.08}s`,
                       opacity: 0,
-                      boxShadow: selectedCardIndexes.has(i) ? `0 4px 15px ${activeColor}30` : "0 4px 15px rgba(139, 92, 246,0.05)",
+                      boxShadow: selectedCardIndexes.has(i) ? `0 4px 15px ${colorMix(activeColor, 19)}` : "0 4px 15px color-mix(in srgb, var(--mm-primary) 5.0%, transparent)",
                       transition: "border-color 0.2s, box-shadow 0.2s",
                     }}>
                     {/* Checkbox header */}
@@ -1990,7 +2532,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       onClick={() => toggleCardSelection(i)}
                       style={{
                         display: "flex", alignItems: "center", gap: 10, padding: "8px 14px",
-                        background: selectedCardIndexes.has(i) ? `${activeColor}15` : "transparent",
+                        background: selectedCardIndexes.has(i) ? `${colorMix(activeColor, 8)}` : "transparent",
                         cursor: "pointer", borderBottom: `1px solid ${theme.border}`,
                         transition: "background 0.15s",
                       }}
@@ -2004,19 +2546,69 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         {selectedCardIndexes.has(i) && <span style={{ color: "white", fontSize: 11, lineHeight: 1 }}>✓</span>}
                       </div>
                       <span style={{ fontSize: 11, fontWeight: 700, color: selectedCardIndexes.has(i) ? activeColor : theme.textMuted }}>
-                        Fiche #{i + 1} {selectedCardIndexes.has(i) ? "· Sélectionnée" : "· Cliquer pour sélectionner"}
+                        Fiche #{i + 1} {card.isExistingDuplicate ? "· ⚡ Doublon existant" : (selectedCardIndexes.has(i) ? "· Sélectionnée" : "· Cliquer pour sélectionner")}
                       </span>
                     </div>
                     <div style={{ padding: "14px 18px", borderBottom: `1px solid ${theme.border}`, background: theme.inputBg }}>
+                      {/* Badges Cognitifs Bloom & Formats */}
+                      {(() => {
+                        const bloomMeta = {
+                          Remember: { label: "🧠 Mémoriser", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.12)" },
+                          Understand: { label: "💡 Comprendre", color: "#06B6D4", bg: "rgba(6, 182, 212, 0.12)" },
+                          Apply: { label: "⚙️ Appliquer / Tracé", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)" },
+                          Analyze: { label: "🔬 Analyser / Comparer", color: "#8B5CF6", bg: "rgba(139, 92, 246, 0.12)" },
+                          Evaluate: { label: "⚠️ Piège / Évaluer", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)" },
+                        }[card.bloomLevel] || (card.type === "trap" ? { label: "⚠️ Piège", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)" } : null);
+
+                        const typeMeta = card.type === "cloze" ? { label: "✏️ Texte à trous", color: "#EC4899", bg: "rgba(236, 72, 153, 0.12)" }
+                          : card.type === "code" ? { label: "💻 Code Tracé", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)" }
+                          : null;
+
+                        return (
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+                            {bloomMeta && (
+                              <span style={{
+                                fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6,
+                                background: bloomMeta.bg, color: bloomMeta.color,
+                                border: `1px solid ${bloomMeta.color}33`, textTransform: "uppercase", letterSpacing: 0.5
+                              }}>
+                                {bloomMeta.label}
+                              </span>
+                            )}
+                            {typeMeta && (
+                              <span style={{
+                                fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6,
+                                background: typeMeta.bg, color: typeMeta.color,
+                                border: `1px solid ${typeMeta.color}33`, textTransform: "uppercase", letterSpacing: 0.5
+                              }}>
+                                {typeMeta.label}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       <div style={{ fontSize: 10, fontWeight: 800, color: activeColor, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
                         RECTO — Question
                       </div>
                       <div style={{ fontWeight: 800, color: theme.text, fontSize: 15, lineHeight: 1.5 }}>
-                        {toText(card.front)}
+                        {renderFormattedQuestion(toText(card.front), isDarkMode, theme)}
                         {card.keyword && (
-                          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: `${activeColor}15`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${activeColor}40`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
+                          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 8, background: `${colorMix(activeColor, 8)}`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${colorMix(activeColor, 25)}`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
                             🔑 {toText(card.keyword)}
                           </span>
+                        )}
+                        {card.isExistingDuplicate && (
+                          <div style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            marginTop: 6, padding: "3px 8px", borderRadius: 8,
+                            background: isDarkMode ? "rgba(239, 68, 68, 0.2)" : "#FEE2E2",
+                            color: isDarkMode ? "#FCA5A5" : "#DC2626",
+                            border: "1px solid rgba(239, 68, 68, 0.4)",
+                            fontSize: 11, fontWeight: 700,
+                          }}>
+                            ⚡ Déjà dans ton deck : &laquo; {toText(card.duplicateOf).slice(0, 45)}... &raquo; ({card.similarityScore}%)
+                          </div>
                         )}
                       </div>
                     </div>
@@ -2088,6 +2680,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               subtitle={resText ? <><strong style={{ color: activeColor, display: "block", marginBottom: 8 }}>{resPages} pages · {resText.split(" ").length.toLocaleString()} mots</strong><span style={{ fontSize: 12 }}>Clique ou glisse un autre fichier pour remplacer</span></> : "PDF, Texte, Code, Notebook..."}
               theme={theme}
               disabled={resParsing}
+              isDarkMode={isDarkMode}
             />
             <input ref={resInputRef} type="file" accept=".pdf,.txt,.md,.csv,.json,.html,.xml,.js,.ts,.py,.java,.c,.cpp,.go,.rs,.php,.sql,.sh" style={{ display: "none" }} onChange={e => handleResUpload(e.target.files[0])} disabled={resParsing} />
           </HoloCard>
@@ -2107,7 +2700,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                     </div>
                     <div style={{ fontSize: 12, color: theme.textMuted, display: "flex", justifyContent: "space-between" }}>
                       <span>{new Date(entry.date).toLocaleDateString()}</span>
-                      <span style={{ background: `${activeColor}20`, color: activeColor, padding: "2px 8px", borderRadius: 8, fontWeight: 800 }}>{entry.mode}</span>
+                      <span style={{ background: `${colorMix(activeColor, 13)}`, color: activeColor, padding: "2px 8px", borderRadius: 8, fontWeight: 800 }}>{entry.mode}</span>
                     </div>
                   </div>
                 ))}
@@ -2122,11 +2715,11 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 disabled={resLoading}
                 style={{
                   padding: "14px 28px",
-                  background: resLoading ? theme.inputBg : `linear-gradient(135deg, ${activeColor}, #7C3AED)`,
+                  background: resLoading ? theme.inputBg : `linear-gradient(135deg, ${activeColor}, var(--mm-primary))`,
                   color: resLoading ? theme.textMuted : "white",
                   border: "none", borderRadius: 16, fontWeight: 800, fontSize: 15,
                   cursor: resLoading ? "default" : "pointer",
-                  boxShadow: resLoading ? "none" : `0 8px 24px ${activeColor}40`,
+                  boxShadow: resLoading ? "none" : `0 8px 24px ${colorMix(activeColor, 25)}`,
                   display: "flex", alignItems: "center", gap: 10
                 }}
               >
@@ -2152,7 +2745,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       <h3 style={{ color: theme.text, fontWeight: 900, margin: 0, fontSize: 16 }}>Document</h3>
                     </div>
                     {estimatedReadTime > 0 && (
-                      <span style={{ fontSize: 11, background: `${activeColor}15`, color: activeColor, padding: "4px 8px", borderRadius: 8, fontWeight: 800 }}>
+                      <span style={{ fontSize: 11, background: `${colorMix(activeColor, 8)}`, color: activeColor, padding: "4px 8px", borderRadius: 8, fontWeight: 800 }}>
                         ⏳ ~{estimatedReadTime} min
                       </span>
                     )}
@@ -2171,7 +2764,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         <div style={{ animation: "fadeIn 0.3s ease" }}>
                           <div style={{ fontSize: 10, fontWeight: 900, color: activeColor, marginBottom: 8 }}>🔍 RAYON-X</div>
                           <em style={{ opacity: 0.7 }}>{start > 0 ? "..." : ""}{before}</em>
-                          <mark style={{ background: `${activeColor}33`, color: activeColor, fontWeight: 900, borderRadius: 4, padding: "0 4px" }}>{match}</mark>
+                          <mark style={{ background: `${colorMix(activeColor, 20)}`, color: activeColor, fontWeight: 900, borderRadius: 4, padding: "0 4px" }}>{match}</mark>
                           <em style={{ opacity: 0.7 }}>{after}{end < resText.length ? "..." : ""}</em>
                         </div>
                       );
@@ -2196,9 +2789,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 </HoloCard>
 
                 {/* 2. Bloc Chat with Doc (God-Tier) */}
-                <HoloCard className="lab-card-mobile" theme={theme} glowColor="#A855F7" style={{ background: theme.cardBg, borderRadius: 22, border: `1px solid ${theme.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                  <div style={{ padding: "16px", borderBottom: `1px solid ${theme.border}`, background: "rgba(168, 85, 247, 0.05)" }}>
-                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "#A855F7", display: "flex", alignItems: "center", gap: 8 }}>
+                <HoloCard className="lab-card-mobile" theme={theme} glowColor="var(--mm-primary)" style={{ background: theme.cardBg, borderRadius: 22, border: `1px solid ${theme.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  <div style={{ padding: "16px", borderBottom: `1px solid ${theme.border}`, background: "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)" }}>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 900, color: "var(--mm-primary)", display: "flex", alignItems: "center", gap: 8 }}>
                       💬 Ask The Doc
                     </h3>
                   </div>
@@ -2211,7 +2804,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                     )}
                     {resChatMessages.map((msg, i) => (
                       <div key={i} style={{ alignSelf: msg.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-                        <div style={{ padding: "10px 14px", borderRadius: 16, borderBottomRightRadius: msg.role === "user" ? 4 : 16, borderBottomLeftRadius: msg.role === "assistant" ? 4 : 16, background: msg.role === "user" ? "#A855F7" : theme.cardBg, color: msg.role === "user" ? "white" : theme.text, border: msg.role === "assistant" ? `1px solid ${theme.border}` : "none", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                        <div style={{ padding: "10px 14px", borderRadius: 16, borderBottomRightRadius: msg.role === "user" ? 4 : 16, borderBottomLeftRadius: msg.role === "assistant" ? 4 : 16, background: msg.role === "user" ? "var(--mm-primary)" : theme.cardBg, color: msg.role === "user" ? "white" : theme.text, border: msg.role === "assistant" ? `1px solid ${theme.border}` : "none", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
                           {msg.text}
                         </div>
                       </div>
@@ -2219,9 +2812,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                     {resChatLoading && (
                       <div style={{ alignSelf: "flex-start", background: theme.cardBg, padding: "10px 14px", borderRadius: 16, border: `1px solid ${theme.border}` }}>
                         <div style={{ display: "flex", gap: 4 }}>
-                          <span style={{ width: 6, height: 6, background: "#A855F7", borderRadius: "50%", animation: "kg-pulse 1s infinite" }} />
-                          <span style={{ width: 6, height: 6, background: "#A855F7", borderRadius: "50%", animation: "kg-pulse 1s infinite 0.2s" }} />
-                          <span style={{ width: 6, height: 6, background: "#A855F7", borderRadius: "50%", animation: "kg-pulse 1s infinite 0.4s" }} />
+                          <span style={{ width: 6, height: 6, background: "var(--mm-primary)", borderRadius: "50%", animation: "kg-pulse 1s infinite" }} />
+                          <span style={{ width: 6, height: 6, background: "var(--mm-primary)", borderRadius: "50%", animation: "kg-pulse 1s infinite 0.2s" }} />
+                          <span style={{ width: 6, height: 6, background: "var(--mm-primary)", borderRadius: "50%", animation: "kg-pulse 1s infinite 0.4s" }} />
                         </div>
                       </div>
                     )}
@@ -2247,7 +2840,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               <div style={{ flex: "1 1 60%", minWidth: 320 }}>
                 <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 24, padding: "36px 40px", border: `1px solid ${theme.border}`, boxShadow: `0 20px 40px rgba(0,0,0,0.1)` }}>
                   {/* Effet visuel Premium */}
-                  <div style={{ position: "absolute", top: 0, right: 0, width: 200, height: 200, background: `radial-gradient(circle at top right, ${activeColor}15, transparent 70%)`, pointerEvents: "none" }} />
+                  <div style={{ position: "absolute", top: 0, right: 0, width: 200, height: 200, background: `radial-gradient(circle at top right, ${colorMix(activeColor, 8)}, transparent 70%)`, pointerEvents: "none" }} />
 
                   <div style={{ position: "relative", zIndex: 1 }}>
                     <h1 style={{ fontSize: 28, fontWeight: 900, color: theme.text, margin: "0 0 8px" }}>
@@ -2352,9 +2945,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 return (
                   <div key={module} style={{
                     background: theme.cardBg, borderRadius: 20, overflow: "hidden",
-                    border: `1px solid ${isExpanded ? activeColor + "50" : theme.border}`,
+                    border: `1px solid ${isExpanded ? colorMix(activeColor, 31) : theme.border}`,
                     transition: "all 0.3s cubic-bezier(0.16, 1, 0.3, 1)",
-                    boxShadow: isExpanded ? `0 10px 30px ${activeColor}15` : "none"
+                    boxShadow: isExpanded ? `0 10px 30px ${colorMix(activeColor, 8)}` : "none"
                   }}>
                     {/* En-tête du dossier (Accordéon) */}
                     <div 
@@ -2362,7 +2955,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       className="hov"
                       style={{ 
                         padding: "18px 24px", display: "flex", justifyContent: "space-between", alignItems: "center",
-                        cursor: "pointer", background: isExpanded ? `${activeColor}08` : "transparent",
+                        cursor: "pointer", background: isExpanded ? `${colorMix(activeColor, 3)}` : "transparent",
                         transition: "background 0.3s"
                       }}
                     >
@@ -2370,7 +2963,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         <div style={{
                           width: 46, height: 46, borderRadius: 14, background: isExpanded ? activeColor : theme.inputBg,
                           color: isExpanded ? "#FFF" : activeColor, display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 22, transition: "all 0.3s", boxShadow: isExpanded ? `0 6px 16px ${activeColor}40` : "none",
+                          fontSize: 22, transition: "all 0.3s", boxShadow: isExpanded ? `0 6px 16px ${colorMix(activeColor, 25)}` : "none",
                           border: isExpanded ? "none" : `1px solid ${theme.border}`
                         }}>
                           {isExpanded ? "📂" : "📁"}
@@ -2411,8 +3004,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             {/* Indicateur audio */}
                             <div style={{
                               width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                              background: audioPlaying === card.id ? "#FFF7ED" : "#FAF5FF",
-                              border: `2px solid ${audioPlaying === card.id ? "#EA580C" : "#8B5CF6"}`,
+                              background: audioPlaying === card.id ? "#FFF7ED" : "color-mix(in srgb, var(--mm-primary) 4%, white)",
+                              border: `2px solid ${audioPlaying === card.id ? "var(--mm-primary-deep)" : "var(--mm-primary)"}`,
                               display: "flex", alignItems: "center", justifyContent: "center",
                               fontSize: 20, boxShadow: audioPlaying === card.id ? "0 4px 12px rgba(234,88,12,0.3)" : "none"
                             }}>
@@ -2441,7 +3034,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                   onPlay={() => setAudioPlaying(card.id)}
                                   onPause={() => setAudioPlaying(null)}
                                   onEnded={() => setAudioPlaying(null)}
-                                  color="#EA580C"
+                                  color="var(--mm-primary-deep)"
                                 />
                               </div>
                             ) : (
@@ -2492,7 +3085,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               {[
                 { icon: "📸", label: "Photos", value: photoItems.length, color: activeColor },
                 { icon: "✅", label: "Analysées", value: photoItems.filter(p => p.status === "done").length, color: "#059669" },
-                { icon: "🃏", label: "Fiches", value: photoItems.reduce((a, p) => a + (p.cards?.length || 0), 0), color: "#8B5CF6" },
+                { icon: "🃏", label: "Fiches", value: photoItems.reduce((a, p) => a + (p.cards?.length || 0), 0), color: "var(--mm-primary)" },
                 { icon: "⏳", label: "En cours", value: photoItems.filter(p => p.status === "loading").length, color: "#D97706" },
               ].map(s => (
                 <HoloCard theme={theme} glowColor={s.color} key={s.label} style={{
@@ -2549,7 +3142,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                   <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} key={photo.id} style={{
                     background: theme.cardBg, borderRadius: 20,
                     border: `2px solid ${photo.status === "done" ? "#10B98133" :
-                      photo.status === "loading" ? "#8B5CF633" :
+                      photo.status === "loading" ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" :
                         photo.status === "error" ? "#EF444433" : theme.border
                       }`
                     // HoloCard gère le overflow: hidden pour nous
@@ -2572,7 +3165,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                         </div>
                         <div style={{ fontSize: 12, marginTop: 3, display: "flex", flexWrap: "wrap", gap: 6 }}>
                           {photo.imageType && (
-                            <span style={{ background: "#FAF5FF", color: "#8B5CF6", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
+                            <span style={{ background: "color-mix(in srgb, var(--mm-primary) 4%, white)", color: "var(--mm-primary)", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
                               {photo.imageType.replace("_", " ")}
                             </span>
                           )}
@@ -2583,12 +3176,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                           )}
                           <span style={{
                             color: photo.status === "done" ? "#059669" :
-                              photo.status === "loading" ? "#8B5CF6" :
+                              photo.status === "loading" ? "var(--mm-primary)" :
                                 photo.status === "error" ? "#EF4444" : theme.textMuted,
                             fontWeight: 700,
                             display: "flex", alignItems: "center", gap: 4
                           }}>
-                            {photo.status === "loading" && <><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#8B5CF6", "--glow-color": "#8B5CF6", animation: "ai-pulse 1s infinite alternate" }} /> Analyse Neuronale...</>}
+                            {photo.status === "loading" && <><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--mm-primary)", "--glow-color": "var(--mm-primary)", animation: "ai-pulse 1s infinite alternate" }} /> Analyse Neuronale...</>}
                             {photo.status === "done" && `✅ ${photo.cards.length} fiches`}
                             {photo.status === "error" && `❌ ${photo.error}`}
                             {photo.status === "idle" && "⏳ En attente"}
@@ -2660,8 +3253,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                           <div style={{ width: 220, flexShrink: 0, position: "sticky", top: 20 }}>
                             <img src={photo.dataUrl} alt="" style={{
                               width: "100%", borderRadius: 16,
-                              border: `2px solid ${activeColor}40`, objectFit: "contain", maxHeight: 300,
-                              boxShadow: "0 10px 30px rgba(139, 92, 246,0.1)"
+                              border: `2px solid ${colorMix(activeColor, 25)}`, objectFit: "contain", maxHeight: 300,
+                              boxShadow: "0 10px 30px color-mix(in srgb, var(--mm-primary) 10.0%, transparent)"
                             }} />
                             {photo.extractedText && (
                               <details style={{ marginTop: 12, background: theme.cardBg, borderRadius: 12, border: `1px solid ${theme.border}`, overflow: "hidden" }}>
@@ -2677,7 +3270,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                     const parts = photo.extractedText.split(new RegExp(`(${xrayKeyword})`, 'gi'));
                                     return parts.map((part, pIdx) =>
                                       part.toLowerCase() === xrayKeyword.toLowerCase() ? (
-                                        <mark key={pIdx} style={{ background: `${activeColor}33`, color: activeColor, textShadow: `0 0 12px ${activeColor}`, fontWeight: 900, borderRadius: 4, padding: "2px 4px", boxShadow: `0 0 10px ${activeColor}40` }}>{part}</mark>
+                                        <mark key={pIdx} style={{ background: `${colorMix(activeColor, 20)}`, color: activeColor, textShadow: `0 0 12px ${activeColor}`, fontWeight: 900, borderRadius: 4, padding: "2px 4px", boxShadow: `0 0 10px ${colorMix(activeColor, 25)}` }}>{part}</mark>
                                       ) : <span key={pIdx} style={{ opacity: 0.5 }}>{part}</span>
                                     );
                                   })()}
@@ -2738,14 +3331,14 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                   animation: `fadeUp 0.5s ease forwards`,
                                   animationDelay: `${ci * 0.1}s`,
                                   opacity: 0,
-                                  boxShadow: "0 4px 15px rgba(139, 92, 246,0.05)"
+                                  boxShadow: "0 4px 15px color-mix(in srgb, var(--mm-primary) 5.0%, transparent)"
                                 }}>
                                 <div style={{ padding: "14px 16px", borderBottom: `1px solid ${theme.border}` }}>
                                   <div style={{ fontSize: 10, fontWeight: 900, color: activeColor, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>RECTO</div>
                                   <div style={{ fontSize: 14, fontWeight: 800, color: theme.text, lineHeight: 1.4 }}>
                                     {toText(card.front)}
                                     {card.keyword && (
-                                      <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: `${activeColor}15`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${activeColor}40`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
+                                      <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: `${colorMix(activeColor, 8)}`, color: activeColor, marginLeft: 8, verticalAlign: "middle", border: `1px solid ${colorMix(activeColor, 25)}`, transition: "all 0.2s", filter: xrayKeyword ? "drop-shadow(0 0 4px currentColor)" : "none" }}>
                                         🔑 {toText(card.keyword)}
                                       </span>
                                     )}

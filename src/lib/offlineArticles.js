@@ -73,6 +73,23 @@ export async function loadArticleList() {
   }));
 }
 
+export async function loadArticleListMeta() {
+  const meta = await withStore(STORE_META, "readonly", store => {
+    const r1 = reqToPromise(store.get("lastList"));
+    const r2 = reqToPromise(store.get("lastListAt"));
+    return Promise.all([r1, r2]);
+  });
+  const [rawList, ts] = Array.isArray(meta) ? meta : [[], 0];
+  const list = Array.isArray(rawList) ? rawList.map(a => ({
+    ...a,
+    pubDate: a?.pubDate ? new Date(a.pubDate) : new Date(),
+  })) : [];
+  return {
+    items: list,
+    lastListAt: typeof ts === "number" ? ts : 0,
+  };
+}
+
 // ── Cache par article ────────────────────────────────────────────────────────
 // payload : { article, content, analysis }
 export async function saveArticleCache(link, payload) {
@@ -123,3 +140,18 @@ export async function cacheStats() {
     lastListAt: await withStore(STORE_META, "readonly", store => reqToPromise(store.get("lastListAt"))),
   };
 }
+
+// ── Corps complets des articles pour consultation hors-ligne intégrale ────
+export async function saveArticleBodies(bodiesMap) {
+  if (!bodiesMap || typeof bodiesMap !== "object") return;
+  return withStore(STORE_META, "readwrite", store => {
+    store.put(bodiesMap, "allArticleBodies");
+    store.put(Date.now(), "allArticleBodiesAt");
+  });
+}
+
+export async function loadArticleBodies() {
+  const bodies = await withStore(STORE_META, "readonly", store => reqToPromise(store.get("allArticleBodies")));
+  return (bodies && typeof bodies === "object") ? bodies : {};
+}
+

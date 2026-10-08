@@ -7,7 +7,7 @@
 //     Firestore pendant 24h et l'app continue avec localStorage seul (zéro perte,
 //     juste une sync multi-appareils différée).
 import { initializeApp, getApps } from "firebase/app";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, setDoc, getDoc, writeBatch, collection, addDoc, getDocs, query, where, updateDoc, increment, orderBy } from "firebase/firestore";
+import { initializeFirestore, memoryLocalCache, doc, setDoc, getDoc, writeBatch, collection, addDoc, getDocs, query, where, updateDoc, increment, orderBy } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { logEvent } from "./telemetry";
@@ -46,20 +46,60 @@ export const setFbUser = (uid) => {
   console.info("[firebase] FB_USER →", uid);
 };
 
-const firebaseApp = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
-
 // ─── Firestore avec Persistance Hors Ligne Activée ───────────────────────────
-const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+const isDevOrLocal = Boolean(
+  import.meta.env.DEV ||
+  (typeof window !== 'undefined' && (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1' ||
+    window.location.hostname === '0.0.0.0' ||
+    window.location.hostname.startsWith('192.168.') ||
+    window.location.hostname.startsWith('10.')
+  ))
+);
 
-export const db = initializeFirestore(firebaseApp, {
-  localCache: isLocalhost
-    ? undefined // évite les blocages IndexedDB en local avec Vite HMR
-    : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
+// ⚠️ BUGFIX — écran blanc au démarrage.
+// Si la config Firebase est absente ou invalide (build sans variables
+// d'environnement, clé révoquée…), `getAuth()` lançait une exception AU
+// CHARGEMENT DU MODULE : plus aucun composant ne se montait, l'app affichait
+// une page blanche sans le moindre message. On initialise donc de façon
+// défensive : en cas d'échec, l'app démarre en mode local seul (localStorage +
+// WatermelonDB) au lieu de mourir.
+const FIREBASE_READY = Boolean(
+  FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.appId
+);
 
-export const fbStorage = getStorage(firebaseApp);
-export const auth = getAuth(firebaseApp);
-export const provider = new GoogleAuthProvider();
+let firebaseApp = null;
+let _db = null;
+let _fbStorage = null;
+let _auth = null;
+let _provider = null;
+let _initError = null;
+
+if (FIREBASE_READY) {
+  try {
+    firebaseApp = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG);
+    _db = initializeFirestore(firebaseApp, {
+      localCache: memoryLocalCache()
+    });
+    _fbStorage = getStorage(firebaseApp);
+    _auth = getAuth(firebaseApp);
+    _provider = new GoogleAuthProvider();
+  } catch (e) {
+    _initError = e;
+    console.error("[firebase] Initialisation impossible — mode hors-ligne local :", e?.message || e);
+  }
+} else {
+  _initError = new Error("Configuration Firebase manquante (VITE_FIREBASE_*)");
+  console.warn("[firebase] Variables VITE_FIREBASE_* manquantes — l'app démarre en mode local seul.");
+}
+
+export const db = _db;
+export const fbStorage = _fbStorage;
+export const auth = _auth;
+export const provider = _provider;
+export const isFirebaseReady = () => Boolean(_auth && _db);
+export const getFirebaseInitError = () => _initError;
 
 // ─── Clés volumineuses → sharding activé ─────────────────────────────────────
 const SHARDED_KEYS = new Set(["sessions_v3"]);
@@ -86,6 +126,9 @@ const CIRCUIT_KEY = "memo_circuit_breaker_until";
 const CIRCUIT_BREAKER_DURATION_MS = 2 * 60 * 60 * 1000;
 
 export const isCircuitOpen = () => {
+  // Sans instance Firestore valide, toute opération réseau est impossible :
+  // on se comporte comme si le disjoncteur était ouvert (app 100 % locale).
+  if (!_db) return true;
   try {
     const until = parseInt(localStorage.getItem(CIRCUIT_KEY) || "0", 10);
     return Date.now() < until;
@@ -165,53 +208,76 @@ export const forceSyncNow = () => {
   console.info("[storage] Prochain storage.get() re-vérifiera Firestore (sync manuelle demandée).");
 };
 
-// ─── Sharded GET ── 1 pull Firestore / session, sinon localStorage seul ─────
+// ─── Sharded GET ── Local-first instantané (0ms) + sync en tâche de fond ─────
 async function shardedGet(key) {
-  const uid = getFbUser();
-  if (!uid) return lsGet(key);
-
   const local = lsGet(key);
+  const uid = getFbUser();
 
-  if (isCircuitOpen()) return local;
-  if (_bootstrappedKeys.has(key)) return local; // déjà tenté cette session → local uniquement
+  // ⚡ Local-First instantané (0ms) : sert le cache local sans bloquer l'UI
+  if (local !== null && local !== undefined) {
+    if (uid && !isCircuitOpen() && !_bootstrappedKeys.has(key)) {
+      _bootstrappedKeys.add(key);
+      (async () => {
+        try {
+          const idxSnap = await withTimeout(getDoc(doc(db, "users", uid, "data", key + "__index")), 6000);
+          if (!idxSnap.exists()) return;
+          const serverTs = idxSnap.data().updatedAt || 0;
+          const localTs = lsGetTs(key);
+          const isDirty = localStorage.getItem(LS_PREFIX + key + "_dirty") === "true";
+          if (isDirty || localTs >= serverTs) return;
+
+          const { chunkCount } = idxSnap.data();
+          const chunkSnaps = await Promise.all(
+            Array.from({ length: chunkCount }, (_, i) =>
+              withTimeout(getDoc(doc(db, "users", uid, "data", key + "__chunk_" + i)), 6000)
+            )
+          );
+          const result = chunkSnaps.flatMap((s) => (s.exists() ? s.data().value || [] : []));
+          if (result.length > 0) {
+            lsSet(key, result, serverTs);
+            window.dispatchEvent(new CustomEvent("firebase_sync_updated", { detail: key }));
+          }
+        } catch (err) {
+          reportFirestoreError(err, "shardedGetBg:" + key);
+        }
+      })();
+    }
+    return local;
+  }
+
+  // Fallback premier démarrage sans cache local
+  if (!uid || isCircuitOpen()) return null;
   _bootstrappedKeys.add(key);
 
   try {
-    const idxSnap = await withTimeout(getDoc(doc(db, "users", uid, "data", key + "__index")));
+    const idxSnap = await withTimeout(getDoc(doc(db, "users", uid, "data", key + "__index")), 6000);
 
     if (!idxSnap.exists()) {
-      const oldSnap = await withTimeout(getDoc(doc(db, "users", uid, "data", key)));
+      const oldSnap = await withTimeout(getDoc(doc(db, "users", uid, "data", key)), 6000);
       if (oldSnap.exists() && Array.isArray(oldSnap.data().value)) {
         const val = oldSnap.data().value;
         lsSet(key, val);
         return val;
       }
-      return local;
+      return null;
     }
 
     const serverTs = idxSnap.data().updatedAt || 0;
-    const localTs = lsGetTs(key);
-    const isDirty = localStorage.getItem(LS_PREFIX + key + "_dirty") === "true";
-
-    // Des modifs locales non-encore-envoyées priment toujours sur le serveur.
-    if (isDirty || localTs >= serverTs) return local;
-
     const { chunkCount } = idxSnap.data();
     const chunkSnaps = await Promise.all(
       Array.from({ length: chunkCount }, (_, i) =>
-        withTimeout(getDoc(doc(db, "users", uid, "data", key + "__chunk_" + i)))
+        withTimeout(getDoc(doc(db, "users", uid, "data", key + "__chunk_" + i)), 6000)
       )
     );
     const result = chunkSnaps.flatMap((s) => (s.exists() ? s.data().value || [] : []));
     if (result.length > 0) {
       lsSet(key, result, serverTs);
-      window.dispatchEvent(new CustomEvent("firebase_sync_updated", { detail: key }));
       return result;
     }
-    return local;
+    return null;
   } catch (err) {
     reportFirestoreError(err, "shardedGet:" + key);
-    return local;
+    return null;
   }
 }
 
@@ -260,41 +326,61 @@ async function commitSharded(key, val, uid) {
   await withTimeout(batch.commit(), 15000);
 }
 
-// ─── Simple GET ── 1 pull Firestore / session, sinon localStorage seul ─────
+// ─── Simple GET ── Local-first instantané (0ms) + sync en tâche de fond ─────
 async function simpleGet(key) {
-  const uid = getFbUser();
-  if (!uid) return lsGet(key);
-
   const local = lsGet(key);
+  const uid = getFbUser();
 
-  if (isCircuitOpen()) return local;
-  if (_bootstrappedKeys.has(key)) return local;
+  // ⚡ Local-First instantané (0ms) : sert le cache local sans bloquer l'UI
+  if (local !== null && local !== undefined) {
+    if (uid && !isCircuitOpen() && !_bootstrappedKeys.has(key)) {
+      _bootstrappedKeys.add(key);
+      withTimeout(getDoc(doc(db, "users", uid, "data", key)), 6000)
+        .then((snap) => {
+          if (!snap?.exists?.()) return;
+          const serverTs = snap.data().updatedAt || 0;
+          const localTs = lsGetTs(key);
+          const isDirty = localStorage.getItem(LS_PREFIX + key + "_dirty") === "true";
+          if (isDirty || localTs >= serverTs) return;
+
+          const val = snap.data().value !== undefined ? snap.data().value : null;
+          if (val !== null) {
+            lsSet(key, val, serverTs);
+            window.dispatchEvent(new CustomEvent("firebase_sync_updated", { detail: key }));
+          }
+        })
+        .catch((err) => reportFirestoreError(err, "simpleGetBg:" + key));
+    }
+    return local;
+  }
+
+  // Fallback premier démarrage sans cache local
+  if (!uid || isCircuitOpen()) return null;
   _bootstrappedKeys.add(key);
 
   try {
-    const snap = await withTimeout(getDoc(doc(db, "users", uid, "data", key)));
-    if (!snap.exists()) return local;
+    const snap = await withTimeout(getDoc(doc(db, "users", uid, "data", key)), 6000);
+    if (!snap.exists()) return null;
 
     const serverTs = snap.data().updatedAt || 0;
-    const localTs = lsGetTs(key);
-    const isDirty = localStorage.getItem(LS_PREFIX + key + "_dirty") === "true";
-    if (isDirty || localTs >= serverTs) return local;
-
     const val = snap.data().value !== undefined ? snap.data().value : null;
     if (val !== null) {
       lsSet(key, val, serverTs);
-      window.dispatchEvent(new CustomEvent("firebase_sync_updated", { detail: key }));
       return val;
     }
-    return local;
+    return null;
   } catch (err) {
     reportFirestoreError(err, "simpleGet:" + key);
-    return local;
+    return null;
   }
 }
 
 // ─── Simple SET ── écrit en localStorage immédiatement, marque "dirty" ─────
 async function simpleSet(key, val) {
+  // Les caches volumineux d'actualités ne doivent jamais saturer localStorage ni être poussés dans Firestore
+  if (key && (key.startsWith("tech_intel_cache") || key.startsWith("news_cache"))) {
+    return;
+  }
   const uid = getFbUser();
   const ts = Date.now();
   lsSet(key, val, ts);
@@ -339,6 +425,10 @@ export async function flushDirtyKeys() {
   _flushInFlight = true;
   try {
     for (const key of dirtyKeys) {
+      if (key.startsWith("tech_intel_cache") || key.startsWith("news_cache")) {
+        localStorage.removeItem(LS_PREFIX + key + "_dirty");
+        continue;
+      }
       const val = lsGet(key);
       if (val === null) {
         localStorage.removeItem(LS_PREFIX + key + "_dirty");

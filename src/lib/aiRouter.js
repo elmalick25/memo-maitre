@@ -1,3 +1,4 @@
+import { resolveKey } from "./security/apiKeys.js";
 // ════════════════════════════════════════════════════════════════════════════
 // 🧠 AI ROUTER v2 — Multi-provider routing optimisé par tâche
 // ════════════════════════════════════════════════════════════════════════════
@@ -20,18 +21,19 @@
 // Backward-compat tasks (anciens call-sites) : fast, json restent fonctionnels.
 // ════════════════════════════════════════════════════════════════════════════
 
-const env = (k) => (typeof import.meta !== "undefined" ? import.meta.env?.[k] : "") || "";
+const env = (k) => resolveKey(k);
 
 const KEYS = {
-  cerebras:  [env("VITE_CEREBRAS_API_KEY"), env("VITE_CEREBRAS_API_KEY_1"), env("VITE_CEREBRAS_API_KEY_2"), env("VITE_CEREBRAS_API_KEY_3"), env("VITE_CEREBRAS_API_KEY_4"), env("VITE_CEREBRAS_API_KEY_5"), env("VITE_CEREBRAS_API_KEY_6"), env("VITE_CEREBRAS_API_KEY_7")],
-  groq:      [env("VITE_GROQ_API_KEY_5"), env("VITE_GROQ_API_KEY_6"), env("VITE_GROQ_API_KEY_7"), env("VITE_GROQ_API_KEY"), env("VITE_GROQ_API_KEY_2")],
+  cerebras:  [env("VITE_CEREBRAS_API_KEY"), env("VITE_CEREBRAS_API_KEY_1"), env("VITE_CEREBRAS_API_KEY_2"), env("VITE_CEREBRAS_API_KEY_3"), env("VITE_CEREBRAS_API_KEY_4"), env("VITE_CEREBRAS_API_KEY_5"), env("VITE_CEREBRAS_API_KEY_6"), env("VITE_CEREBRAS_API_KEY_7"), env("VITE_CEREBRAS_API_KEY_8")],
+  groq:      [env("VITE_GROQ_API_KEY"), env("VITE_GROQ_API_KEY_5"), env("VITE_GROQ_API_KEY_6"), env("VITE_GROQ_API_KEY_7"), env("VITE_GROQ_API_KEY_2")],
   mistral:   [env("VITE_MISTRAL_API_KEY_1"), env("VITE_MISTRAL_API_KEY_2"), env("VITE_MISTRAL_API_KEY_3"), env("VITE_MISTRAL_API_KEY_4"), env("VITE_MISTRAL_API_KEY_5"), env("VITE_MISTRAL_API_KEY_6"), env("VITE_MISTRAL_API_KEY_7")],
-  or:        [env("VITE_OPENROUTER_API_KEY"), env("VITE_OPENROUTER_API_KEY_2"), env("VITE_OPENROUTER_API_KEY_3")],
+  or:        [env("VITE_OPENROUTER_API_KEY"), env("VITE_OPENROUTER_API_KEY_1"), env("VITE_OPENROUTER_API_KEY_2"), env("VITE_OPENROUTER_API_KEY_3"), env("VITE_OPENROUTER_API_KEY_4"), env("VITE_OPENROUTER_API_KEY_5"), env("VITE_OPENROUTER_API_KEY_6"), env("VITE_OPENROUTER_API_KEY_7")],
   fireworks: [env("VITE_FIREWORKS_API_KEY")],
-  cohere:    [env("VITE_COHERE_API_KEY")],
-  sambanova: [env("VITE_SAMBANOVA_API_KEY")],
-  aimlapi:   [env("VITE_AIML_API_KEY")],
+  cohere:    [env("VITE_COHERE_API_KEY"), env("VITE_COHERE_API_KEY_1"), env("VITE_COHERE_API_KEY_2"), env("VITE_COHERE_API_KEY_3"), env("VITE_COHERE_API_KEY_4"), env("VITE_COHERE_API_KEY_5"), env("VITE_COHERE_API_KEY_6")],
+  sambanova: [env("VITE_SAMBANOVA_API_KEY"), env("VITE_SAMBANOVA_API_KEY_1"), env("VITE_SAMBANOVA_API_KEY_2"), env("VITE_SAMBANOVA_API_KEY_3"), env("VITE_SAMBANOVA_API_KEY_4"), env("VITE_SAMBANOVA_API_KEY_5")],
+  aimlapi:   [env("VITE_AIML_API_KEY"), env("VITE_AIMLAPI_API_KEY")],
   deepseek:  [env("VITE_DEEPSEEK_API_KEY")],
+  cf:        [env("VITE_CLOUDFLARE_API_TOKEN")],
 };
 
 // ─── Cooldown par clé ── une clé qui vient de recevoir un 429 est mise en
@@ -59,8 +61,8 @@ function getValidKey(provider, { avoidCooldown = true } = {}) {
   if (!valid.length) return "";
 
   const usable = avoidCooldown ? valid.filter(k2 => !isKeyCoolingDown(provider, k2)) : valid;
-  const pool = usable.length ? usable : valid; // si TOUTES en pause, on tente quand même plutôt que d'échouer
-  return pool[Math.floor(Math.random() * pool.length)];
+  if (!usable.length) return "";
+  return usable[Math.floor(Math.random() * usable.length)];
 }
 
 function filterChain(chain) {
@@ -79,105 +81,105 @@ const URLS = {
   deepseek:  "https://api.deepseek.com/chat/completions",
 };
 
+function getProviderUrl(provider) {
+  if (provider === "cf") {
+    const accountId = env("VITE_CLOUDFLARE_ACCOUNT_ID");
+    return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
+  }
+  return URLS[provider] || "";
+}
+
 // Setter rétro-compat
 export function setGroqKey(k) {
   if (typeof localStorage !== "undefined") localStorage.setItem("MISTRAL_API_KEY", k || "");
 }
 
-// ── Catalogue de modèles par tâche ───────────────────────────────────────────
+// ── Catalogue de modèles par tâche (100% calibré sur les flux gratuits & actifs) ─
 const MODELS = {
   // ─── Coach conversationnel ultra-rapide (Nova / EnglishPractice) ─────────
   chat: [
-    { p: "cerebras", m: "gpt-oss-120b",                                 max: 4096 },
-    { p: "groq",     m: "llama-3.3-70b-versatile",                      max: 4096 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
-    { p: "aimlapi",  m: "google/gemini-2.0-flash",                      max: 4096 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct:free",       max: 4096 },
-    { p: "deepseek", m: "deepseek-chat",                                max: 4096 }, // last resort – 402 si pas de crédits
+    { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
   ],
   coach: [
-    { p: "cerebras", m: "gpt-oss-120b",                                 max: 4096 },
-    { p: "groq",     m: "llama-3.3-70b-versatile",                      max: 4096 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
-    { p: "aimlapi",  m: "google/gemini-2.0-flash",                      max: 4096 },
-    { p: "deepseek", m: "deepseek-chat",                                max: 4096 }, // last resort
   ],
   // ─── 1 fiche flashcard simple ────────────────────────────────────────────
   "fast-json": [
-    { p: "groq",     m: "llama-3.1-8b-instant",                         max: 2048, json: true },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 2048, json: true },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2048, json: true },
     { p: "mistral",  m: "mistral-small-latest",                         max: 2048, json: true },
-    { p: "deepseek", m: "deepseek-chat",                                max: 2048, json: true }, // last resort
   ],
   fast: [
-    { p: "groq",     m: "llama-3.1-8b-instant",                         max: 2048 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 2048 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2048 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 2048 },
-    { p: "deepseek", m: "deepseek-chat",                                max: 2048 }, // last resort
   ],
   // ─── Batch 5-7 fiches : cohérence > vitesse ──────────────────────────────
   "batch-json": [
-    { p: "cerebras", m: "gpt-oss-120b",                                 max: 8192, json: true },
-    { p: "groq",     m: "llama-3.3-70b-versatile",                      max: 8192, json: true },
-    { p: "mistral",  m: "mistral-medium-latest",                        max: 8192, json: true },
-    { p: "deepseek", m: "deepseek-chat",                                max: 8192, json: true }, // last resort
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 8192, json: true },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 8192, json: true },
+    { p: "or",       m: "qwen/qwen-2.5-72b-instruct",                   max: 8192, json: true },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 8192, json: true },
+    { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
   ],
   // ─── Vision (Gemini direct dans Lab/geminiClient ; fallbacks ici) ────────
   vision: [
     { p: "mistral", m: "pixtral-12b-2409",                              max: 4096, vision: true },
-    { p: "or",      m: "google/gemini-2.0-flash-001",                    max: 4096, vision: true },
-    { p: "or",      m: "qwen/qwen2.5-vl-32b-instruct:free",             max: 4096, vision: true },
-    { p: "or",      m: "meta-llama/llama-4-maverick:free",              max: 4096, vision: true },
-    { p: "aimlapi", m: "google/gemini-2.0-flash",                       max: 4096, vision: true },
-    { p: "aimlapi", m: "alibaba/qwen2.5-vl-72b-instruct",              max: 4096, vision: true },
+    { p: "or",      m: "meta-llama/llama-3.3-70b-instruct",             max: 4096, vision: false },
   ],
   // ─── Créativité / mnémo absurde (FR/EN) ──────────────────────────────────
   creative: [
-    { p: "deepseek", m: "deepseek-chat",                                max: 4096, temp: 1.1 },
-    { p: "mistral",  m: "mistral-large-latest",                         max: 4096, temp: 1.1 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct:free",       max: 4096, temp: 1.1 },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 4096, temp: 1.1 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096, temp: 1.1 },
   ],
   // ─── Correction sémantique vocale (rapide & fin FR/EN) ───────────────────
   "semantic-grade": [
     { p: "mistral",  m: "mistral-small-latest",                         max: 1024 },
-    { p: "cerebras", m: "gpt-oss-120b",                                 max: 1024 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 1024 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 1024 },
   ],
   // ─── Vocab / définitions lexicales (Cohere Command R+) ───────────────────
   lexical: [
     { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
-    { p: "mistral",  m: "mistral-large-latest",                         max: 4096 },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
   ],
-  // ─── Résumé articles tech (8B suffit, débit max) ─────────────────────────
+  // ─── Résumé articles tech (débit max) ────────────────────────────────────
   "fast-summary": [
-    { p: "groq",     m: "llama-3.1-8b-instant",                         max: 1024 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 1024 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 1024 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 1024 },
   ],
   // ─── Pédagogie / génération d'exercices ──────────────────────────────────
   pedagogy: [
-    { p: "mistral",  m: "mistral-large-latest",                         max: 4096 },
-    { p: "groq",     m: "llama-3.3-70b-versatile",                      max: 4096 },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
   ],
-  // ─── JSON strict (grammar-constrained decoding sur Fireworks) ────────────
+  // ─── JSON strict ──────────────────────────────────────────────────────────
   "strict-json": [
-    { p: "fireworks", m: "accounts/fireworks/models/llama-v3p3-70b-instruct", max: 4096, json: true },
-    { p: "groq",      m: "llama-3.3-70b-versatile",                           max: 4096, json: true },
+    { p: "groq",      m: "openai/gpt-oss-120b",                         max: 4096, json: true },
+    { p: "or",        m: "meta-llama/llama-3.3-70b-instruct",           max: 4096, json: true },
+    { p: "mistral",   m: "mistral-small-latest",                        max: 4096, json: true },
   ],
   json: [
-    { p: "fireworks", m: "accounts/fireworks/models/llama-v3p3-70b-instruct", max: 4096, json: true },
-    { p: "groq",      m: "llama-3.1-8b-instant",                              max: 4096, json: true },
-    { p: "mistral",   m: "mistral-small-latest",                              max: 4096, json: true },
+    { p: "groq",      m: "openai/gpt-oss-120b",                         max: 4096, json: true },
+    { p: "or",        m: "meta-llama/llama-3.3-70b-instruct",           max: 4096, json: true },
+    { p: "mistral",   m: "mistral-small-latest",                        max: 4096, json: true },
   ],
-  // ─── Raisonnement profond (rare) ─────────────────────────────────────────
+  // ─── Raisonnement profond ────────────────────────────────────────────────
   reasoning: [
-    { p: "deepseek",  m: "deepseek-reasoner",                           max: 8192, reason: true },
-    { p: "or",        m: "deepseek/deepseek-r1:free",                   max: 8192, reason: true },
-    { p: "sambanova", m: "DeepSeek-R1",                                 max: 8192, reason: true },
-    { p: "mistral",   m: "mistral-large-latest",                        max: 8192 },
+    { p: "or",        m: "meta-llama/llama-3.3-70b-instruct",           max: 8192, reason: true },
+    { p: "mistral",   m: "mistral-small-latest",                        max: 8192 },
   ],
   // ─── Code generation ─────────────────────────────────────────────────────
   code: [
-    { p: "deepseek", m: "deepseek-chat",                                max: 8192 },
-    { p: "or",       m: "qwen/qwen-2.5-coder-32b-instruct:free",        max: 8192 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 8192 },
     { p: "mistral",  m: "codestral-latest",                             max: 8192 },
-    { p: "or",       m: "deepseek/deepseek-chat-v3:free",               max: 8192 },
   ],
 };
 
@@ -251,7 +253,7 @@ function extractCohereText(data) {
 }
 
 async function callOne({ provider, model, messages, maxTokens, json, stream, temperature, signal }) {
-  const url = URLS[provider];
+  const url = getProviderUrl(provider);
   if (!url) throw new Error(`Unknown provider: ${provider}`);
   
   const key = getValidKey(provider);
@@ -271,7 +273,7 @@ async function callOne({ provider, model, messages, maxTokens, json, stream, tem
   };
   
   if (provider === "or") {
-    headers["HTTP-Referer"] = "https://memomaster.app";
+    headers["HTTP-Referer"] = (typeof window !== "undefined" && window.location?.origin) || "https://memo-maitre.web.app";
     headers["X-Title"] = "MemoMaster";
   }
 
@@ -284,7 +286,11 @@ async function callOne({ provider, model, messages, maxTokens, json, stream, tem
   }
   
   if (!res.ok) {
-    if (res.status === 429) markKeyCooldown(provider, key);
+    if (res.status === 429) {
+      markKeyCooldown(provider, key, 60_000); // 60s rate-limit
+    } else if (res.status === 402 || res.status === 401 || res.status === 404 || res.status === 403) {
+      markKeyCooldown(provider, key, 3600_000); // 1h pour crédits épuisés, interdit ou clé/modèle invalide
+    }
     const t = await res.text().catch(() => "");
     throw new Error(`HTTP_${res.status}_${provider}_${t.slice(0, 120)}`);
   }

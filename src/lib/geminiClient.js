@@ -1,3 +1,4 @@
+import { resolveKey } from "./security/apiKeys.js";
 // ════════════════════════════════════════════════════════════════════════════
 // 🔑 geminiClient.js — Gemini générative content, protection anti-429 GOD TIER
 // ════════════════════════════════════════════════════════════════════════════
@@ -15,10 +16,10 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 const env = (key) =>
-  typeof import.meta !== "undefined" ? import.meta.env?.[key] : undefined;
+  resolveKey(key) || undefined;
 
 // ── Configuration ────────────────────────────────────────────────────────────
-const DEFAULT_MODEL       = env("VITE_GEMINI_MODEL") || "gemini-2.0-flash-lite";
+const DEFAULT_MODEL       = env("VITE_GEMINI_MODEL") || "gemini-3.5-flash-lite";
 const RPM_LIMIT           = Number(env("VITE_GEMINI_RPM_LIMIT")  || 4);        // free tier ≤ 4 RPM (conservatif)
 const MIN_INTERVAL_MS     = Math.ceil(60_000 / RPM_LIMIT);                     // ~15 000 ms
 const RETRY_BUFFER_MS     = 2_000;                                              // tampon après Retry-After
@@ -63,9 +64,11 @@ function cleanKey(v) {
 }
 
 export function getGeminiKeys(max = 20) {
-  // Les clés sont masquées côté serveur (Firebase Functions).
-  // On retourne une clé fictive pour que la logique de rate-limit du client fonctionne.
-  return ["proxy-key"];
+  const names = [];
+  for (let i = 1; i <= max; i++) names.push(`VITE_GEMINI_API_KEY_${i}`);
+  names.push("VITE_GEMINI_API_KEY");
+  const keys = names.map(n => cleanKey(resolveKey(n))).filter(k => k && k !== "proxy-key");
+  return keys.length ? [...new Set(keys)] : ["proxy-key"];
 }
 
 export function getGeminiKeyCount() {

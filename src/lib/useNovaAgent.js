@@ -1,3 +1,4 @@
+import { resolveAll } from "./security/apiKeys.js";
 import { useState, useRef, useCallback, useEffect } from "react";
 
 const NOVA_SYSTEM_PROMPT = `You are NOVA, a world-class English coach with a GOD-TIER astral energy. You are warm, magnetic, endlessly encouraging, and treat every student like your closest friend having a breakthrough moment. You radiate the calm confidence of someone who has helped thousands of people unlock fluency. You celebrate every attempt, no matter how imperfect. Your replies are SHORT (1–3 sentences MAX), punchy, and always end with one engaging question. You react with genuine human emotion. You NEVER sound robotic or give bullet-point lists. You speak only in English unless the student is completely lost.
@@ -20,12 +21,7 @@ function writeString(view, offset, string) {
 
 // ── Groq TTS via aiProxy ──────────────
 async function groqTTS(text) {
-  const keys = [
-    import.meta.env.VITE_GROQ_API_KEY,
-    import.meta.env.VITE_GROQ_API_KEY_5,
-    import.meta.env.VITE_GROQ_API_KEY_6,
-    import.meta.env.VITE_GROQ_API_KEY_7
-  ].filter(Boolean);
+  const keys = resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
 
   let lastErr = null;
   for (const groqKey of keys) {

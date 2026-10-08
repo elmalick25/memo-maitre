@@ -198,7 +198,7 @@ export function VoiceMirror({
             display: "flex",
             alignItems: "center",
             gap: 10,
-            boxShadow: "0 10px 30px rgba(139, 92, 246,0.1)",
+            boxShadow: "0 10px 30px color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
             transition: "all 0.3s",
           }}
           onMouseEnter={(e) => {

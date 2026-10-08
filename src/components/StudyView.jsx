@@ -35,7 +35,7 @@ export default function StudyView({
             border: `1px solid ${theme?.border || "#E2E8F0"}`,
             borderRadius: 10,
             padding: "8px 16px",
-            color: theme?.highlight || "#8B5CF6",
+            color: theme?.highlight || "var(--mm-primary)",
             cursor: "pointer",
             fontSize: 13,
             fontWeight: 600
@@ -47,7 +47,7 @@ export default function StudyView({
           📖 Étude libre — {studyModule}
         </div>
         <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme?.textMuted || "#64748B" }}>
-          <span style={{ color: theme?.highlight || "#8B5CF6", fontWeight: 800 }}>{studyIndex + 1}</span> / {studyQueue.length}
+          <span style={{ color: theme?.highlight || "var(--mm-primary)", fontWeight: 800 }}>{studyIndex + 1}</span> / {studyQueue.length}
         </div>
       </div>
 
@@ -55,7 +55,7 @@ export default function StudyView({
         <div
           style={{
             height: "100%",
-            background: "linear-gradient(90deg, #8B5CF6, #A78BFA)",
+            background: "linear-gradient(90deg, var(--mm-primary), var(--mm-primary-glow))",
             borderRadius: 4,
             transition: "width 0.4s ease",
             width: `${((studyIndex + 1) / studyQueue.length) * 100}%`
@@ -67,14 +67,14 @@ export default function StudyView({
         Pas de notation ici — lis, relis, et clique « J'ai appris » quand c'est acquis pour l'envoyer en révision.
       </p>
 
-      <div style={{ background: theme?.cardBg || "#FFFFFF", border: `1px solid ${theme?.border || "#E2E8F0"}`, borderRadius: 22, padding: 32, boxShadow: "0 8px 24px rgba(139,92,246,0.08)" }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: "#8B5CF6", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+      <div style={{ background: theme?.cardBg || "#FFFFFF", border: `1px solid ${theme?.border || "#E2E8F0"}`, borderRadius: 22, padding: 32, boxShadow: "0 8px 24px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)" }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-primary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
           Recto
         </div>
         <div style={{ fontSize: 20, fontWeight: 800, color: theme?.text || "#0F172A", marginBottom: 20 }}>
           {card.front}
         </div>
-        <div style={{ fontSize: 12, fontWeight: 800, color: "#8B5CF6", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-primary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
           Verso
         </div>
         <div style={{ fontSize: 17, color: theme?.text || "#0F172A", marginBottom: card.example ? 16 : 0 }}>

@@ -1,3 +1,4 @@
+import { resolveKey } from "./security/apiKeys.js";
 // ============================================================================
 // livekitConfig.js — Terrain préparé pour les agents vocaux LiveKit + Gemini
 // ============================================================================
@@ -32,7 +33,7 @@
 // ============================================================================
 
 const env = (key) =>
-  typeof import.meta !== "undefined" ? import.meta.env?.[key] : undefined;
+  resolveKey(key) || undefined;
 
 const clean = (v) => String(v || "").trim().replace(/^['"]|['"]$/g, "");
 

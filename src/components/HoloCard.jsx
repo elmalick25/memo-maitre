@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 import { useRef, useState } from "react";
 import { isLiteMode } from "../lib/perfTier";
+import { colorMix } from "../lib/colorMix";
 
 // CHANTIER 16 — les paliers cosmétiques débloqués par le niveau (holoIntensity)
 // pilotent enfin quelque chose de visible : plus le halo est haut, plus la
@@ -58,9 +59,9 @@ const HoloCard = ({ children, className, style, theme, glowColor, urgent, onClic
         transform: hover ? `rotateX(${coord.rx}deg) rotateY(${coord.ry}deg) scale3d(1.02, 1.02, 1.02)` : "rotateX(0) rotateY(0) scale3d(1, 1, 1)",
         zIndex: hover ? 10 : 1,
         boxShadow: urgent
-          ? `0 0 20px ${glowColor || '#EF4444'}80`
+          ? `0 0 20px ${colorMix(glowColor || '#EF4444', 50)}`
           : (holoCfg.ring && !lite
-              ? `${outerStyle.boxShadow ? outerStyle.boxShadow + ", " : ""}0 0 0 1px color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#8B5CF6')} ${holoCfg.ring}, transparent)`
+              ? `${outerStyle.boxShadow ? outerStyle.boxShadow + ", " : ""}0 0 0 1px color-mix(in srgb, ${glowColor || (theme ? theme.highlight : 'var(--mm-primary)')} ${holoCfg.ring}, transparent)`
               : (outerStyle.boxShadow || "none")),
         animation: urgent && !lite ? "pulseUrgent 2s infinite" : "none",
         borderRadius,
@@ -71,7 +72,7 @@ const HoloCard = ({ children, className, style, theme, glowColor, urgent, onClic
       }}>
       <div style={{
         position: "absolute", inset: 0,
-        background: `radial-gradient(circle ${holoCfg.radius}px at ${coord.x}px ${coord.y}px, color-mix(in srgb, ${glowColor || (theme ? theme.highlight : '#8B5CF6')} ${holoCfg.alpha}%, transparent), transparent 100%)`,
+        background: `radial-gradient(circle ${holoCfg.radius}px at ${coord.x}px ${coord.y}px, color-mix(in srgb, ${glowColor || (theme ? theme.highlight : 'var(--mm-primary)')} ${holoCfg.alpha}%, transparent), transparent 100%)`,
         opacity: hover ? 1 : 0, transition: "opacity 0.4s ease", pointerEvents: "none", zIndex: 0
       }} />
       <div style={innerStyle}>{children}</div>

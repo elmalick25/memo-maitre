@@ -71,10 +71,10 @@ export default function AppOverlays({
             gap: 16,
             alignItems: "center",
             background: isDarkMode ? "rgba(24,16,40,0.97)" : "white",
-            border: "2px solid #8B5CF6",
+            border: "2px solid var(--mm-primary)",
             borderRadius: 18,
             padding: "18px 24px",
-            boxShadow: "0 12px 40px rgba(139,92,246,0.25)",
+            boxShadow: "0 12px 40px color-mix(in srgb, var(--mm-primary) 25.0%, transparent)",
             animation: "slideIn 0.4s ease",
           }}
         >
@@ -83,7 +83,7 @@ export default function AppOverlays({
             <div style={{ fontWeight: 800, color: theme?.text || "#0F172A", fontSize: 15 }}>
               Badge débloqué !
             </div>
-            <div style={{ color: "#8B5CF6", fontWeight: 700 }}>{newBadge.label}</div>
+            <div style={{ color: "var(--mm-primary)", fontWeight: 700 }}>{newBadge.label}</div>
             <div style={{ color: theme?.textMuted || "#64748B", fontSize: 12 }}>{newBadge.desc}</div>
           </div>
         </div>

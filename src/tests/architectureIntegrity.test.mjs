@@ -10,7 +10,6 @@ test("Architecture Integrity — MemoMaster.jsx délègue à tous les composants
   const requiredComponents = [
     "BadgesView",
     "CategoriesView",
-    "ProjectsView",
     "AddCardView",
     "ReviewEngineView",
     "CardListView",
@@ -26,7 +25,9 @@ test("Architecture Integrity — MemoMaster.jsx délègue à tous les composants
   for (const comp of requiredComponents) {
     assert.ok(
       memo.includes(`import ${comp} from "./components/${comp}"`) ||
-      memo.includes(`import ${comp} from "./components/${comp}.jsx"`),
+      memo.includes(`import ${comp} from "./components/${comp}.jsx"`) ||
+      memo.includes(`import("./components/${comp}")`) ||
+      memo.includes(`import("./components/${comp}.jsx")`),
       `MemoMaster.jsx doit importer ${comp} depuis src/components/`
     );
     assert.ok(
@@ -82,7 +83,6 @@ test("Components Integrity — Tous les composants extraits exportent par défau
   const componentsToTest = [
     "BadgesView.jsx",
     "CategoriesView.jsx",
-    "ProjectsView.jsx",
     "AddCardView.jsx",
     "ReviewEngineView.jsx",
     "CardListView.jsx",

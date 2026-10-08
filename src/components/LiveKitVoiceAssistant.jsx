@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { resolveKey } from "../lib/security/apiKeys.js";
+import React, { useState, useEffect, useCallback, useRef, useMemo, createContext, useContext } from 'react';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -12,130 +13,407 @@ import { RoomEvent, MediaDeviceFailure, Track, LocalAudioTrack } from 'livekit-c
 import '@livekit/components-styles';
 import { SignJWT } from 'jose';
 import { armIosAudio, whenMicPermissionReady, forcePlayAndRecordSession, consumePrewarmedMicStream } from '../lib/iosVoiceHardening';
+import {
+  LIVEKIT_TOKEN_TTL_SECONDS,
+  getTokenEndpoint,
+  isClientSigningAllowed,
+  buildRoomName,
+  buildParticipantIdentity,
+  sanitizeStudentName,
+  sanitizeInstructions,
+  buildVideoGrant,
+  scrubError,
+} from '../lib/security/livekitTokenGuard';
+import { aggregateTurns, conversationStats, buildTranscriptText } from '../lib/livekitConversation';
+import { buildNovaVoicePrompt } from '../lib/english/novaVoicePrompt';
+import { appendSession } from '../lib/agentSessionMemory';
 
 const LIVEKIT_AGENT_NAME = import.meta.env.VITE_LIVEKIT_AGENT_NAME || "assistant-53a";
+const EMPTY_TARGET_EXPRESSIONS = Object.freeze([]);
 
-export default function LiveKitVoiceAssistant({ onClose, onTranscriptionsUpdate, onStateChange, systemPrompt, studentName, isDarkMode }) {
-  const [token, setToken] = useState("");
-  const [error, setError] = useState(null);
-  const [micReady, setMicReady] = useState(false);
-  // 🎤 FIX iPhone Chrome (raccourci) : le hack "armIosAudio" seul ne suffit
-  // pas de façon fiable sur tous les moteurs mobiles pour le micro. Le SON
-  // est géré par le composant officiel <StartAudio> plus bas (testé/maintenu
-  // par LiveKit lui-même — plus fiable qu'un code fait main). Il ne reste
-  // que le MICRO à surveiller nous-mêmes : LiveKit n'a pas d'équivalent
-  // "bouton officiel" pour ça, donc on garde un filet de sécurité custom,
-  // basé sur leurs évènements officiels (RoomEvent.MediaDevicesError).
-  const [micBlocked, setMicBlocked] = useState(false);
-  const [micErrorReason, setMicErrorReason] = useState("");
+// ── Bus global pour commander l'agent LiveKit depuis n'importe quelle vue ────
+class LiveKitVoiceController {
+  constructor() {
+    this.listeners = new Set();
+    this.state = {
+      isConnected: false,
+      isSpeaking: false,
+      isListening: false,
+      agentState: "idle",
+      lastTranscription: "",
+      transcriptions: [],
+    };
+    this._room = null;
+    this._localParticipant = null;
+    this._sayHandler = null;
+    this._interruptHandler = null;
+  }
 
+  setBridge({ room, localParticipant, sayHandler, interruptHandler }) {
+    this._room = room;
+    this._localParticipant = localParticipant;
+    this._sayHandler = sayHandler;
+    this._interruptHandler = interruptHandler;
+  }
 
-  // 🔑 MOBILE FIX — armIosAudio() a normalement déjà été appelé DANS le
-  // user-gesture qui monte ce composant (onStart / AgentVoiceBar). Ici on
-  // le rappelle pour couvrir les cas où le composant serait monté sans
-  // geste préalable (StrictMode, re-mount…). Puis on attend explicitement
-  // la permission micro avant d'ouvrir la connexion LiveKit : sans ça,
-  // sur iPhone Chrome / raccourci écran d'accueil, LiveKit appelle
-  // getUserMedia hors-geste et échoue silencieusement.
+  clearBridge() {
+    this._room = null;
+    this._localParticipant = null;
+    this._sayHandler = null;
+    this._interruptHandler = null;
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    listener(this.state);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  notify(patch) {
+    this.state = { ...this.state, ...patch };
+    this.listeners.forEach(fn => {
+      try { fn(this.state); } catch (e) { console.error("[LiveKitVoiceController] listener error:", e); }
+    });
+  }
+
+  async say(text) {
+    if (!text?.trim()) return;
+    if (this._sayHandler) {
+      return await this._sayHandler(text);
+    }
+    if (this._room && this._room.state === "connected") {
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({ type: "say", text }));
+        await this._room.localParticipant.publishData(payload, { reliable: true });
+      } catch (err) {
+        console.warn("[LiveKitVoiceController] Echec say via room:", err);
+      }
+    }
+  }
+
+  interrupt() {
+    if (this._interruptHandler) {
+      this._interruptHandler();
+    }
+    if (this._room && this._room.state === "connected") {
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({ type: "interrupt" }));
+        this._room.localParticipant.publishData(payload, { reliable: true });
+      } catch (err) {
+        console.warn("[LiveKitVoiceController] Echec interrupt:", err);
+      }
+    }
+    this.notify({ isSpeaking: false });
+  }
+}
+
+export const liveKitVoiceBus = new LiveKitVoiceController();
+export const LiveKitVoiceContext = createContext(liveKitVoiceBus);
+
+export function useLiveKitVoice() {
+  const [voiceState, setVoiceState] = useState(liveKitVoiceBus.state);
   useEffect(() => {
-    try { armIosAudio(); } catch (_e) { /* ignore */ }
-    let cancelled = false;
-    whenMicPermissionReady()
-      .then(() => { if (!cancelled) setMicReady(true); })
-      .catch(() => { if (!cancelled) setMicReady(true); });
-    // Fallback timeout : si le prewarm n'a jamais été appelé (desktop, etc.)
-    // on ouvre quand même la connexion après 300ms.
-    const t = setTimeout(() => { if (!cancelled) setMicReady(true); }, 300);
-    return () => { cancelled = true; clearTimeout(t); };
+    return liveKitVoiceBus.subscribe(setVoiceState);
   }, []);
 
+  return {
+    ...voiceState,
+    say: useCallback((text) => liveKitVoiceBus.say(text), []),
+    interrupt: useCallback(() => liveKitVoiceBus.interrupt(), []),
+    controller: liveKitVoiceBus,
+  };
+}
+
+// Cache de token pré-calculé pour éliminer les 400ms au clic
+let _prewarmedTokenCache = {
+  jwt: "",
+  key: "",
+  timestamp: 0,
+};
+
+async function generateTokenInternal({
+  systemPrompt,
+  studentName,
+  level = "",
+  sessionGoal = "",
+  targetExpressions = EMPTY_TARGET_EXPRESSIONS,
+  continuityMemory = "",
+}) {
+  const safeName = sanitizeStudentName(studentName);
+  const basePrompt = systemPrompt ||
+    `You are NOVA — a warm, precise, human English coach for an ambitious adult learner. You sound like a top-tier private tutor: composed, encouraging, high signal, never robotic.`;
+
+  const instructions = sanitizeInstructions(
+    buildNovaVoicePrompt({
+      basePrompt,
+      studentName: safeName,
+      level,
+      goal: sessionGoal,
+      targets: targetExpressions,
+      continuity: continuityMemory,
+      openingHookMode: (sessionGoal && sessionGoal.toLowerCase().includes("free conversation")) ? "free" : "daily_targets",
+    })
+  );
+
+  const roomName = buildRoomName("nova");
+  const identity = buildParticipantIdentity(studentName);
+  const metadataString = JSON.stringify({
+    instructions,
+    studentName: safeName || null,
+    level: level || null,
+  });
+
+  // 1) Chemin sécurisé : le serveur signe et décide des droits.
+  const endpoint = getTokenEndpoint();
+  if (endpoint) {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ roomName, identity, metadata: metadataString, agentName: LIVEKIT_AGENT_NAME }),
+    });
+    if (!res.ok) throw new Error(`Token endpoint HTTP ${res.status}`);
+    const data = await res.json().catch(() => ({}));
+    if (!data?.token) throw new Error("Réponse du serveur sans token LiveKit.");
+    return data.token;
+  }
+
+  // 2) Mode dégradé, développement uniquement.
+  if (!isClientSigningAllowed()) {
+    throw new Error(
+      "Aucun endpoint de token LiveKit configuré (VITE_LIVEKIT_TOKEN_ENDPOINT). " +
+      "La signature du token dans le navigateur est désactivée : elle exposerait la clé secrète LiveKit."
+    );
+  }
+
+  const apiKey = resolveKey("VITE_LIVEKIT_API_KEY");
+  const apiSecret = resolveKey("VITE_LIVEKIT_API_SECRET");
+  if (!apiKey || !apiSecret) {
+    throw new Error("Clés LiveKit de développement manquantes (VITE_LIVEKIT_API_KEY / VITE_LIVEKIT_API_SECRET).");
+  }
+
+  const secret = new TextEncoder().encode(apiSecret);
+  return await new SignJWT({
+    video: buildVideoGrant(roomName),
+    metadata: metadataString,
+    roomConfig: {
+      agents: [
+        {
+          ...(LIVEKIT_AGENT_NAME && LIVEKIT_AGENT_NAME !== "auto"
+            ? { agentName: LIVEKIT_AGENT_NAME }
+            : {}),
+          metadata: metadataString,
+        },
+      ],
+    },
+  })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuer(apiKey)
+    .setSubject(identity)
+    .setIssuedAt()
+    .setExpirationTime(Math.floor(Date.now() / 1000) + LIVEKIT_TOKEN_TTL_SECONDS)
+    .sign(secret);
+}
+
+export async function prewarmNovaToken({
+  systemPrompt = "",
+  studentName = "",
+  level = "",
+  sessionGoal = "",
+  targetExpressions = EMPTY_TARGET_EXPRESSIONS,
+  continuityMemory = "",
+} = {}) {
+  try {
+    const safeTargetsKey = Array.isArray(targetExpressions)
+      ? targetExpressions.map(t => (typeof t === "string" ? t : t?.expression || t?.front || t?.id || "")).join("|")
+      : "";
+    const key = JSON.stringify({
+      systemPrompt,
+      studentName: sanitizeStudentName(studentName),
+      level,
+      sessionGoal,
+      targetsKey: safeTargetsKey,
+      continuity: continuityMemory,
+    });
+
+    if (_prewarmedTokenCache.jwt && _prewarmedTokenCache.key === key && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
+      return _prewarmedTokenCache.jwt;
+    }
+
+    const jwt = await generateTokenInternal({
+      systemPrompt,
+      studentName,
+      level,
+      sessionGoal,
+      targetExpressions,
+      continuityMemory,
+    });
+    if (jwt) {
+      _prewarmedTokenCache = { jwt, key, timestamp: Date.now() };
+    }
+    return jwt;
+  } catch (e) {
+    console.warn("[LiveKit] Prewarm token anticipé ignoré :", e?.message);
+    return null;
+  }
+}
+
+export default function LiveKitVoiceAssistant({
+  onClose,
+  onTranscriptionsUpdate,
+  onStateChange,
+  onControllerReady,
+  systemPrompt,
+  studentName,
+  isDarkMode,
+  level = "",
+  sessionGoal = "",
+  targetExpressions = EMPTY_TARGET_EXPRESSIONS,
+  continuityMemory = "",
+  onSessionSummary,
+}) {
+  const targetExpressionsKey = useMemo(() => {
+    if (!Array.isArray(targetExpressions) || !targetExpressions.length) return "";
+    return targetExpressions
+      .map(t => (typeof t === "string" ? t : t?.expression || t?.front || t?.id || ""))
+      .join("|");
+  }, [targetExpressions]);
+
+  const currentParamsKey = useMemo(() => JSON.stringify({
+    systemPrompt,
+    studentName: sanitizeStudentName(studentName),
+    level,
+    sessionGoal,
+    targetsKey: targetExpressionsKey,
+    continuity: continuityMemory,
+  }), [systemPrompt, studentName, level, sessionGoal, targetExpressionsKey, continuityMemory]);
+
+  // Initialisation instantanée depuis le cache de prewarm si disponible
+  const [token, setToken] = useState(() => {
+    if (_prewarmedTokenCache.jwt && _prewarmedTokenCache.key === currentParamsKey && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
+      return _prewarmedTokenCache.jwt;
+    }
+    return "";
+  });
+  const [error, setError] = useState(null);
+  const [micReady, setMicReady] = useState(true);
+  const [micBlocked, setMicBlocked] = useState(false);
+  const [micErrorReason, setMicErrorReason] = useState("");
+  const [agentMissing, setAgentMissing] = useState(false);
+
+  // 🔑 MOBILE FIX — armIosAudio() a normalement déjà été appelé DANS le
+  // user-gesture qui monte ce composant (onStart / AgentVoiceBar).
+  useEffect(() => {
+    try { armIosAudio(); } catch (_e) { /* ignore */ }
+    setMicReady(true);
+    whenMicPermissionReady().catch(() => {});
+  }, []);
+
+  // ── Récupération / Synchronisation du token ────────────────────────────────
+  const lastFetchParamsRef = useRef("");
   useEffect(() => {
     let active = true;
+
+    // Guard anti-boucle : si le token est déjà prêt pour ces mêmes paramètres, on ne relance pas
+    if (token && lastFetchParamsRef.current === currentParamsKey) {
+      return;
+    }
+
+    // Si on a déjà un token chaud valide en cache pour cette clé, l'adopter immédiatement
+    if (_prewarmedTokenCache.jwt && _prewarmedTokenCache.key === currentParamsKey && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
+      setToken(_prewarmedTokenCache.jwt);
+      lastFetchParamsRef.current = currentParamsKey;
+      return;
+    }
+
     const fetchToken = async () => {
-      try {
-        const apiKey = import.meta.env.VITE_LIVEKIT_API_KEY;
-        const apiSecret = import.meta.env.VITE_LIVEKIT_API_SECRET;
+      const jwt = await generateTokenInternal({
+        systemPrompt,
+        studentName,
+        level,
+        sessionGoal,
+        targetExpressions,
+        continuityMemory,
+      });
+      _prewarmedTokenCache = { jwt, key: currentParamsKey, timestamp: Date.now() };
+      return jwt;
+    };
 
-        if (!apiKey || !apiSecret) {
-          throw new Error("Clés API LiveKit manquantes dans le fichier .env (VITE_LIVEKIT_API_KEY, VITE_LIVEKIT_API_SECRET)");
-        }
-
-        const roomName = `nova-${Math.random().toString(36).slice(2, 10)}`;
-        const participantName = studentName
-          ? studentName.toLowerCase().replace(/\s+/g, "-") + `-${Math.floor(Math.random() * 10000)}`
-          : `user-${Math.floor(Math.random() * 100000)}`;
-
-        const basePrompt = systemPrompt ||
-          `You are NOVA — a GOD-TIER Astral English Coach. Your vibe: warm, magnetic, endlessly encouraging. You treat every student like your closest friend having a breakthrough moment.
-
-CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly — no parentheses, no brackets, no "small correction:", nothing that interrupts the conversation. If the student makes a mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply, then keep the conversation flowing exactly as if nothing happened. The mistake will be turned into a flashcard automatically behind the scenes.
-
-CRITICAL RULES:
-- Replies 1–3 sentences MAX.
-- Always end with one engaging open question.
-- React with genuine human emotion.
-- NEVER give lists or bullet points.
-- Speak like a real human coach.`;
-
-        const finalPrompt = studentName
-          ? `${basePrompt}\n\nIMPORTANT: The student's name is "${studentName}". Use their name naturally in the conversation (especially at the start and occasionally during the session to make it personal). Never forget their name.`
-          : basePrompt;
-
-        const secret = new TextEncoder().encode(apiSecret);
-        const metadataString = JSON.stringify({
-          instructions: finalPrompt,
-          studentName: studentName || null,
-        });
-
-        const jwt = await new SignJWT({
-          video: {
-            roomJoin: true,
-            room: roomName,
-            canPublish: true,
-            canSubscribe: true,
-            canPublishData: true,
-          },
-          metadata: metadataString,
-          roomConfig: {
-            agents: [
-              {
-                agent_name: LIVEKIT_AGENT_NAME,
-                metadata: metadataString,
-              },
-            ],
-          },
-        })
-          .setProtectedHeader({ alg: 'HS256' })
-          .setIssuer(apiKey)
-          .setSubject(participantName)
-          .setIssuedAt()
-          .setExpirationTime('2h')
-          .sign(secret);
-
+    lastFetchParamsRef.current = currentParamsKey;
+    fetchToken()
+      .then((jwt) => {
         if (active) {
           setToken(jwt);
         }
-      } catch (err) {
-        if (active) {
-          console.error("Error fetching LiveKit token:", err);
-          setError(err.message);
-        }
-      }
-    };
-    fetchToken();
+      })
+      .catch((err) => {
+        if (!active) return;
+        const safe = scrubError(err);
+        console.error("[LiveKit] token indisponible :", safe);
+        setError(safe);
+      });
+
     return () => {
       active = false;
     };
-  }, [systemPrompt, studentName]);
+  }, [systemPrompt, studentName, level, sessionGoal, targetExpressions, targetExpressionsKey, continuityMemory, token, currentParamsKey]);
 
-  useEffect(() => {
-    if (error && onClose) {
-      alert("Erreur de connexion LiveKit: " + error);
-      onClose();
+  // ── Journal de session : tours agrégés + sauvegarde à la fermeture ───────
+  const turnsRef = useRef([]);
+  const handleTranscriptions = useCallback((segments) => {
+    const turns = aggregateTurns(segments);
+    turnsRef.current = turns;
+    onTranscriptionsUpdate?.(segments, turns);
+  }, [onTranscriptionsUpdate]);
+
+  const handleDisconnected = useCallback(() => {
+    try {
+      liveKitVoiceBus.clearBridge();
+      liveKitVoiceBus.notify({ isConnected: false, isSpeaking: false, isListening: false, agentState: "idle" });
+    } catch {}
+    const turns = turnsRef.current || [];
+    if (turns.length) {
+      const stats = conversationStats(turns);
+      try {
+        appendSession({
+          transcript: turns.map((t) => ({ role: t.role, text: t.text })),
+          agent: { name: LIVEKIT_AGENT_NAME },
+          mode: "livekit-voice",
+          meta: stats,
+        });
+      } catch (e) { console.warn("[LiveKit] journal de session non sauvegardé :", e?.message); }
+      onSessionSummary?.({ turns, stats, transcriptText: buildTranscriptText(turns) });
     }
-  }, [error, onClose]);
+    onClose?.();
+  }, [onClose, onSessionSummary]);
 
-  if (!token || error) {
+  // Nettoyage strict au démontage du composant
+  useEffect(() => {
+    return () => {
+      try {
+        liveKitVoiceBus.clearBridge();
+        liveKitVoiceBus.notify({ isConnected: false, isSpeaking: false, isListening: false, agentState: "idle" });
+      } catch {}
+    };
+  }, []);
+
+  // Erreur : bannière explicite et non bloquante. Aucune boîte de dialogue
+  // native : elle gèle l'UI mobile et peut exposer des détails techniques.
+  if (error) {
+    return (
+      <div style={errorOverlayStyle} role="alert">
+        <div style={{ ...errorCardStyle, background: isDarkMode ? "#1F2937" : "#111827" }}>
+          <strong style={{ fontSize: 15 }}>La conversation vocale n'a pas pu démarrer</strong>
+          <span style={{ fontSize: 13, opacity: 0.85 }}>{error}</span>
+          <button type="button" onClick={() => onClose?.()} style={unlockButtonStyle}>Fermer</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!token) {
     return null;
   }
 
@@ -162,16 +440,23 @@ CRITICAL RULES:
         serverUrl={import.meta.env.VITE_LIVEKIT_URL}
         token={token}
         connect={micReady}
-        audio={true}
+        audio={false}
         video={false}
-        onDisconnected={onClose}
+        options={{
+          expWebAudioMix: false,
+          adaptiveStream: false,
+          dynacast: false,
+        }}
+        onDisconnected={handleDisconnected}
         style={{ display: "contents" }}
       >
         <RoomAudioRenderer volume={1.0} />
         <LiveKitStateSync
-          onTranscriptionsUpdate={onTranscriptionsUpdate}
+          onTranscriptionsUpdate={handleTranscriptions}
           onStateChange={onStateChange}
+          onControllerReady={onControllerReady}
         />
+        <LiveKitAgentWatchdog onMissing={setAgentMissing} />
         <LiveKitMicWatchdog
           onMicBlockedChange={setMicBlocked}
           onMicErrorReason={setMicErrorReason}
@@ -180,6 +465,24 @@ CRITICAL RULES:
           label="🔊 Appuie ici pour activer le son de NOVA"
           style={startAudioStyle}
         />
+        {agentMissing && !micBlocked && (
+          <div style={{ ...errorCardStyle, position: "fixed", left: "50%", bottom: "max(76px, calc(env(safe-area-inset-bottom) + 52px))", transform: "translateX(-50%)", zIndex: 9999, background: isDarkMode ? "#111827" : "#0f172a", border: "1.5px solid rgba(180, 85, 45, 0.35)", maxWidth: "min(420px, 92vw)" }} role="alert">
+            <strong style={{ fontSize: 14, color: "#f87171" }}>⚠️ NOVA n'a pas rejoint la conversation</strong>
+            <span style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.5, textAlign: "left" }}>
+              Le worker de l'agent « {LIVEKIT_AGENT_NAME || "auto"} » ne répond pas.<br />
+              • <strong>Console Cloud</strong> : vérifiez que l'agent est <em>Actif</em> (et non <em>En cours</em> ou <em>Dormir</em>).<br />
+              • <strong>Nom Builder</strong> : vérifiez que le nom correspond exactement à <code>{LIVEKIT_AGENT_NAME}</code>.<br />
+              • <strong>Worker Local</strong> : vous pouvez aussi lancer <code>python agent.py dev</code> dans un terminal.
+            </span>
+            <button
+              type="button"
+              onClick={() => setAgentMissing(false)}
+              style={{ ...unlockButtonStyle, marginTop: 4, padding: "7px 14px", fontSize: 12 }}
+            >
+              Compris / Fermer
+            </button>
+          </div>
+        )}
         {micBlocked && (
           <LiveKitMicBanner
             reason={micErrorReason}
@@ -194,6 +497,31 @@ CRITICAL RULES:
   );
 }
 
+const errorOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  display: "flex",
+  alignItems: "flex-end",
+  justifyContent: "center",
+  padding: "0 16px max(24px, env(safe-area-inset-bottom))",
+  pointerEvents: "none",
+  zIndex: 99999,
+};
+
+const errorCardStyle = {
+  pointerEvents: "auto",
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  padding: 16,
+  borderRadius: 16,
+  maxWidth: "min(360px, 92vw)",
+  color: "white",
+  textAlign: "center",
+  fontFamily: "system-ui, sans-serif",
+  boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+};
+
 const startAudioStyle = {
   position: "fixed",
   left: "50%",
@@ -207,7 +535,7 @@ const startAudioStyle = {
   fontSize: 14,
   fontWeight: 700,
   cursor: "pointer",
-  background: "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
+  background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
   color: "white",
   fontFamily: "system-ui, sans-serif",
   boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
@@ -461,19 +789,77 @@ const unlockButtonStyle = {
   fontSize: 14,
   fontWeight: 700,
   cursor: "pointer",
-  background: "linear-gradient(135deg, #8B5CF6, #8B5CF6)",
+  background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
   color: "white",
 };
 
 // ── Sync état LiveKit → parent ────────────────────────────────────────────────
-function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
+function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerReady }) {
+  const room = useRoomContext();
   const { state, audioTrack, agentTranscriptions } = useVoiceAssistant();
+  const { localParticipant } = useLocalParticipant();
   const userTranscriptions = useTranscriptions();
 
+  // Enregistrer le pont avec le bus global pour toutes les vues
   useEffect(() => {
-    if (onStateChange) onStateChange({ state, audioTrack });
+    if (!room || !localParticipant) return;
+    const sayHandler = async (text) => {
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({ type: "say", text }));
+        await localParticipant.publishData(payload, { reliable: true });
+      } catch (err) {
+        console.warn("[LiveKit] sayHandler échoué:", err);
+      }
+    };
+    const interruptHandler = () => {
+      try {
+        const payload = new TextEncoder().encode(JSON.stringify({ type: "interrupt" }));
+        localParticipant.publishData(payload, { reliable: true });
+      } catch (err) {
+        console.warn("[LiveKit] interruptHandler échoué:", err);
+      }
+    };
+
+    liveKitVoiceBus.setBridge({ room, localParticipant, sayHandler, interruptHandler });
+    liveKitVoiceBus.notify({
+      isConnected: true,
+      agentState: state,
+      isSpeaking: state === "speaking",
+      isListening: state === "listening",
+    });
+
+    onControllerReady?.(liveKitVoiceBus);
+
+    return () => {
+      liveKitVoiceBus.clearBridge();
+      liveKitVoiceBus.notify({
+        isConnected: false,
+        agentState: "idle",
+        isSpeaking: false,
+        isListening: false,
+      });
+    };
+  }, [room, localParticipant, state, onControllerReady]);
+
+  // Synchroniser les changements d'état speaking/listening
+  useEffect(() => {
+    liveKitVoiceBus.notify({
+      agentState: state,
+      isSpeaking: state === "speaking",
+      isListening: state === "listening",
+    });
+  }, [state]);
+
+  const prevStateRef = useRef(null);
+  useEffect(() => {
+    if (!onStateChange) return;
+    const prev = prevStateRef.current;
+    if (prev && prev.state === state && prev.audioTrack === audioTrack) return;
+    prevStateRef.current = { state, audioTrack };
+    onStateChange({ state, audioTrack });
   }, [state, audioTrack, onStateChange]);
 
+  const lastTranscriptionsKeyRef = useRef("");
   useEffect(() => {
     if (!onTranscriptionsUpdate) return;
 
@@ -486,8 +872,19 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
       ts: seg.firstReceivedTime || 0,
     }));
 
+    const localId = localParticipant?.identity;
+    const agentTexts = new Set(agentSegs.map(s => s.text?.trim().toLowerCase()).filter(Boolean));
+
     const userSegs = (userTranscriptions || [])
-      .filter(m => m.participantInfo?.identity !== LIVEKIT_AGENT_NAME)
+      .filter(m => {
+        const id = m.participantInfo?.identity;
+        if (localId) return id === localId;
+        return id && id !== LIVEKIT_AGENT_NAME && !id.startsWith("agent-");
+      })
+      .filter(m => {
+        const text = m.text?.trim().toLowerCase();
+        return text && !agentTexts.has(text);
+      })
       .map(m => ({
         id: m.streamInfo?.id || ("user-" + m.participantInfo?.identity + "-" + (m.streamInfo?.timestamp || Date.now())),
         role: "user",
@@ -498,8 +895,59 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange }) {
       }));
 
     const combined = [...agentSegs, ...userSegs].sort((a, b) => a.ts - b.ts);
+    const key = combined.map(c => `${c.id}:${c.text}:${c.isFinal}`).join("|");
+    if (key === lastTranscriptionsKeyRef.current) return;
+    lastTranscriptionsKeyRef.current = key;
     onTranscriptionsUpdate(combined);
-  }, [agentTranscriptions, userTranscriptions, onTranscriptionsUpdate]);
+  }, [agentTranscriptions, userTranscriptions, localParticipant, onTranscriptionsUpdate]);
+
+  return null;
+}
+
+
+// ── LiveKitAgentWatchdog ────────────────────────────────────────────────
+// Le symptôme « je me connecte, le micro s'active, mais l'agent ne parle
+// jamais » vient presque toujours du DISPATCH : la room est bien créée,
+// mais aucun worker d'agent n'y est envoyé. Côté navigateur, ça ne produit
+// aucune erreur — d'où ce guetteur : si aucun participant distant n'a
+// rejoint la room au bout de 8 secondes, on le dit explicitement.
+function LiveKitAgentWatchdog({ onMissing }) {
+  const room = useRoomContext();
+
+  useEffect(() => {
+    if (!room) return;
+    let timer = null;
+
+    const hasRemote = () => (room.remoteParticipants?.size || 0) > 0;
+
+    if (hasRemote()) {
+      onMissing?.(false);
+      return;
+    }
+
+    const check = () => {
+      if (hasRemote()) {
+        onMissing?.(false);
+      } else {
+        console.warn("[LiveKit] Aucun agent n'a rejoint la room après 12s — dispatch en attente ou KO.");
+        onMissing?.(true);
+      }
+    };
+
+    const onParticipant = (p) => {
+      console.info("[LiveKit] participant distant connecté :", p?.identity);
+      onMissing?.(false);
+      if (timer) { clearTimeout(timer); timer = null; }
+    };
+
+    room.on(RoomEvent.ParticipantConnected, onParticipant);
+    timer = setTimeout(check, 12000);
+
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, onParticipant);
+      if (timer) clearTimeout(timer);
+    };
+  }, [room, onMissing]);
 
   return null;
 }

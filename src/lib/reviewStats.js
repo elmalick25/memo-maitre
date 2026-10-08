@@ -68,7 +68,7 @@ export const SCORE_BUTTONS = [
   { score: 0, label: "Oublié",    emoji: "😵", color: "#EF4444", bg: "rgba(239,68,68,0.12)" },
   { score: 1, label: "Difficile", emoji: "😓", color: "#F59E0B", bg: "rgba(245,158,11,0.12)" },
   { score: 3, label: "Correct",   emoji: "✅", color: "#22C55E", bg: "rgba(34,197,94,0.12)" },
-  { score: 5, label: "Facile",    emoji: "🚀", color: "#8B5CF6", bg: "rgba(139,92,246,0.12)" },
+  { score: 5, label: "Facile",    emoji: "🚀", color: "var(--mm-primary)", bg: "rgba(37, 99, 235,0.12)" },
 ];
 
 // ── Format "next review in Xh / Xj" (pur) ────────────────────────────────────

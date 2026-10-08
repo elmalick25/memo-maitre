@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const reviewEngineViewPath = path.resolve('src/components/ReviewEngineView.jsx');
-const memoMasterPath = path.resolve('src/MemoMaster.jsx');
+const reviewEngineViewPath = new URL('../components/ReviewEngineView.jsx', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+const memoMasterPath = new URL('../MemoMaster.jsx', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 
 test('ReviewEngineView — exists and exports default component supporting review session, reveal, ratings, and summary', () => {
   assert.equal(fs.existsSync(reviewEngineViewPath), true, 'ReviewEngineView.jsx must exist in components/');
@@ -31,4 +31,12 @@ test('MemoMaster — imports and renders ReviewEngineView for review view', () =
   const content = fs.readFileSync(memoMasterPath, 'utf8');
   assert.equal(content.includes('import ReviewEngineView from "./components/ReviewEngineView";'), true, 'MemoMaster must import ReviewEngineView');
   assert.equal(content.includes('<ReviewEngineView'), true, 'MemoMaster must render ReviewEngineView');
+  assert.equal(content.includes('handleOptimizeOneCard={handleOptimizeOneCard}'), true, 'MemoMaster must pass handleOptimizeOneCard to ReviewEngineView');
 });
+
+test('ReviewEngineView — provides Optimiser button with AI Coach in card actions bar', () => {
+  const content = fs.readFileSync(reviewEngineViewPath, 'utf8');
+  assert.equal(content.includes('handleOptimizeOneCard'), true, 'ReviewEngineView must accept handleOptimizeOneCard');
+  assert.equal(content.includes('✨ Optimiser'), true, 'ReviewEngineView must render ✨ Optimiser button');
+});
+

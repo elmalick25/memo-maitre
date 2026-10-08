@@ -24,7 +24,11 @@ export default function CustomFeedManagerModal({
 }) {
   const [customFeeds, setCustomFeeds] = useState(() => {
     try {
-      return JSON.parse(safeStorage.get(CUSTOM_FEEDS_KEY) || "[]");
+      const v2 = safeStorage.get(CUSTOM_FEEDS_KEY);
+      if (v2) return JSON.parse(v2);
+      const v1 = safeStorage.get("tech_intel_custom_feeds_v1");
+      if (v1) return JSON.parse(v1);
+      return [];
     } catch {
       return [];
     }
@@ -93,7 +97,7 @@ export default function CustomFeedManagerModal({
       url: finalUrl,
       category,
       emoji,
-      color: "#8B5CF6",
+      color: "var(--mm-primary)",
       enabled: true,
       trust,
       addedAt: Date.now(),
@@ -229,7 +233,7 @@ export default function CustomFeedManagerModal({
               padding: "6px 14px",
               borderRadius: "8px",
               border: "none",
-              background: activeTab === "add" ? "#8B5CF6" : "transparent",
+              background: activeTab === "add" ? "var(--mm-primary)" : "transparent",
               color: activeTab === "add" ? "#FFFFFF" : isDarkMode ? "#94A3B8" : "#64748B",
               fontSize: "12px",
               fontWeight: "700",
@@ -244,7 +248,7 @@ export default function CustomFeedManagerModal({
               padding: "6px 14px",
               borderRadius: "8px",
               border: "none",
-              background: activeTab === "manage" ? "#8B5CF6" : "transparent",
+              background: activeTab === "manage" ? "var(--mm-primary)" : "transparent",
               color: activeTab === "manage" ? "#FFFFFF" : isDarkMode ? "#94A3B8" : "#64748B",
               fontSize: "12px",
               fontWeight: "700",
@@ -259,7 +263,7 @@ export default function CustomFeedManagerModal({
               padding: "6px 14px",
               borderRadius: "8px",
               border: "none",
-              background: activeTab === "opml" ? "#8B5CF6" : "transparent",
+              background: activeTab === "opml" ? "var(--mm-primary)" : "transparent",
               color: activeTab === "opml" ? "#FFFFFF" : isDarkMode ? "#94A3B8" : "#64748B",
               fontSize: "12px",
               fontWeight: "700",
@@ -301,7 +305,7 @@ export default function CustomFeedManagerModal({
                   padding: "10px 16px",
                   borderRadius: "10px",
                   border: "none",
-                  background: "#7C3AED",
+                  background: "var(--mm-primary)",
                   color: "#FFFFFF",
                   fontSize: "12px",
                   fontWeight: "700",
@@ -317,7 +321,7 @@ export default function CustomFeedManagerModal({
               <div
                 style={{
                   background: isDarkMode ? "rgba(30, 41, 59, 0.8)" : "#F1F5F9",
-                  border: "1px solid rgba(139, 92, 246, 0.3)",
+                  border: "1px solid color-mix(in srgb, var(--mm-primary) 30.0%, transparent)",
                   borderRadius: "12px",
                   padding: "14px",
                   display: "flex",
@@ -329,7 +333,7 @@ export default function CustomFeedManagerModal({
                   <span style={{ fontSize: "12px", fontWeight: "700", color: "#10B981" }}>
                     ✅ Flux détecté : {discoveredInfo.feedUrl}
                   </span>
-                  <span style={{ fontSize: "11px", fontWeight: "700", color: "#8B5CF6" }}>
+                  <span style={{ fontSize: "11px", fontWeight: "700", color: "var(--mm-primary)" }}>
                     {discoveredInfo.trust.badgeEmoji} {discoveredInfo.trust.categoryLabel}
                   </span>
                 </div>
@@ -498,7 +502,7 @@ export default function CustomFeedManagerModal({
                   padding: "12px",
                   borderRadius: "10px",
                   border: "none",
-                  background: "#7C3AED",
+                  background: "var(--mm-primary)",
                   color: "#FFFFFF",
                   fontSize: "13px",
                   fontWeight: "700",

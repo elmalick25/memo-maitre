@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { lightenColor, darkenColor } from "../lib/colorUtils";
 import { today } from "../utils/dateUtils";
 import { isDueCard, isCardMastered } from "../lib/cardStatus";
+import { colorMix } from "../lib/colorMix";
 
 const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMode, onNodeClick }) => {
   const [hovered, setHovered] = useState(null);
@@ -44,15 +45,14 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
         if (pct < 4) pct = 4;
       }
 
-      const daysToExam = cat.examDate ? Math.ceil((new Date(cat.examDate) - new Date()) / 86400000) : null;
-      const isUrgent = daysToExam !== null && daysToExam <= 7;
+      const isUrgent = cat.priority === "haute" && due > 0;
       const isMastered = mastered === catExps.length && catExps.length > 0;
       const needsReview = due > 0;
       // Rayons encore plus compacts (28-44) pour une constellation aérienne et "jolie"
       const radius = Math.min(44, Math.max(28, 28 + Math.sqrt(catExps.length) * 2.2));
       return {
         id: cat.name, label: cat.name,
-        color: isUrgent ? "#EF4444" : (cat.color || "#8B5CF6"),
+        color: isUrgent ? "#EF4444" : (cat.color || "var(--mm-primary)"),
         radius, isMastered, needsReview, isUrgent, pct, due,
         total: catExps.length, mastered,
       };
@@ -142,7 +142,7 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
         {/* ── Hub central ── */}
         {nodes.length > 1 && (
           <g className="kg-pulse" style={{ transformOrigin: `${cx}px ${cy}px` }}>
-            <circle cx={cx} cy={cy} r={11} fill={isDarkMode ? "#25143A" : "#FAF5FF"} stroke={theme.highlight} strokeWidth="2" filter="url(#kg-glow-sm)" opacity="0.85" />
+            <circle cx={cx} cy={cy} r={11} fill={isDarkMode ? "#25143A" : "color-mix(in srgb, var(--mm-primary) 4%, white)"} stroke={theme.highlight} strokeWidth="2" filter="url(#kg-glow-sm)" opacity="0.85" />
             <circle cx={cx} cy={cy} r={5} fill={theme.highlight} />
             <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="central" fontSize="9" fill="white" fontWeight="900">✦</text>
           </g>
@@ -172,7 +172,7 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
               <g style={{ animation: `kg-float 3s ease-in-out infinite`, animationDelay: floatDelay }}>
                 {(node.isUrgent || node.needsReview) && (
                   <circle r={node.radius + 5} fill="none"
-                    stroke={node.isUrgent ? "#EF4444" : "#C084FC"}
+                    stroke={node.isUrgent ? "#EF4444" : "var(--mm-primary-glow)"}
                     strokeWidth="1.8" strokeDasharray="4 3" opacity="0.75" className="kg-pulse" />
                 )}
                 {node.isMastered && (
@@ -211,9 +211,9 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
                   <g transform={`translate(0, ${node.radius + 1})`}>
                     <rect x="-20" y="-7" width="40" height="14" rx="7"
                       fill={node.isUrgent ? "#EF4444" : "rgba(0, 210, 255, 0.18)"}
-                      stroke={node.isUrgent ? "rgba(255,255,255,0.25)" : "#C084FC"} strokeWidth="1.2" />
+                      stroke={node.isUrgent ? "rgba(255,255,255,0.25)" : "var(--mm-primary-glow)"} strokeWidth="1.2" />
                     <text x="0" y="3" textAnchor="middle"
-                      fill={node.isUrgent ? "#FFFFFF" : "#C084FC"} fontSize="9" fontWeight="900"
+                      fill={node.isUrgent ? "#FFFFFF" : "var(--mm-primary-glow)"} fontSize="9" fontWeight="900"
                       style={{ pointerEvents: 'none' }}>
                       {node.due} dus
                     </text>
@@ -230,12 +230,12 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
         const hNode = nodes.find(n => n.id === hovered);
         if (!hNode) return null;
         return (
-          <div style={{ position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)', background: isDarkMode ? 'rgba(10,15,35,0.9)' : 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', border: `1px solid ${hNode.color}`, borderRadius: 10, padding: '7px 12px', boxShadow: `0 6px 22px ${hNode.color}45`, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', zIndex: 20 }}>
+          <div style={{ position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)', background: isDarkMode ? 'rgba(10,15,35,0.9)' : 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', border: `1px solid ${hNode.color}`, borderRadius: 10, padding: '7px 12px', boxShadow: `0 6px 22px ${colorMix(hNode.color, 27)}`, display: 'flex', flexDirection: 'column', alignItems: 'center', pointerEvents: 'none', zIndex: 20 }}>
             <div style={{ fontWeight: 900, fontSize: 12, color: theme.text, marginBottom: 2 }}>{hNode.label}</div>
             <div style={{ display: 'flex', gap: 10, fontSize: 10.5, color: theme.textMuted }}>
               <span><strong style={{ color: theme.text }}>{hNode.total}</strong> fiches</span>
               <span><strong style={{ color: '#22C55E' }}>{hNode.pct}%</strong> progression</span>
-              {hNode.due > 0 && <span><strong style={{ color: hNode.isUrgent ? '#EF4444' : '#C084FC' }}>{hNode.due}</strong> dues</span>}
+              {hNode.due > 0 && <span><strong style={{ color: hNode.isUrgent ? '#EF4444' : 'var(--mm-primary-glow)' }}>{hNode.due}</strong> dues</span>}
             </div>
           </div>
         );
@@ -247,7 +247,7 @@ const KnowledgeGraph = ({ categories, expressions, sessionPool, theme, isDarkMod
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 6px #4ade80' }} /> Maîtrisé
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: theme.textMuted, fontWeight: 600 }}>
-          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', border: '1.5px dashed #C084FC' }} /> À réviser
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', border: '1.5px dashed var(--mm-primary-glow)' }} /> À réviser
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, color: theme.textMuted, fontWeight: 600 }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', border: '1.5px dashed #EF4444' }} /> Urgent

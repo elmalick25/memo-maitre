@@ -346,11 +346,11 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
       <style>{`
         @keyframes battleWin { 0% { transform: scale(0.8); opacity: 0; } 50% { transform: scale(1.1); } 100% { transform: scale(1); opacity: 1; } }
         @keyframes battleLose { 0%, 100% { transform: translateX(0); } 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
-        @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 rgba(139, 92, 246,0.4); } 70% { box-shadow: 0 0 0 15px rgba(139, 92, 246,0); } 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246,0); } }
+        @keyframes pulseGlow { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mm-primary) 40.0%, transparent); } 70% { box-shadow: 0 0 0 15px color-mix(in srgb, var(--mm-primary) 0.0%, transparent); } 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mm-primary) 0.0%, transparent); } }
       `}</style>
 
       {/* HEADER STREAK */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, padding: "16px 24px", background: "linear-gradient(135deg, rgba(255,255,255,0.05), rgba(139, 92, 246,0.1))", borderRadius: 20, border: `1px solid ${theme.border}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, padding: "16px 24px", background: "linear-gradient(135deg, rgba(255,255,255,0.05), color-mix(in srgb, var(--mm-primary) 10.0%, transparent))", borderRadius: 20, border: `1px solid ${theme.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ fontSize: 32 }}>{stats.currentStreak >= 10 ? "🏆" : stats.currentStreak >= 5 ? "⚡" : stats.currentStreak >= 3 ? "🔥" : "⚔️"}</div>
           <div>
@@ -371,10 +371,10 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
               <div style={{ fontSize: 36, marginBottom: 12 }}>{c.icon}</div>
               <div style={{ fontWeight: 900, fontSize: 16, color: theme.text, marginBottom: 8 }}>{c.title}</div>
               <div style={{ fontSize: 13, color: theme.textMuted, lineHeight: 1.4 }}>{c.desc}</div>
-              <div style={{ marginTop: 12, fontSize: 11, fontWeight: 800, color: "#8B5CF6", background: "rgba(139, 92, 246,0.1)", display: "inline-block", padding: "4px 8px", borderRadius: 6 }}>⏱️ {c.timeLimit}s</div>
+              <div style={{ marginTop: 12, fontSize: 11, fontWeight: 800, color: "var(--mm-primary)", background: "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)", display: "inline-block", padding: "4px 8px", borderRadius: 6 }}>⏱️ {c.timeLimit}s</div>
             </div>
           ))}
-          <div onClick={() => startChallenge("random")} style={{ ...cardStyle, background: "linear-gradient(135deg, #8B5CF6, #7C3AED)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }} className="hov">
+          <div onClick={() => startChallenge("random")} style={{ ...cardStyle, background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }} className="hov">
             <div style={{ fontSize: 40, marginBottom: 8 }}>🎲</div>
             <div style={{ fontWeight: 900, fontSize: 18 }}>Défi Aléatoire</div>
           </div>
@@ -382,7 +382,7 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
       )}
 
       {phase === "play" && activeChallenge && (
-        <div style={{ ...cardStyle, border: "2px solid #8B5CF650", position: "relative", overflow: "hidden" }}>
+        <div style={{ ...cardStyle, border: "2px solid color-mix(in srgb, var(--mm-primary) 31%, transparent)", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 4, background: "rgba(255,255,255,0.1)" }}>
              {/* Progression barre animée CSS possible ici, mais timer num gère déjà l'urgence */}
           </div>
@@ -398,12 +398,12 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
             </div>
           </div>
 
-          <div style={{ padding: 20, background: isDarkMode ? "rgba(139, 92, 246,0.2)" : "var(--mm-bg-elev)", borderRadius: 16, marginBottom: 20, fontSize: 16, color: theme.text, lineHeight: 1.6, fontWeight: 600 }}>
+          <div style={{ padding: 20, background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "var(--mm-bg-elev)", borderRadius: 16, marginBottom: 20, fontSize: 16, color: theme.text, lineHeight: 1.6, fontWeight: 600 }}>
             {activeChallenge.isChain ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {chainHistory.map((msg, i) => (
-                  <div key={i} style={{ padding: 12, borderRadius: 12, background: msg.role === "claude" ? "rgba(139, 92, 246,0.1)" : "rgba(16,185,129,0.1)", alignSelf: msg.role === "claude" ? "flex-start" : "flex-end", maxWidth: "80%", border: `1px solid ${msg.role === "claude" ? "#8B5CF630" : "#10B98130"}` }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: msg.role === "claude" ? "#8B5CF6" : "#10B981", marginBottom: 4 }}>{msg.role.toUpperCase()}</div>
+                  <div key={i} style={{ padding: 12, borderRadius: 12, background: msg.role === "claude" ? "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)" : "rgba(16,185,129,0.1)", alignSelf: msg.role === "claude" ? "flex-start" : "flex-end", maxWidth: "80%", border: `1px solid ${msg.role === "claude" ? "color-mix(in srgb, var(--mm-primary) 19%, transparent)" : "#10B98130"}` }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: msg.role === "claude" ? "var(--mm-primary)" : "#10B981", marginBottom: 4 }}>{msg.role.toUpperCase()}</div>
                     {msg.content}
                   </div>
                 ))}
@@ -429,7 +429,7 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
           </div>
 
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
-            <button onClick={() => submitAnswer()} disabled={!userInput.trim()} style={btnStyle("#8B5CF6", !userInput.trim())}>
+            <button onClick={() => submitAnswer()} disabled={!userInput.trim()} style={btnStyle("var(--mm-primary)", !userInput.trim())}>
               Envoyer 🚀
             </button>
           </div>
@@ -452,19 +452,19 @@ Retourne UNIQUEMENT ce JSON valide (sois strict, un native speaker aurait minimu
           </div>
           <div style={{ fontSize: 20, fontWeight: 800, color: theme.text, marginBottom: 24 }}>Score: {result.score}/100</div>
 
-          <div style={{ padding: 20, background: isDarkMode ? "rgba(139, 92, 246,0.2)" : "var(--mm-bg-elev)", borderRadius: 16, marginBottom: 20, textAlign: "left" }}>
+          <div style={{ padding: 20, background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "var(--mm-bg-elev)", borderRadius: 16, marginBottom: 20, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 800, color: theme.textMuted, textTransform: "uppercase", marginBottom: 8 }}>Feedback de Claude</div>
             <div style={{ fontSize: 15, color: theme.text, lineHeight: 1.6 }}>{result.feedback}</div>
             
             {result.nativeAlternative && (
-              <div style={{ marginTop: 16, padding: 12, background: "rgba(139, 92, 246,0.1)", borderLeft: "4px solid #8B5CF6", borderRadius: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: "#8B5CF6", marginBottom: 4 }}>ALTERNATIVE NATIVE</div>
+              <div style={{ marginTop: 16, padding: 12, background: "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)", borderLeft: "4px solid var(--mm-primary)", borderRadius: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-primary)", marginBottom: 4 }}>ALTERNATIVE NATIVE</div>
                 <div style={{ fontSize: 14, color: theme.text, fontStyle: "italic" }}>{result.nativeAlternative}</div>
               </div>
             )}
           </div>
 
-          <button onClick={() => setPhase("select")} style={{ ...btnStyle("#8B5CF6"), width: "100%", padding: 16, fontSize: 16 }}>
+          <button onClick={() => setPhase("select")} style={{ ...btnStyle("var(--mm-primary)"), width: "100%", padding: 16, fontSize: 16 }}>
             Continuer la bataille ⚔️
           </button>
         </div>

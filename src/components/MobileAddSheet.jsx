@@ -4,14 +4,14 @@
 import { useEffect } from "react";
 
 const TILES = [
-  { id: "single",     icon: "✦", label: "Fiche unique",   color: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
-  { id: "chat",       icon: "💬", label: "Copilot IA",    color: "linear-gradient(135deg,#9333ea,#a78bfa)" },
-  { id: "batch",      icon: "🚀", label: "Batch IA",      color: "linear-gradient(135deg,#a855f7,#c084fc)" },
+  { id: "single",     icon: "✦", label: "Fiche unique",   color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" },
+  { id: "chat",       icon: "💬", label: "Copilot IA",    color: "linear-gradient(135deg,#9333ea,var(--mm-primary-glow))" },
+  { id: "batch",      icon: "🚀", label: "Batch IA",      color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-glow))" },
   { id: "text",       icon: "📄", label: "Depuis texte",  color: "linear-gradient(135deg,#f59e0b,#fbbf24)" },
   { id: "file",       icon: "📎", label: "Vision IA",     color: "linear-gradient(135deg,#10b981,#34d399)" },
   { id: "multimedia", icon: "🎨", label: "Multimédia",    color: "linear-gradient(135deg,#ef4444,#f87171)" },
-  { id: "templates",  icon: "📋", label: "Templates",     color: "linear-gradient(135deg,#8b5cf6,#a78bfa)" },
-  { id: "quickadd",   icon: "⚡", label: "Quick Add",     color: "linear-gradient(135deg,#ec4899,#f472b6)" },
+  { id: "templates",  icon: "📋", label: "Templates",     color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-glow))" },
+  { id: "quickadd",   icon: "⚡", label: "Quick Add",     color: "linear-gradient(135deg,#9c4a55,#9c4a55)" },
 ];
 
 export default function MobileAddSheet({
@@ -58,7 +58,7 @@ export default function MobileAddSheet({
       >
         <div style={{
           width: 44, height: 5,
-          background: isDarkMode ? "rgba(255,255,255,0.18)" : "rgba(139, 92, 246,0.18)",
+          background: isDarkMode ? "rgba(255,255,255,0.18)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)",
           borderRadius: 3, margin: "4px auto 18px",
         }} />
 

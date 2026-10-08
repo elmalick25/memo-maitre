@@ -1,3 +1,4 @@
+import { resolveKey } from "./security/apiKeys.js";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
 // ── VARIABLES GLOBALES (Instance unique) ────────────────────────────────────
@@ -5,7 +6,7 @@ let currentNovaAudio = null;
 
 const HF_TTS_URL = "https://api-inference.huggingface.co/models/hexgrad/Kokoro-82M";
 const HF_STT_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3";
-const HF_TOKEN = import.meta.env.VITE_HF_TOKEN || "";
+const HF_TOKEN = () => resolveKey("VITE_HF_TOKEN");
 
 // ── 1. PREPROCESS TEXT FOR KOKORO ───────────────────────────────────────────
 // eslint-disable-next-line react-refresh/only-export-components
@@ -46,7 +47,7 @@ export async function speakText(text) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${HF_TOKEN}`
+        "Authorization": `Bearer ${HF_TOKEN()}`
       },
       body: JSON.stringify({
         inputs: processedText,
@@ -107,7 +108,7 @@ export async function transcribeAudio(audioBlob, onStatusChange) {
       const response = await fetch(HF_STT_URL, {
         method: "POST",
         headers: { 
-          "Authorization": `Bearer ${HF_TOKEN}` 
+          "Authorization": `Bearer ${HF_TOKEN()}` 
         },
         body: audioBlob
       });
@@ -368,8 +369,8 @@ export function useNovaVoice({ customTranscriber, onRecordingStart } = {}) {
   }, [vad]);
 
   const warmUp = useCallback(() => {
-    fetch(HF_STT_URL, { method: "POST", headers: { "Authorization": `Bearer ${HF_TOKEN}` }, body: new Blob(["dummy"], { type: 'audio/webm' }) }).catch(() => { });
-    fetch(HF_TTS_URL, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${HF_TOKEN}` }, body: JSON.stringify({ inputs: "Hello", parameters: { speaker_embeddings: "Matthijs/cmu-arctic-xvectors", speaker_id: 6799 } }) }).catch(() => { });
+    fetch(HF_STT_URL, { method: "POST", headers: { "Authorization": `Bearer ${HF_TOKEN()}` }, body: new Blob(["dummy"], { type: 'audio/webm' }) }).catch(() => { });
+    fetch(HF_TTS_URL, { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${HF_TOKEN()}` }, body: JSON.stringify({ inputs: "Hello", parameters: { speaker_embeddings: "Matthijs/cmu-arctic-xvectors", speaker_id: 6799 } }) }).catch(() => { });
   }, []);
 
   const isNovaActive = sessionStorage.getItem("nova_active") === "true";
@@ -423,7 +424,7 @@ export function NovaVoiceButton({ onTranscript, disabled = false, isDarkMode, cu
         background: vad.userSpeaking
           ? "linear-gradient(135deg, #EF4444, #B91C1C)"
           : isListening
-            ? "linear-gradient(135deg, #8B5CF6, #7C3AED)"
+            ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
             : (isDarkMode ? "#1F1F1F" : "#E5E7EB"),
         color: (vad.userSpeaking || isListening) ? "white" : (isDarkMode ? "var(--mm-border)" : "#1E293B"),
         fontWeight: 800,
@@ -431,7 +432,7 @@ export function NovaVoiceButton({ onTranscript, disabled = false, isDarkMode, cu
         transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
         boxShadow: vad.userSpeaking
           ? "0 4px 15px rgba(239, 68, 68, 0.4)"
-          : isListening ? "0 4px 15px rgba(139, 92, 246, 0.4)" : "none",
+          : isListening ? "0 4px 15px color-mix(in srgb, var(--mm-primary) 40.0%, transparent)" : "none",
         opacity: (disabled || (isLoading && !vad.userSpeaking)) ? 0.7 : 1
       }}
     >
@@ -471,12 +472,12 @@ export function NovaBadge({ isDarkMode }) {
       display: "flex", alignItems: "center", gap: 8,
       padding: "6px 12px",
       borderRadius: 20,
-      background: isDarkMode ? "rgba(139, 92, 246, 0.15)" : "rgba(139, 92, 246, 0.1)",
-      border: `1px solid ${isDarkMode ? "rgba(139, 92, 246, 0.3)" : "rgba(139, 92, 246, 0.2)"}`,
-      color: isDarkMode ? "#C4B5FD" : "#8B5CF6",
+      background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 15.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
+      border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)"}`,
+      color: isDarkMode ? "#C4B5FD" : "var(--mm-primary)",
       fontSize: 12,
       fontWeight: 600,
-      boxShadow: "0 2px 8px rgba(139, 92, 246, 0.1)",
+      boxShadow: "0 2px 8px color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
       transition: "all 0.3s"
     }}>
       <span style={{ animation: "pulseNova 2s infinite" }}>🌙</span>
@@ -490,11 +491,11 @@ export function NovaBadge({ isDarkMode }) {
         style={{
           background: "none", border: "none", cursor: "pointer",
           padding: "2px 6px", borderRadius: 4,
-          fontSize: 11, color: isDarkMode ? "#C084FC" : "#7C3AED",
+          fontSize: 11, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
           display: "flex", alignItems: "center", gap: 4,
           marginLeft: 4, transition: "background 0.2s"
         }}
-        onMouseOver={e => e.currentTarget.style.background = isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139,92,246,0.05)"}
+        onMouseOver={e => e.currentTarget.style.background = isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 5.0%, transparent)"}
         onMouseOut={e => e.currentTarget.style.background = "none"}
       >
         🔄
