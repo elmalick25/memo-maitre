@@ -1,6 +1,6 @@
 # 🧠 MemoMaster (memo-app)
 
-> Application web PWA *offline-first* d'apprentissage intelligent, de répétition espacée (SRS), de pratique vocale de l'anglais et de suivi de certifications techniques.
+> Application web PWA *offline-first* d'apprentissage intelligent, de répétition espacée (SRS), de pratique vocale de l'anglais, de veille technologique et de suivi de certifications techniques.
 
 ---
 
