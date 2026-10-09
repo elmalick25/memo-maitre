@@ -371,9 +371,87 @@ function selectByPriority(cards, target, todayISO) {
 }
 
 /**
+ * Sélection multi-catégories équitable et priorisée :
+ * Garantit que CHAQUE module ayant des fiches dues est représenté dans la session du jour,
+ * puis répartit les places restantes de façon équitable (round-robin) tout en respectant
+ * la priorité mnésique stricte (leeches > retard > dues > consolidation) au sein de chaque module.
+ */
+export function selectMultiCategoryByPriority(cards, target, todayISO) {
+  if (!Array.isArray(cards) || cards.length === 0 || target <= 0) return [];
+  if (cards.length <= target) return [...cards];
+
+  const byCat = new Map();
+  for (const c of cards) {
+    const k = c.category || "Divers";
+    if (!byCat.has(k)) byCat.set(k, []);
+    byCat.get(k).push(c);
+  }
+
+  if (byCat.size <= 1) {
+    return selectByPriority(cards, target, todayISO);
+  }
+
+  // Trier les fiches de chaque catégorie selon la priorité mnésique
+  const orderedByCat = new Map();
+  for (const [cat, list] of byCat.entries()) {
+    orderedByCat.set(cat, selectByPriority(list, list.length, todayISO));
+  }
+
+  // Ordonner les catégories par priorité d'urgence (leech ou retard le plus ancien)
+  const categories = [...byCat.keys()].sort((catA, catB) => {
+    const topA = orderedByCat.get(catA)[0];
+    const topB = orderedByCat.get(catB)[0];
+    return String(topA?.nextReview || "").localeCompare(String(topB?.nextReview || ""));
+  });
+
+  const result = [];
+  const pickedIds = new Set();
+  const cursors = new Map();
+  for (const cat of categories) {
+    cursors.set(cat, 0);
+  }
+
+  // Étape 1 : Inclusion garantie — au moins 1 fiche pour chaque module ayant des fiches dues
+  for (const cat of categories) {
+    if (result.length >= target) break;
+    const list = orderedByCat.get(cat);
+    let cur = cursors.get(cat);
+    if (cur < list.length) {
+      const card = list[cur];
+      cursors.set(cat, cur + 1);
+      pickedIds.add(card.id);
+      result.push(card);
+    }
+  }
+
+  // Étape 2 : Distribution équitable en round-robin jusqu'à saturation du quota cible
+  let hasMore = true;
+  while (result.length < target && hasMore) {
+    hasMore = false;
+    for (const cat of categories) {
+      if (result.length >= target) break;
+      const list = orderedByCat.get(cat);
+      let cur = cursors.get(cat);
+      if (cur < list.length) {
+        const card = list[cur];
+        cursors.set(cat, cur + 1);
+        if (!pickedIds.has(card.id)) {
+          pickedIds.add(card.id);
+          result.push(card);
+        }
+        hasMore = true;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
  * Compose la session quotidienne par défaut à partir des fiches dues.
  * Priorité : leeches sévères > retard le plus ancien > dues normales >
  * consolidation. L'anglais intensif est borné par son sous-quota.
+ * Tous les modules ayant des fiches dues sont inclus et équitablement répartis.
  * Sortie interleavée + anti-interférence.
  *
  * Fonction PURE : ne modifie ni les fiches ni aucun state.
@@ -404,13 +482,13 @@ export function composeDailySession(dueCards, opts = {}) {
   const englishPicked = selectByPriority(english, engBudget, todayISO);
   const pickedIds = new Set(englishPicked.map((c) => c.id));
 
-  const othersPicked = selectByPriority(others, target - englishPicked.length, todayISO);
+  const othersPicked = selectMultiCategoryByPriority(others, target - englishPicked.length, todayISO);
   let merged = [...englishPicked, ...othersPicked];
 
   // Débordement autorisé : places que les autres modules n'ont pas réclamées.
   if (merged.length < target) {
     const leftoverEnglish = english.filter((c) => !pickedIds.has(c.id));
-    merged = merged.concat(selectByPriority(leftoverEnglish, target - merged.length, todayISO));
+    merged = merged.concat(selectMultiCategoryByPriority(leftoverEnglish, target - merged.length, todayISO));
   }
   if (merged.length < target) {
     const inSession = new Set(merged.map((c) => c.id));

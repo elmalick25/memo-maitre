@@ -51,9 +51,18 @@ export default function GodTierContent({ text, theme, isDarkMode: explicitIsDark
       isDarkMode = lum < 0.5;
     }
   }
+  // Activation intelligente de l'audio : activé si showAudio explicite OU si le contenu comporte des phrases / sections d'anglais
+  const isEnglishContent = React.useMemo(() => {
+    if (showAudio) return true;
+    if (!safeText || typeof safeText !== "string") return false;
+    return /mini[- ]dialogue|dialogue|coach\s+nova|découvert avec|le réflexe natif|la règle réflexe|vrai sens|🇬🇧|\benglish\b/i.test(safeText);
+  }, [showAudio, safeText]);
+
+  const effectiveShowAudio = showAudio || isEnglishContent;
+
   return (
     <div style={{ width: "100%", color: theme?.text || "inherit" }}>
-      <RichText content={safeText} isDarkMode={isDarkMode} style={{ color: theme?.text }} showAudio={showAudio} />
+      <RichText content={safeText} isDarkMode={isDarkMode} style={{ color: theme?.text }} showAudio={effectiveShowAudio} />
     </div>
   );
 }

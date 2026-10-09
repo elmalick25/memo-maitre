@@ -1021,7 +1021,7 @@ export default function MemoMaster() {
   const reviewModeRef = useRef("standard");
   /** Marque une fiche comme traitée aujourd'hui (appelé à chaque notation). */
   const consumeDailyPlanCard = useCallback((cardId) => {
-    if (reviewModeRef.current === "module") return;
+    if (reviewModeRef.current === "module" || reviewModeRef.current === "free") return;
     setDailyPlanState((prev) => {
       const next = markCardDone(prev, cardId, today());
       try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
@@ -1713,23 +1713,29 @@ export default function MemoMaster() {
     const staminaCost = q === 0 ? 5 : q === 1 ? 3 : 1; // More cost for wrong answers
     setStamina(s => Math.max(0, s - staminaCost));
 
-    // FIX D1 — on passe lastReviewDate dans fsrs() pour que elapsedDays soit
-    // calculé depuis la date de révision réelle (pas depuis nextReview).
-    // elapsedDays: null → fsrs.js sélectionne le meilleur chemin de calcul.
-    const responseMs = cardShownAtRef.current ? Date.now() - cardShownAtRef.current : undefined;
-    const updated = fsrs({ ...exp, elapsedDays: null }, q, { responseMs });
-    // newLevel : q=0 → retour à 0 | q=1 (Hard) → reste au niveau actuel | q=5 → +1
-    const newLevel = q === 0 ? 0 : q === 1 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
-    // FIX D5 — reviewHistoryEntry retourné par fsrs() est enrichi de newLevel
-    // et mergé dans reviewHistory. Cela alimente analyzeLeech() / pickLeeches()
-    // correctement (le champ q est requis par analyzeLeech).
-    const histEntry = { ...updated.reviewHistoryEntry, newLevel };
-    const _newLapse = nextLapseCount(exp, q);
-    setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry], lapseCount: _newLapse } : e));
+    const isFreeTraining = reviewMode === "free";
 
-    if (newLevel >= 7 && exp.level < 7) {
-      fireConfetti();
-      showToast("🎉 Fiche maîtrisée ! Confetti !", "success");
+    let updated = null;
+    let newLevel = exp.level;
+    if (!isFreeTraining) {
+      // FIX D1 — on passe lastReviewDate dans fsrs() pour que elapsedDays soit
+      // calculé depuis la date de révision réelle (pas depuis nextReview).
+      // elapsedDays: null → fsrs.js sélectionne le meilleur chemin de calcul.
+      const responseMs = cardShownAtRef.current ? Date.now() - cardShownAtRef.current : undefined;
+      updated = fsrs({ ...exp, elapsedDays: null }, q, { responseMs });
+      // newLevel : q=0 → retour à 0 | q=1 (Hard) → reste au niveau actuel | q=5 → +1
+      newLevel = q === 0 ? 0 : q === 1 ? Math.max(exp.level, 1) : Math.min(7, exp.level + 1);
+      // FIX D5 — reviewHistoryEntry retourné par fsrs() est enrichi de newLevel
+      // et mergé dans reviewHistory. Cela alimente analyzeLeech() / pickLeeches()
+      // correctement (le champ q est requis par analyzeLeech).
+      const histEntry = { ...updated.reviewHistoryEntry, newLevel };
+      const _newLapse = nextLapseCount(exp, q);
+      setExpressions(prev => prev.map(e => e.id === exp.id ? { ...e, ...updated, level: newLevel, reviewHistory: [...(e.reviewHistory || []), histEntry], lapseCount: _newLapse } : e));
+
+      if (newLevel >= 7 && exp.level < 7) {
+        fireConfetti();
+        showToast("🎉 Fiche maîtrisée ! Confetti !", "success");
+      }
     }
 
     // ── Auto-détection du style d'apprentissage (après 10 révisions) ──
@@ -1753,7 +1759,7 @@ export default function MemoMaster() {
     });
     setTimeout(() => setXpBurst(null), 2500);
     // Maîtrise réellement atteinte (critère unifié) → XP dédiée.
-    if (!isCardMastered(exp) && isCardMastered({ ...exp, ...updated, level: newLevel })) {
+    if (!isFreeTraining && updated && !isCardMastered(exp) && isCardMastered({ ...exp, ...updated, level: newLevel })) {
       awardSource("CARD_MASTERED", { streak: statsRef.current?.streak || 0, silent: true });
     }
 
@@ -1770,7 +1776,7 @@ export default function MemoMaster() {
     updateStreakAfterSession(1);
 
     if (reviewIndex + 1 >= reviewQueue.length) {
-      if (reviewMode === "module" && reviewCategory) {
+      if ((reviewMode === "module" || reviewMode === "free") && reviewCategory) {
         clearModuleSession(reviewCategory);
       }
       setExpressions(prevExps => {
@@ -1829,7 +1835,7 @@ export default function MemoMaster() {
     } else {
       const nextIdx = reviewIndex + 1;
       setReviewIndex(nextIdx);
-      if (reviewMode === "module" && reviewCategory) {
+      if ((reviewMode === "module" || reviewMode === "free") && reviewCategory) {
         saveModuleSession(reviewCategory, reviewQueue, nextIdx);
       }
       setRevealed(false);
@@ -1921,6 +1927,12 @@ export default function MemoMaster() {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+
+      if (!fbStorage) {
+        showToast("Stockage d'images en ligne indisponible en mode local.", "warning");
+        setUploadLoading(false);
+        return;
+      }
 
       const fileName = `${Date.now()}_${file.name.replace(/\.[^/.]+$/, ".jpg")}`;
       const storageRef = ref(fbStorage, `users/${getFbUser()}/images/${fileName}`);
@@ -3004,6 +3016,7 @@ Données utilisateur :
           {(view === "dashboard" || view === "home") && (
             <DashboardView
               expressions={expressions}
+              newCards={expressions.filter(isNewCard)}
               categories={categories}
               sessionRemainingCount={sessionRemainingCount}
               dailySessionPreview={dailySessionPreview}
@@ -3131,6 +3144,8 @@ Données utilisateur :
               handleOptimizeOneCard={handleOptimizeOneCard}
               reviewMode={reviewMode}
               reviewCategory={reviewCategory}
+              categories={categories}
+              expressions={expressions}
             />
           )}
 

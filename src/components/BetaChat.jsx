@@ -164,7 +164,7 @@ export default function BetaChat() {
 
   // ── Pour le propriétaire : écoute temps réel de tous les salons de testeurs ──
   useEffect(() => {
-    if (!open || !user || !isOwner) {
+    if (!open || !user || !isOwner || !db) {
       setThreads([]);
       return undefined;
     }
@@ -185,7 +185,7 @@ export default function BetaChat() {
 
   // ── Abonnement aux messages du salon actif (Général ou Privé) ─────────────
   useEffect(() => {
-    if (!open || !user || !activeChatUid) {
+    if (!open || !user || !activeChatUid || !db) {
       setMessages([]);
       return undefined;
     }
@@ -277,7 +277,7 @@ export default function BetaChat() {
 
   const send = async () => {
     const value = text.trim();
-    if (!value || !user || sending || !activeChatUid) return;
+    if (!value || !user || sending || !activeChatUid || !db) return;
     isScrolledUpRef.current = false;
     setHasNewBelow(false);
     requestAnimationFrame(() => scrollToBottom(true));
@@ -343,7 +343,7 @@ export default function BetaChat() {
   const [clearing, setClearing] = useState(false);
 
   const clearCurrentChat = async () => {
-    if (!activeChatUid || !user || clearing) return;
+    if (!activeChatUid || !user || clearing || !db) return;
     const isGroup = activeChatUid === "group";
 
     // Un testeur ne peut pas effacer le Salon Général (réservé au créateur)

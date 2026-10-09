@@ -130,7 +130,9 @@ const MODELS = {
   // ─── Vision (Gemini direct dans Lab/geminiClient ; fallbacks ici) ────────
   vision: [
     { p: "mistral", m: "pixtral-12b-2409",                              max: 4096, vision: true },
-    { p: "or",      m: "meta-llama/llama-3.3-70b-instruct",             max: 4096, vision: false },
+    { p: "or",      m: "google/gemini-2.0-flash-exp:free",              max: 4096, vision: true },
+    { p: "or",      m: "meta-llama/llama-3.2-11b-vision-instruct:free", max: 4096, vision: true },
+    { p: "or",      m: "qwen/qwen-2.5-vl-72b-instruct:free",            max: 4096, vision: true },
   ],
   // ─── Créativité / mnémo absurde (FR/EN) ──────────────────────────────────
   creative: [

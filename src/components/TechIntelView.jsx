@@ -14,11 +14,12 @@ import CustomFeedManagerModal from "./CustomFeedManagerModal";
 import { colorMix } from "../lib/colorMix";
 import { translateToFrench } from "../lib/frenchNews";
 import { THEME_FILTERS, getArticleTheme } from "../lib/techIntelThemes";
+import { normalizeNewsPreview, isNewsSubheading, stripMarkdownAndAsterisks } from "../lib/newsTextPresentation.js";
 import { getNetworkStatus, onNetworkChange, shouldReduceData } from "../lib/networkStatus";
 
 // Garde au plus N entrées (les plus récentes) pour ne jamais saturer le stockage local
 // — un quota plein faisait échouer silencieusement la sauvegarde hors-ligne.
-const OFFLINE_MAP_MAX = 80;
+const OFFLINE_MAP_MAX = 250;
 function capMap(obj, max = OFFLINE_MAP_MAX) {
   const keys = Object.keys(obj);
   if (keys.length <= max) return obj;
@@ -114,23 +115,6 @@ async function fetchViaProxy(url) {
       parse: async (r) => r.text(),
       timeoutMs: 12000
     }] : []),
-    // 2. AllOrigins JSON (mode encapsulé, fiable pour les flux RSS distants)
-    {
-      name: "AllOriginsJson",
-      build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-      parse: async (r) => {
-        const j = await r.json();
-        return j?.contents || "";
-      },
-      timeoutMs: 8000
-    },
-    // 3. AllOrigins Raw
-    {
-      name: "AllOriginsRaw",
-      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text(),
-      timeoutMs: 8000
-    },
     // 4. rss2json en dernier recours
     {
       name: "rss2json",
@@ -153,6 +137,23 @@ async function fetchViaProxy(url) {
       },
       timeoutMs: 6000
     },
+    // 2. AllOrigins JSON (mode encapsulé, fiable pour les flux RSS distants)
+    {
+      name: "AllOriginsJson",
+      build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
+      parse: async (r) => {
+        const j = await r.json();
+        return j?.contents || "";
+      },
+      timeoutMs: 8000
+    },
+    // 3. AllOrigins Raw
+    {
+      name: "AllOriginsRaw",
+      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      parse: async (r) => r.text(),
+      timeoutMs: 8000
+    },
     // 5. CodeTabs (ultime fallback)
     {
       name: "CodeTabs",
@@ -162,37 +163,36 @@ async function fetchViaProxy(url) {
     }
   ];
 
-  // Exécution séquentielle avec coupe-circuit adaptatif et garantie zéro blocage total
+  // Course PARALLÈLE : le premier proxy valide gagne, les autres sont annulés.
+  // (L'ancien mode séquentiel restait bloqué ~16 s sur AllOrigins, HS/CORS,
+  //  et dépassait le budget de 9,5 s par source → "Feed timeout".)
   const executeSequential = async () => {
-    let lastErr = null;
     const usable = proxies.filter(p => !isProxyCoolingDown(p.name));
     const pool = usable.length > 0 ? usable : proxies;
-    for (const p of pool.slice(0, 4)) {
-      try {
-        const res = await fetchWithTimeout(
-          p.build(url),
-          { headers: { Accept: "text/xml, application/xml, application/json, */*" } },
-          p.timeoutMs || 4500
-        );
-        if (!res.ok) {
-          if (res.status === 429 || res.status === 503) {
-            markProxyCooldown(p.name, 25_000); // 25s temporaires sur rate-limit
-          }
-          continue;
-        }
-        const text = await p.parse(res);
-        if (text && text.length > 20 && /<(rss|feed|channel|item|entry)\b/i.test(text)) {
-          return text;
-        }
-      } catch (err) {
-        lastErr = err;
-        if (/429|quota|rate/i.test(err?.message || "")) {
-          markProxyCooldown(p.name, 25_000);
-        }
+    const raceCtrl = new AbortController();
+    const attempts = pool.map(async (p) => {
+      const res = await fetchWithTimeout(
+        p.build(url),
+        { headers: { Accept: "text/xml, application/xml, application/json, */*" }, signal: raceCtrl.signal },
+        p.timeoutMs || 4500
+      );
+      if (!res.ok) {
+        if (res.status === 429 || res.status === 503) markProxyCooldown(p.name, 25_000);
+        throw new Error(`${p.name} HTTP ${res.status}`);
       }
+      const text = await p.parse(res);
+      if (text && text.length > 20 && /<(rss|feed|channel|item|entry)\b/i.test(text)) return text;
+      throw new Error(`${p.name} invalid payload`);
+    });
+    try {
+      const text = await Promise.any(attempts);
+      raceCtrl.abort();
+      return text;
+    } catch (agg) {
+      _proxyMemo.delete(url);
+      const msg = agg?.errors?.map(e => e?.message).filter(Boolean).join(" | ") || "timeout";
+      throw new Error(`All proxies failed: ${msg}`);
     }
-    _proxyMemo.delete(url);
-    throw new Error(`All proxies failed: ${lastErr?.message || 'timeout'}`);
   };
 
   const promise = executeSequential();
@@ -597,10 +597,11 @@ function stripRepeatedTitle(text, title) {
 function isTeaserSnippet(text, item = {}) {
   if (!text || typeof text !== "string") return true;
   const trimmed = text.trim();
-  if (trimmed.length < 500) return true;
-  if (trimmed.endsWith("...") || trimmed.endsWith("…") || trimmed.endsWith("[Lire la suite]") || trimmed.endsWith("[+]")) return true;
-  const rawDesc = cleanEditorialText(item?.description || item?.descriptionFr || "").trim();
-  if (rawDesc && trimmed.length <= rawDesc.length + 50) return true;
+  if (trimmed.length < 80) return true;
+  // Détecte uniquement les vraies coupures avec points de suspension ou bouton de renvoi externe
+  if (/(\.\.\.|…|\[\+\]|\[lire la suite\]|lire la suite sur|en savoir plus)$/i.test(trimmed)) {
+    return true;
+  }
   return false;
 }
 
@@ -618,6 +619,8 @@ function cleanEditorialText(raw) {
   s = s.replace(/https?:\/\/[^\s)]+/g, "");
   // Supprimer les césures parasites dans les mots (ex: "lan- gage" ou "ba- layage")
   s = s.replace(/(\b\w{2,})-\s+(\w{2,}\b)/g, "$1$2");
+  // Élimination absolue des étoiles et artefacts markdown résiduels
+  s = stripMarkdownAndAsterisks(s);
   return s.replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
 }
 
@@ -1008,7 +1011,7 @@ async function fetchRSS(feed) {
 
   // 2. Repli universel Jina Reader (contourne 100% des erreurs CORS / 500 des proxys XML)
   try {
-    const res = await fetchWithTimeout(`https://r.jina.ai/${feed.url}`, { headers: { Accept: "text/plain" } }, 2500);
+    const res = await fetchWithTimeout(`https://r.jina.ai/${feed.url}`, { headers: { Accept: "text/plain" } }, 6000);
     if (res.ok) {
       const md = await res.text();
       const items = parseMarkdownFeed(md, feed);
@@ -1352,12 +1355,15 @@ function needsFrenchTranslation(item) {
 
 function visibleFrenchTitle(item) {
   if (!item) return "";
-  if (item.lang === "fr") return item.title || item.titleFr || "";
-  if (item.titleFr && isCleanTranslation(item.titleFr) && item.title && item.titleFr.trim() !== item.title.trim()) {
-    return item.titleFr;
+  let raw = "";
+  if (item.lang === "fr") raw = item.title || item.titleFr || "";
+  else if (item.titleFr && isCleanTranslation(item.titleFr) && item.title && item.titleFr.trim() !== item.title.trim()) {
+    raw = item.titleFr;
+  } else {
+    // En cours de traduction : afficher le titre original plutôt qu'un texte générique bloqué
+    raw = item.title || "";
   }
-  // En cours de traduction : afficher le titre original plutôt qu'un texte générique bloqué
-  return item.title || "";
+  return stripMarkdownAndAsterisks(raw);
 }
 
 function visibleFrenchDescription(item) {
@@ -1374,7 +1380,8 @@ function visibleFrenchDescription(item) {
   } else {
     res = desc;
   }
-  return stripRepeatedTitle(res, title);
+  const clean = stripRepeatedTitle(res, title);
+  return stripMarkdownAndAsterisks(clean);
 }
 
 // La traduction est désormais entièrement gérée par le moteur dédié
@@ -1795,12 +1802,47 @@ export default function TechIntelView({
     const all = [];
 
     // Pool haute performance à 8 sources en parallèle avec coupe-circuit adaptatif
-    const concurrency = 8;
+    const concurrency = 16;
+    // ⚡ Affichage PROGRESSIF : chaque source qui répond apparaît immédiatement
+    let flushTimer = null;
+    let firstFlushDone = false;
+    const partialFlush = () => {
+      flushTimer = null;
+      // 🛑 STABILITÉ ABSOLUE DU FLUX :
+      // Si la liste contient déjà des actus (actualisation/rechargement par l'utilisateur),
+      // ne JAMAIS injecter des actus à mi-parcours car cela fait bouger et sauter la liste
+      // sous les yeux du lecteur. Le lot complet et stabilisé est appliqué en une seule fois à la fin.
+      if ((items && items.length > 0) || (lastRefreshRef.current > 0)) return;
+
+      const cutoffP = Date.now() - NEWS_MAX_AGE_MS;
+      const okThemes = new Set(["ai", "cyber", "cloud", "dev", "world"]);
+      const seen = new Set();
+      const batch = enrichWithVault(all.filter(i => {
+        const k = (i.url || i.id || "").replace(/[?#].*$/, "").toLowerCase().trim();
+        if (!k || seen.has(k)) return false;
+        seen.add(k);
+        if ((i.ts || 0) < cutoffP || deletedIdsRef.current.has(i.id)) return false;
+        const th = getArticleTheme(i);
+        return th && okThemes.has(th.id);
+      }));
+      if (!batch.length) return;
+      setItems(prev => {
+        const m = new Map();
+        (prev || []).forEach(it => { if (it?.id) m.set(it.id, it); });
+        batch.forEach(it => m.set(it.id, { ...(m.get(it.id) || {}), ...it }));
+        return Array.from(m.values()).sort((a, b) => (b.ts - a.ts) || (b.score - a.score));
+      });
+      if (!firstFlushDone) { firstFlushDone = true; setLoading(false); }
+    };
+    const schedulePartialFlush = () => {
+      if (flushTimer) return;
+      flushTimer = setTimeout(partialFlush, firstFlushDone ? 250 : 0);
+    };
     let cursor = 0;
     const runTaskWithTimeout = async (task) => {
       let tId;
       const timeoutP = new Promise((_, reject) => {
-        tId = setTimeout(() => reject(new Error('Feed timeout')), 9500);
+        tId = setTimeout(() => reject(new Error('Feed timeout')), 14000);
       });
       try {
         return await Promise.race([task.run(), timeoutP]);
@@ -1814,7 +1856,7 @@ export default function TechIntelView({
         if (!task) break;
         try {
           const res = await runTaskWithTimeout(task);
-          if (Array.isArray(res) && res.length) { all.push(...res); }
+          if (Array.isArray(res) && res.length) { all.push(...res); schedulePartialFlush(); }
         } catch (e) {
           failed.push(task.name);
           console.debug(`RSS [${task.name}]:`, e?.message);
@@ -1825,6 +1867,7 @@ export default function TechIntelView({
       }
     });
     await Promise.all(workers);
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
 
     // ✅ Phase 1.1 — Déduplication par URL canonique (évite les doublons cross-sources)
     const seenUrls = new Set();
@@ -1905,7 +1948,7 @@ export default function TechIntelView({
         let tId;
         await Promise.race([
           translateFast(),
-          new Promise((resolve) => { tId = setTimeout(resolve, 2000); })
+          new Promise((resolve) => { tId = setTimeout(resolve, 400); })
         ]).finally(() => clearTimeout(tId));
         if (updatedVault) saveTranslationVault(vault);
       } catch (err) {
@@ -1934,9 +1977,22 @@ export default function TechIntelView({
       // Fallback sessionStorage (survie à la session)
       try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch {}
     }
+    // Ingestion immédiate des corps complets déjà embarqués dans le flux RSS
+    const embeddedBodies = {};
+    (combined || []).forEach(it => {
+      if (it?.id && it.fullContent && it.fullContent.length > 150) {
+        embeddedBodies[it.id] = it.fullContent;
+      }
+    });
+    if (Object.keys(embeddedBodies).length > 0) {
+      setFullArticleMap(prev => ({ ...embeddedBodies, ...prev }));
+      setBodyFrMap(prev => ({ ...embeddedBodies, ...prev }));
+      saveArticleBodies(embeddedBodies).catch(() => {});
+    }
+
     setErrors(failed);
-    // 📥 Préparation hors-ligne : télécharge en arrière-plan le texte complet des premières actus
-    prefetchOfflineRef.current?.(fresh);
+    // 📥 Préparation hors-ligne intégrale : extrait et traduit immédiatement tous les corps d'articles
+    prefetchOfflineRef.current?.(combined);
     setLoading(false);
   }, [callClaude, customFeeds, enabledSources, translateItems, showToast]);
 
@@ -2358,6 +2414,10 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       let source = fullArticleMapRef.current[item.id] || "";
       if (isTeaserSnippet(source, item)) source = "";
       if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      if (!source && item.fullContent && !isTeaserSnippet(item.fullContent, item)) {
+        source = item.fullContent;
+        saveFullArticle(item.id, source);
+      }
       if (!source && item.url) {
         const raw = await extractFullArticleText(item).catch(() => "");
         const paras = extractUniversalArticleParagraphs(raw || "", item);
@@ -2375,13 +2435,13 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             { maxTokens: 1200 }
           );
           const aiText = typeof aiContext === 'string' ? aiContext : (aiContext?.text || '');
-          if (aiText && aiText.trim().length > 300) {
+          if (aiText && aiText.trim().length > 200) {
             source = aiText.trim();
             saveFullArticle(item.id, source);
           }
         } catch {}
       }
-      if (!source) source = cleanEditorialText(item.description || item.descriptionFr || "");
+      if (!source) source = cleanEditorialText(item.descriptionFr || item.description || "");
       if (!source) return;
       const frenchBody = item.lang === "fr" ? source : await translateToFrench(source, { strict: true });
       if (!frenchBody) return;
@@ -2413,7 +2473,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   }, [items, bodyFrMap, fullArticleMap]);
 
   // 📥 Préparation silencieuse hors-ligne : extrait en tâche de fond le texte complet des
-  // 35 articles les plus récents et pertinents avec un pool de 3 workers concurrents.
+  // 80 articles les plus récents et pertinents avec un pool haute performance à 6 workers concurrents.
   const offlinePrefetchRunning = useRef(false);
   useEffect(() => {
     prefetchOfflineRef.current = async (list) => {
@@ -2424,17 +2484,16 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         const targets = list
           .filter(i => i?.id && i.kind !== "github" && i.kind !== "youtube" && isTeaserSnippet(bodyFrMapRef.current[i.id], i) && isTeaserSnippet(fullArticleMapRef.current[i.id], i))
           .sort((a, b) => (b.score || 0) - (a.score || 0))
-          .slice(0, 35);
+          .slice(0, 80);
         if (!targets.length) return;
         let cursor = 0;
-        const concurrency = 3;
+        const concurrency = 6;
         const workers = Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
           while (cursor < targets.length) {
             const it = targets[cursor++];
             if (!it) break;
             if (typeof navigator !== "undefined" && navigator.onLine === false) break;
             await ensureFrenchArticle(it).catch(() => {});
-            await new Promise(r => setTimeout(r, 120));
           }
         });
         await Promise.all(workers);
@@ -2866,13 +2925,13 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             margin-bottom:10px!important;
           }
           .tiv-article-summary-box{
-            font-size:13.5px!important;
-            line-height:1.66!important;
+            font-size:14px!important;
+            line-height:1.62!important;
             margin-bottom:12px!important;
             padding-left:12px!important;
           }
           .tiv-continuer-btn{
-            font-size:13px!important;
+            font-size:13.5px!important;
           }
           .tiv-card-actions-bar{
             gap:8px!important;
@@ -3660,41 +3719,30 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     position: "relative",
                     width: "100%",
                     boxSizing: "border-box",
-                    borderRadius: isFirst ? 14 : 11,
-                    padding: isFirst ? "13px 15px 11px" : "11px 13px 9px",
+                    borderRadius: isFirst ? 22 : 16,
+                    padding: isFirst ? "18px 20px 14px" : "14px 16px 12px",
                     cursor: "default",
-                    transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
                     WebkitTapHighlightColor: "transparent",
                     background: isFirst
-                      ? (isDark 
-                          ? "linear-gradient(165deg, #18133a 0%, #110e28 100%)" 
-                          : "linear-gradient(135deg, #FFFFFF 0%, rgba(248, 250, 252, 0.98) 100%)")
+                      ? (isDark
+                          ? "linear-gradient(165deg, #1B1440 0%, #120E2C 100%)"
+                          : "linear-gradient(160deg, #FFFFFF 0%, #F8FAFF 100%)")
                       : (isDark
-                          ? "rgba(23, 18, 51, 0.85)"
-                          : "rgba(255, 255, 255, 0.85)"),
+                          ? "rgba(27, 21, 58, 0.75)"
+                          : "#FFFFFF"),
                     backdropFilter: "blur(16px)",
                     WebkitBackdropFilter: "blur(16px)",
-                    border: isFirst
-                      ? (isDark ? "1.5px solid rgba(139, 92, 246, 0.35)" : "1.5px solid rgba(59, 130, 246, 0.35)")
-                      : (isDark ? "1px solid rgba(178, 150, 255, 0.18)" : "1px solid rgba(0, 0, 0, 0.07)"),
-                    boxShadow: isFirst
-                      ? (isDark 
-                          ? "0 6px 24px -4px rgba(7, 6, 15, 0.7), 0 2px 10px rgba(139, 92, 246, 0.15), inset 0 1px 0 rgba(178, 150, 255, 0.2)" 
-                          : "0 12px 30px -8px rgba(37, 99, 235, 0.1), inset 0 1px 0 #FFFFFF")
-                      : (isDark
-                          ? "0 3px 14px rgba(7, 6, 15, 0.5), inset 0 1px 0 rgba(178, 150, 255, 0.08)"
-                          : "0 2px 8px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8)"),
                   }}
                 >
-                  <div className="tiv-badges-row" style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: isFirst ? 8 : 6, flexWrap: "wrap" }}>
+                  <div className="tiv-badges-row" style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: isFirst ? 10 : 8, flexWrap: "wrap" }}>
                     {isFirst && (
                       <span className="tiv-badge-une" style={{
                         background: "linear-gradient(135deg, #FF5722 0%, #EA580C 50%, #DC2626 100%)",
                         border: "none",
                         color: "#FFFFFF",
-                        padding: "2px 8px",
+                        padding: "3px 10px",
                         borderRadius: 999,
-                        fontSize: 9.5,
+                        fontSize: 10,
                         fontWeight: 800,
                         letterSpacing: 0.5,
                         boxShadow: "0 2px 8px rgba(234, 88, 12, 0.35)",
@@ -3748,7 +3796,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                       </button>
                     )}
                     {isBreaking(item.ts) && <BreakingBadge />}
-                    <span style={{ marginLeft: "auto", fontSize: 10.5, color: "var(--mm-fg-muted)", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    <span style={{ marginLeft: "auto", fontSize: 11.5, color: "var(--mm-fg-muted)", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 3 }}>
                       <span style={{ opacity: 0.7 }}>🕒</span>
                       <span>{timeAgo(item.ts, now)}</span>
                     </span>
@@ -3758,7 +3806,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     className={`tiv-article-title ${isFirst ? "tiv-article-title-first" : "tiv-article-title-regular"}`}
                     onClick={(e) => handleToggleExpand(item, e)}
                     style={{
-                      margin: "0 0 6px",
+                      margin: "0 0 8px",
                       cursor: "pointer",
                     }}
                     title="Cliquer pour afficher ou replier l'article complet"
@@ -3770,39 +3818,40 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                     className="tiv-article-summary-box"
                     onClick={(e) => e.stopPropagation()}
                     style={{
-                      fontSize: 12.2,
+                      fontSize: 14,
                       color: "var(--mm-fg-muted)",
-                      lineHeight: 1.54,
-                      marginBottom: 6,
+                      lineHeight: 1.62,
+                      marginBottom: 10,
                       borderLeft: isFirst
-                        ? (isDark ? "2.5px solid #8B5CF6" : "2.5px solid #2563EB")
-                        : (isDark ? "2px solid rgba(139, 92, 246, 0.45)" : "2px solid #3B82F6"),
-                      paddingLeft: 9,
+                        ? (isDark ? "3px solid #8B5CF6" : "3px solid #2563EB")
+                        : (isDark ? "2.5px solid rgba(139, 92, 246, 0.4)" : "2.5px solid rgba(59, 130, 246, 0.55)"),
+                      borderRadius: "2px 0 0 2px",
+                      paddingLeft: 11,
                     }}
                   >
                     {isExpanded ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div className="tiv-article-body">
                         {paragraphs.map((p, idx) => {
-                          const isHeading = p.length < 80 && (p.endsWith(":") || !p.endsWith("."));
+                          const cleanP = stripMarkdownAndAsterisks(p);
+                          const isHeading = isNewsSubheading(cleanP, idx);
                           if (isHeading && idx > 0) {
                             return (
-                              <h4 key={idx} style={{ margin: "14px 0 4px", fontSize: 14.5, fontWeight: 700, color: "var(--mm-fg)" }}>
-                                {p}
+                              <h4 key={idx} className="tiv-article-subheading">
+                                {cleanP}
                               </h4>
                             );
                           }
                           return (
-                            <p key={idx} className="tiv-article-summary" style={{ margin: 0, fontSize: 13.5, lineHeight: 1.7, color: "var(--mm-fg)" }}>
-                              {p}
+                            <p key={idx} className="tiv-article-summary">
+                              {cleanP}
                             </p>
                           );
                         })}
                       </div>
                     ) : (
                       (() => {
-                        const cardSummary = (paragraphs.length > 0 && paragraphs[0])
-                          ? paragraphs[0]
-                          : (cleanEditorialText(visibleFrenchDescription(item)) || articleText);
+                        const editorialDesc = cleanEditorialText(visibleFrenchDescription(item)) || cleanEditorialText(item.descriptionFr || item.description);
+                        const cardSummary = editorialDesc || (paragraphs.length > 0 ? stripMarkdownAndAsterisks(paragraphs[0]) : "") || articleText;
                         if (!cardSummary) {
                           return (
                             <div style={{
@@ -3817,8 +3866,16 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                               gap: 10,
                               margin: "6px 0 10px",
                             }}>
-                              <span style={{ fontSize: 12, color: "var(--mm-fg-muted)" }}>
-                                Fil d'actualité direct
+                              <span style={{ fontSize: 12.5, color: "var(--mm-fg-muted)", lineHeight: 1.5 }}>
+                                {[
+                                  item.sourceName || item.source,
+                                  (() => { try { return item.url ? new URL(item.url).hostname.replace(/^www\./, "") : ""; } catch { return ""; } })(),
+                                  item.votes ? `▲ ${item.votes} points` : "",
+                                  item.comments ? `💬 ${item.comments} commentaires` : "",
+                                  item.author ? `par ${item.author}` : "",
+                                ].filter(Boolean).join(" · ")}
+                                <br />
+                                Pas de résumé fourni par la source — cliquez sur « Extraire l'article » pour lire le texte complet.
                               </span>
                               <div style={{ display: "flex", gap: 6 }}>
                                 <button
@@ -3864,73 +3921,61 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                             </div>
                           );
                         }
-                        const rawText = (cardSummary || "")
-                          .replace(/\*\*([^*]+)\*\*/g, "$1")
-                          .replace(/__([^_]+)__/g, "$1")
-                          .replace(/<[^>]+>/g, "")
-                          .trim();
-                        const baseText = rawText.replace(/[\s.…]+$/, "");
+                        const rawText = stripMarkdownAndAsterisks(cardSummary || "");
+                        const baseText = normalizeNewsPreview(rawText).replace(/[\s.…]+$/, "");
 
                         return (
-                          <p
-                            className="tiv-article-summary"
+                          <div
+                            className="tiv-article-summary-lead"
                             onClick={(e) => {
                               if (canExpand && !isExpanded) handleToggleExpand(item, e);
                             }}
                             title={canExpand && !isExpanded ? "Cliquer pour lire l'article complet" : undefined}
                             style={{
-                              margin: 0,
-                              color: isDark ? "#B6AADA" : "#475569",
-                              whiteSpace: "pre-line",
-                              lineHeight: 1.54,
-                              fontSize: 12.2,
-                              fontWeight: 400,
-                              fontStyle: "normal",
-                              hyphens: "none",
-                              WebkitHyphens: "none",
-                              wordBreak: "normal",
                               cursor: canExpand && !isExpanded ? "pointer" : "default",
-                              fontFamily: "var(--mm-font-body), system-ui, -apple-system, sans-serif",
                             }}
                           >
-                            <span>{baseText}… </span>
+                            <p
+                              className="tiv-article-summary tiv-article-summary-clamped"
+                              style={{
+                                margin: 0,
+                                color: isDark ? "#B6AADA" : "#475569",
+                                whiteSpace: "normal",
+                                lineHeight: 1.62,
+                                fontSize: 14,
+                                fontWeight: 400,
+                                fontStyle: "normal",
+                                hyphens: "none",
+                                WebkitHyphens: "none",
+                                wordBreak: "normal",
+                                fontFamily: "var(--mm-font-body), system-ui, -apple-system, sans-serif",
+                                display: "-webkit-box",
+                                WebkitLineClamp: 4,
+                                WebkitBoxOrient: "vertical",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {baseText}
+                            </p>
                             {canExpand && (
-                              <span
-                                role="button"
-                                tabIndex={0}
-                                className="tiv-continuer-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleToggleExpand(item, e);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") {
+                              <div style={{ marginTop: 4, display: "flex", alignItems: "center" }}>
+                                <button
+                                  type="button"
+                                  aria-expanded={false}
+                                  className="tiv-continuer-btn"
+                                  onClick={(e) => {
                                     e.stopPropagation();
                                     handleToggleExpand(item, e);
-                                  }
-                                }}
-                                title="Afficher l'article complet"
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 2.5,
-                                  color: isDark ? "#A78BFA" : "#2563EB",
-                                  fontWeight: 650,
-                                  fontSize: 11.5,
-                                  cursor: "pointer",
-                                  textDecoration: "none",
-                                  marginLeft: 4,
-                                  whiteSpace: "nowrap",
-                                  transition: "opacity 0.15s ease",
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.75")}
-                                onMouseLeave={(e) => (e.currentTarget.style.opacity = "1")}
-                              >
-                                <span>Continuer</span>
-                                <span style={{ fontSize: 11.5, marginLeft: 2 }}>→</span>
-                              </span>
+                                  }}
+                                  title="Afficher l'article complet"
+                                >
+                                  <span>Continuer</span>
+                                  <span aria-hidden="true">→</span>
+                                </button>
+                              </div>
                             )}
-                          </p>
+                          </div>
                         );
                       })()
                     )}
@@ -3964,13 +4009,13 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                           background: isDark ? "rgba(139, 92, 246, 0.12)" : "rgba(0, 0, 0, 0.04)",
                           border: `1px solid ${isDark ? "rgba(178, 150, 255, 0.22)" : "rgba(0, 0, 0, 0.08)"}`,
                           color: isDark ? "#B6AADA" : "#334155",
-                          borderRadius: 8,
-                          padding: "4px 9px",
+                          borderRadius: 999,
+                          padding: "5px 12px",
                           cursor: "pointer",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 4.5,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: 700,
                           transition: "all 0.18s ease"
                         }}
@@ -4006,7 +4051,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                             display: "inline-flex",
                             alignItems: "center",
                             gap: 4,
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: 700,
                           }}
                         >
@@ -4024,13 +4069,13 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                           background: isDark ? "rgba(139, 92, 246, 0.12)" : "rgba(0, 0, 0, 0.04)",
                           border: `1px solid ${isDark ? "rgba(178, 150, 255, 0.22)" : "rgba(0, 0, 0, 0.08)"}`,
                           color: isDark ? "#B6AADA" : "var(--mm-fg-muted)",
-                          borderRadius: 8,
-                          padding: "4px 9px",
+                          borderRadius: 999,
+                          padding: "5px 12px",
                           cursor: "pointer",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 4,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: 650,
                           transition: "all 0.18s ease"
                         }}
@@ -4174,14 +4219,14 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                 <div style={{ marginBottom: 16 }}>
                   {readSummary.headline && (
                     <div style={{ background: "linear-gradient(135deg,color-mix(in srgb, var(--mm-primary) 10.0%, transparent),transparent)", border: "1px solid var(--mm-border-strong)", borderLeft: "3px solid var(--mm-primary)", borderRadius: "0 12px 12px 0", padding: "12px 16px", marginBottom: 16, fontSize: 15, fontWeight: 700, color: "var(--mm-fg)", lineHeight: 1.5 }}>
-                      {readSummary.headline}
+                      {stripMarkdownAndAsterisks(readSummary.headline)}
                     </div>
                   )}
                   {readSummary.lede && (
-                    <p style={{ fontSize: 15, fontWeight: 600, color: "var(--mm-fg)", lineHeight: 1.65, margin: "0 0 14px" }}>{readSummary.lede}</p>
+                    <p style={{ fontSize: 15, fontWeight: 600, color: "var(--mm-fg)", lineHeight: 1.65, margin: "0 0 14px" }}>{stripMarkdownAndAsterisks(readSummary.lede)}</p>
                   )}
                   {readSummary.paragraphs?.map((p, i) => (
-                    <p key={i} style={{ fontSize: 14, color: "var(--mm-fg-muted)", lineHeight: 1.7, margin: "0 0 12px" }}>{p}</p>
+                    <p key={i} style={{ fontSize: 14, color: "var(--mm-fg-muted)", lineHeight: 1.7, margin: "0 0 12px" }}>{stripMarkdownAndAsterisks(p)}</p>
                   ))}
                   {readSummary.why_it_matters && (
                     <div style={{ marginTop: 12, marginBottom: 4, background: "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)", border: "1px solid var(--mm-border-strong)", borderRadius: 14, padding: "14px 16px" }}>

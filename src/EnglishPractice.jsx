@@ -5,6 +5,8 @@
 //   storage, expressions, setExpressions, setStats, showToast,
 //   theme, isDarkMode
 
+import useWritingLab from "./hooks/useWritingLab";
+import "./styles/experience-refit.css";
 import { safeHTML } from "./lib/htmlSanitizer";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { PenLine, Shuffle, History, Plus, Sparkles, Layers, BookOpenCheck, LayoutGrid, SpellCheck2, Mic, Square, Globe, AlertTriangle, CheckCircle2, Lightbulb, RotateCcw, AudioLines, Repeat2, Ear, Loader2, Volume2, ArrowRight, PlusCircle, Zap, ChevronUp, ChevronDown, BarChart2, Search, Trash2, ExternalLink, Copy, Check } from "lucide-react";
@@ -43,6 +45,9 @@ import { CoachAnalyzeListener } from "./components/CoachAnalyzeListener";
 import { safeParseJSON } from "./lib/textUtils";
 import { colorMix } from "./lib/colorMix";
 import { getDailyOralTargets, isTargetSpoken } from "./lib/english/dailyOralTargets";
+import { getRandomTopicPair, getRandomOpeningGreeting } from "./lib/english/novaTopicsBank";
+import { groupSpeechTurns } from "./lib/livekitConversation";
+import { getNovaLearnerProfile, buildContinuityPrompt, updateLearnerProfileFromSession } from "./lib/english/novaMemory";
 
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT INTERNE — EnglishPracticeInner (doit être rendu dans ConversationProvider)
@@ -130,7 +135,7 @@ function EnglishPracticeInner({
       const saved = localStorage.getItem("nova_daily_target_mode");
       if (saved) return saved;
     } catch { }
-    return "daily";
+    return "free";
   });
 
   // ── Toutes les fiches anglais (pour le Speaking Lab — prononcer ses propres expressions) ──
@@ -160,6 +165,10 @@ function EnglishPracticeInner({
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(() => {
     try { return localStorage.getItem("nova_subtitles_enabled") !== "false"; } catch { return true; }
   });
+
+  // Profil apprenant et mémoire de continuité long-terme pour Coach Nova
+  const [learnerProfile, setLearnerProfile] = useState(() => getNovaLearnerProfile(storage));
+  const continuityMemory = useMemo(() => buildContinuityPrompt(learnerProfile), [learnerProfile]);
 
   const novaSessionMemoryRef = useRef(null);
   const isGeneratingMemoryRef = useRef(false);
@@ -314,7 +323,7 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     if (!dailyOralTargetsData?.targets?.length) return new Set();
     const spoken = new Set();
     const userUtterances = [
-      ...(liveKitTranscriptions || []).filter(m => m.role === "user").map(m => m.text),
+      ...groupSpeechTurns(liveKitTranscriptions || []).filter(m => m.role === "user").map(m => m.text),
       ...(practiceMessages || []).filter(m => m.role === "user").map(m => m.text),
     ].filter(Boolean);
 
@@ -387,256 +396,61 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
     if (englishCategory) setNotebookCategory(englishCategory);
   }, [englishCategory]);
 
-  const [practiceWritingText, setPracticeWritingText] = useState("");
-  const [practiceWritingFeedback, setPracticeWritingFeedback] = useState(null);
-  const [writingWordGoal, setWritingWordGoal] = useState(200);
-  const [isReportExpanded, setIsReportExpanded] = useState(true);
-  const [ieltsActiveTab, setIeltsActiveTab] = useState("overview");
-  const [isHudCollapsed, setIsHudCollapsed] = useState(false);
-  const [showWritingTip, setShowWritingTip] = useState(false);
-  const [showWritingHistory, setShowWritingHistory] = useState(false);
-  const [writingHistory, setWritingHistory] = useState([]);
-  const [practiceWritingLoading, setPracticeWritingLoading] = useState(false);
-  const [practiceWritingPrompt, setPracticeWritingPrompt] = useState("");
-  const [practiceWritingDrafts, setPracticeWritingDrafts] = useState([]);
-  const [practiceWritingActiveId, setPracticeWritingActiveId] = useState(null);
-  const [writingTabMode, setWritingTabMode] = useState("editor"); // "editor" | "history"
-  const [draftSearchQuery, setDraftSearchQuery] = useState("");
-
-  const filteredDrafts = useMemo(() => {
-    if (!draftSearchQuery || !draftSearchQuery.trim()) return practiceWritingDrafts;
-    const q = draftSearchQuery.toLowerCase().trim();
-    return practiceWritingDrafts.filter(d =>
-      (d.prompt && d.prompt.toLowerCase().includes(q)) ||
-      (d.text && d.text.toLowerCase().includes(q)) ||
-      (d.feedback?.overallComment && d.feedback.overallComment.toLowerCase().includes(q))
-    );
-  }, [practiceWritingDrafts, draftSearchQuery]);
-
-  const getBandScoreColor = useCallback((score) => {
-    const num = parseFloat(score);
-    if (isNaN(num)) return "var(--mm-primary)";
-    if (num >= 7) return "#10B981";
-    if (num >= 5.5) return "#F59E0B";
-    return "#EF4444";
-  }, []);
-
-  const [copiedDraftId, setCopiedDraftId] = useState(null);
-  const [generatingCorrectedId, setGeneratingCorrectedId] = useState(null);
-  const [playingAudioId, setPlayingAudioId] = useState(null);
-  const [expandedDraftIds, setExpandedDraftIds] = useState({});
-  const [expandedMistakeIdxs, setExpandedMistakeIdxs] = useState({});
-
-  const toggleDraftExpand = useCallback((draftId) => {
-    setExpandedDraftIds(prev => ({
-      ...prev,
-      [draftId]: !prev[draftId]
-    }));
-  }, []);
-
-  const toggleMistakeExpand = useCallback((idx) => {
-    setExpandedMistakeIdxs(prev => ({
-      ...prev,
-      [idx]: !prev[idx]
-    }));
-  }, []);
-
-  // Expressions révisées aujourd'hui pour réutilisation active dans le Writing Lab
-  const [showReviewedDrawer, setShowReviewedDrawer] = useState(false);
-  const todayDateStr = today();
-
-  const { todayReviewedExpressions, hasTodayReviews } = useMemo(() => {
-    if (!Array.isArray(expressions)) return { todayReviewedExpressions: [], hasTodayReviews: false };
-
-    const reviewed = expressions.filter(e => {
-      if (!englishCategoryFilter(e)) return false;
-      const inHistory = Array.isArray(e.reviewHistory) && e.reviewHistory.some(r => r.date === todayDateStr);
-      const inLastRev = typeof e.lastReviewed === "string" && e.lastReviewed.startsWith(todayDateStr);
-      const inLastRevDate = e.lastReviewDate === todayDateStr;
-      return inHistory || inLastRev || inLastRevDate;
-    });
-
-    if (reviewed.length > 0) {
-      return { todayReviewedExpressions: reviewed, hasTodayReviews: true };
-    }
-
-    // Fallback gracieux si aucune révision aujourd'hui : proposer 10 expressions anglaises du deck
-    const fallback = expressions.filter(englishCategoryFilter).slice(0, 10);
-    return { todayReviewedExpressions: fallback, hasTodayReviews: false };
-  }, [expressions, todayDateStr]);
-
-  // Extraction chirurgicale de la traduction française courte (Vrai sens) sans le surplus de la fiche
-  const extractFrenchTranslation = useCallback((backText) => {
-    if (!backText || typeof backText !== "string") return "";
-
-    // 1. Détection "Vrai sens :" (avec ou sans emojis/markdown)
-    const vraiSensMatch = backText.match(/(?:📖\s*)?(?:\*{0,2}Vrai sens\s*(?:\(FR\))?\s*:\*{0,2})\s*([^\n🧩💬⚠️]+)/i);
-    if (vraiSensMatch && vraiSensMatch[1]) {
-      let clean = vraiSensMatch[1].replace(/[`*_~]/g, "").trim();
-      clean = clean.split(/[🧩💬⚠️\n]/)[0].trim();
-      if (clean) return clean;
-    }
-
-    // 2. Détection flèche "↳ <traduction>"
-    const arrowMatch = backText.match(/^[↳\->]+\s*([^\n🧩💬⚠️]+)/m);
-    if (arrowMatch && arrowMatch[1]) {
-      const clean = arrowMatch[1].replace(/[`*_~]/g, "").trim();
-      if (clean) return clean;
-    }
-
-    // 3. Première ligne nettoyée (sans emojis de rubriques)
-    const firstLine = backText
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l && !l.startsWith("🧩") && !l.startsWith("💬") && !l.startsWith("⚠️") && !l.startsWith("* **"))[0] || "";
-
-    let cleaned = firstLine
-      .replace(/^#+\s*/g, "")
-      .replace(/\p{Extended_Pictographic}|[\u{1F1E6}-\u{1F1FF}]{2}/gu, "")
-      .replace(/(?:\*{0,2}Vrai sens\s*:\*{0,2})/gi, "")
-      .replace(/[`*_~]/g, "")
-      .trim();
-
-    if (cleaned.length > 95) {
-      cleaned = cleaned.slice(0, 92) + "...";
-    }
-    return cleaned;
-  }, []);
-
-  const insertExpressionIntoDraft = useCallback((phrase) => {
-    if (!phrase || !phrase.trim()) return;
-    setPracticeWritingText(prev => {
-      const trimmed = (prev || "").trimEnd();
-      const spacer = trimmed.length > 0 ? " " : "";
-      return trimmed + spacer + phrase.trim() + " ";
-    });
-    if (showToast) showToast(`"${phrase}" inséré dans votre essai ! ✍️`, "success");
-  }, [showToast]);
-
-
-
-  const togglePlayAudio = useCallback((text, audioId) => {
-    if (!text || !text.trim()) return;
-    if (playingAudioId === audioId) {
-      stopEnglishAudio();
-      setPlayingAudioId(null);
-      return;
-    }
-    stopEnglishAudio();
-    setPlayingAudioId(audioId);
-    const ok = playEnglishAudio(text, {
-      raw: true,
-      groqApiKey: typeof getNextGroqKey === "function" ? getNextGroqKey() : null,
-      onStart: () => setPlayingAudioId(audioId),
-      onEnd: () => setPlayingAudioId(prev => prev === audioId ? null : prev),
-      onError: () => setPlayingAudioId(prev => prev === audioId ? null : prev)
-    });
-    if (!ok) {
-      setPlayingAudioId(null);
-      if (showToast) showToast("Audio non disponible ou non supporté", "error");
-    }
-  }, [playingAudioId, getNextGroqKey, showToast]);
-
-  const handleCopyText = (text, id) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedDraftId(id);
-      if (showToast) showToast("Texte copié dans le presse-papiers ! 📋", "success");
-      setTimeout(() => setCopiedDraftId(null), 2500);
-    }).catch(() => {
-      if (showToast) showToast("Impossible de copier le texte", "error");
-    });
-  };
-
-  const generateMissingCorrectedText = async (draft) => {
-    if (!draft || !draft.text || !draft.text.trim()) return;
-    setGeneratingCorrectedId(draft.id);
-    try {
-      const raw = await callClaude(
-        `Tu es un mentor d'anglais d'élite et examinateur officiel IELTS/Cambridge.
-Analyse en profondeur cet essai rédigé par un étudiant francophone :
-"""${draft.text}"""
-
-Sujet : "${draft.prompt || "Présentation ou essai libre"}"
-
-CONSIGNES STRICTES DE CLARTÉ PÉDAGOGIQUE (LIS ATTENTIVEMENT) :
-1. ATOMICITÉ ABSOLUE : Isole chaque faute individuellement (un seul mot ou une courte expression de 1 à 3 mots). Ne fusionne JAMAIS plusieurs fautes distinctes dans un même bloc !
-   - Mauvais exemple à PROSCRIRE : "i'm actually in my last year of degree" (ceci mélange 3 erreurs !).
-   - Bon exemple OBLIGATOIRE :
-     * Faute A : "i'm" ➔ "I'm" (Règle majuscule)
-     * Faute B : "actually" ➔ "currently" (Faux-ami majeur)
-     * Faute C : "last year of degree" ➔ "final year of my degree" (Vocabulaire académique & possessif)
-     * Faute D : "go entreprise for a stage" ➔ "do an internship at a company" (Faux-ami & collocation)
-     * Faute E : "about computer scientist" ➔ "in computer science" (Confusion discipline vs métier)
-     * Faute F : "to create and knowing" ➔ "to create and know" (Parallélisme infinitif après 'to')
-     * Faute G : "two differents domains" ➔ "two different fields" (Adjectif invariable sans 's')
-     * Faute H : "AI logiciel" ➔ "AI software" (Traduction 'software' indénombrable)
-     * Faute I : "make them safety" ➔ "ensure their safety / make them safe" (Nom vs adjectif)
-     * Faute J : "cybersecurity and ai engeneering" ➔ "cybersecurity and AI engineering" (Orthographe & sigle)
-
-2. CLARTÉ RADICALE DU "POURQUOI" :
-   - Explique la règle en français limpide, direct et percutant, SANS JARGON FLOU ni formules abstraites.
-   - Si c'est un faux-ami, donne obligatoirement le vrai sens du mot anglais et le mot qu'il fallait utiliser (ex: "'Actually' ne signifie JAMAIS 'actuellement', mais 'en fait / en réalité'. Pour dire 'actuellement / en ce moment', le seul mot anglais est 'currently'.").
-   - Explique pourquoi le cerveau francophone s'est trompé (calque mot à mot, faux-ami).
-   - Précise la sanction ou l'impact auprès d'un examinateur IELTS/Cambridge (ex: perte de points sur le critère Lexical Resource ou Grammatical Accuracy).
-
-3. TEXTE CORRIGÉ INTÉGRAL : Fournis la version réécrite complète, naturelle et élégante en anglais.
-
-Donne UNIQUEMENT un objet JSON valide (SANS TEXTE AUTOUR):
-{
-  "correctedText": "Version intégrale corrigée et réécrite en anglais naturel, fluide et impeccable",
-  "mistakes": [
-    {
-      "originalText": "le mot ou segment exact de 1 à 3 mots (ex: actually)",
-      "correctedText": "la correction exacte (ex: currently)",
-      "category": "Faux-ami & Vocabulaire" | "Majuscules & Rigueur" | "Grammaire & Parallélisme" | "Accord d'adjectif" | "Orthographe",
-      "why": "L'explication limpide du POURQUOI : sens réel du mot, règle de grammaire simple et contre-exemple clair",
-      "examTrap": "Le piège pour francophones (calque/faux-ami) et ce que l'examinateur officiel IELTS sanctionne",
-      "flashcard": {
-        "front": "Question directe en français pour tester cette règle précise (ex: Comment dire 'actuellement' en anglais sans tomber dans le faux-ami ?)",
-        "back": "Currently (attention : 'actually' signifie 'en réalité / en fait')"
-      }
-    }
-  ]
-}`
-      );
-      const parsed = safeParseJSON(raw);
-      const cleanedText = parsed?.correctedText || (typeof raw === "string" && !raw.trim().startsWith("{") ? raw.trim() : "");
-      const newMistakes = Array.isArray(parsed?.mistakes) && parsed.mistakes.length > 0 ? parsed.mistakes : null;
-
-      if (cleanedText || newMistakes) {
-        setPracticeWritingDrafts(prev => {
-          const updated = prev.map(d => {
-            if (d.id === draft.id) {
-              return {
-                ...d,
-                feedback: {
-                  ...(d.feedback || {}),
-                  ...(cleanedText ? { correctedText: cleanedText } : {}),
-                  ...(newMistakes ? { mistakes: newMistakes } : {})
-                }
-              };
-            }
-            return d;
-          });
-          storage.set("nova_writing_drafts", updated).catch(() => {});
-          return updated;
-        });
-        if (practiceWritingActiveId === draft.id) {
-          setPracticeWritingFeedback(prev => ({
-            ...(prev || {}),
-            ...(cleanedText ? { correctedText: cleanedText } : {}),
-            ...(newMistakes ? { mistakes: newMistakes } : {})
-          }));
-        }
-        if (showToast) showToast("Diagnostic intelligent & texte correctif générés ! ✨", "success");
-      }
-    } catch (e) {
-      if (showToast) showToast("Erreur lors de la génération du diagnostic", "error");
-    } finally {
-      setGeneratingCorrectedId(null);
-    }
-  };
+  const {
+    practiceWritingText,
+    setPracticeWritingText,
+    practiceWritingFeedback,
+    setPracticeWritingFeedback,
+    writingWordGoal,
+    setWritingWordGoal,
+    isReportExpanded,
+    setIsReportExpanded,
+    ieltsActiveTab,
+    setIeltsActiveTab,
+    isHudCollapsed,
+    setIsHudCollapsed,
+    showWritingTip,
+    setShowWritingTip,
+    showWritingHistory,
+    setShowWritingHistory,
+    writingHistory,
+    setWritingHistory,
+    practiceWritingLoading,
+    setPracticeWritingLoading,
+    practiceWritingPrompt,
+    setPracticeWritingPrompt,
+    practiceWritingDrafts,
+    setPracticeWritingDrafts,
+    practiceWritingActiveId,
+    setPracticeWritingActiveId,
+    writingTabMode,
+    setWritingTabMode,
+    draftSearchQuery,
+    setDraftSearchQuery,
+    filteredDrafts,
+    getBandScoreColor,
+    copiedDraftId,
+    setCopiedDraftId,
+    generatingCorrectedId,
+    setGeneratingCorrectedId,
+    playingAudioId,
+    setPlayingAudioId,
+    expandedDraftIds,
+    setExpandedDraftIds,
+    expandedMistakeIdxs,
+    setExpandedMistakeIdxs,
+    toggleDraftExpand,
+    toggleMistakeExpand,
+    showReviewedDrawer,
+    setShowReviewedDrawer,
+    todayReviewedExpressions,
+    hasTodayReviews,
+    extractFrenchTranslation,
+    insertExpressionIntoDraft,
+    togglePlayAudio,
+    handleCopyText,
+    generateMissingCorrectedText
+  } = useWritingLab({ expressions, englishCategoryFilter, getNextGroqKey, storage, callClaude, showToast });
 
   const [practiceSpeakingAudioBlob, setPracticeSpeakingAudioBlob] = useState(null);
   const [practiceSpeakingTranscript, setPracticeSpeakingTranscript] = useState("");
@@ -750,8 +564,10 @@ Donne UNIQUEMENT un objet JSON valide (SANS TEXTE AUTOUR):
     enabled: true,
   });
 
-  // Fiches ajoutées manuellement via tool d'agent (save_expression)
+  // Fiches ajoutées manuellement via tool d'agent ou tap-to-card
   const [manualSessionCards, setManualSessionCards] = useState([]);
+  const [dismissedSessionCardKeys, setDismissedSessionCardKeys] = useState(new Set());
+  const [previewSessionCardId, setPreviewSessionCardId] = useState(null);
 
   // Agrégation dédoublonnée de toutes les fiches créées durant la session en direct
   const allSessionCards = React.useMemo(() => {
@@ -759,36 +575,25 @@ Donne UNIQUEMENT un objet JSON valide (SANS TEXTE AUTOUR):
     const seen = new Set();
     return list.filter(card => {
       const key = (card.id || card.front || "").toLowerCase().trim();
-      if (!key || seen.has(key)) return false;
+      const frontKey = (card.front || "").toLowerCase().trim();
+      if (!key || seen.has(key) || dismissedSessionCardKeys.has(key) || (frontKey && dismissedSessionCardKeys.has(frontKey))) return false;
       seen.add(key);
       return true;
     });
-  }, [sessionCreatedCards, manualSessionCards]);
+  }, [sessionCreatedCards, manualSessionCards, dismissedSessionCardKeys]);
 
   const sessionCardsCount = allSessionCards.length;
 
-  // Redirection sans faille vers la vue fiches
+  // Affichage du popup dédié aux rectos des expressions apprises
+  const [showSessionCardsModal, setShowSessionCardsModal] = useState(false);
+
   const handleViewSessionCreatedCards = useCallback(() => {
     if (sessionCardsCount === 0) {
-      showToast?.("0 fiche créée pour le moment. Discute avec NOVA pour qu'elle relève tes expressions !", "info");
+      showToast?.("0 expression capturée pour le moment. Discute avec NOVA ou clique sur 💡 + Fiche pour en mémoriser !", "info");
       return;
     }
-    // Coupure propre de la voix avant la navigation
-    if (agent?.isConnected) {
-      try { agent.stop(); } catch (_e) {}
-    }
-    // Filtrage immédiat sur le module anglais
-    if (typeof setFilterCat === "function") {
-      setFilterCat(englishCategory || "🇬🇧 Anglais");
-    }
-    // Redirection sans faille
-    if (typeof setView === "function") {
-      setView("list");
-    } else if (typeof navigate === "function") {
-      navigate("list");
-    }
-    showToast?.(`📋 Affichage de tes ${sessionCardsCount} fiche${sessionCardsCount > 1 ? "s créées" : " créée"} durant cette session`, "success");
-  }, [sessionCardsCount, agent, setFilterCat, englishCategory, setView, navigate, showToast]);
+    setShowSessionCardsModal(true);
+  }, [sessionCardsCount, showToast]);
 
   // Hook Nova (PTT + pipeline STT → LLM → TTS)
   const novaVoice = useNovaAgent({
@@ -1355,12 +1160,15 @@ Donne UNIQUEMENT un objet JSON valide (SANS TEXTE AUTOUR):
       relationshipInst += ` [SHARED HISTORY] Inside jokes: ${JSON.stringify(arc.sharedJokes)}. Memorable moments: ${JSON.stringify(arc.memorableMoments)}. Reference these organically if the topic naturally arises.`;
     }
 
-    let activeRecallInst = "";
-    if (effectiveTargetExpressions && effectiveTargetExpressions.length > 0) {
-      const expList = effectiveTargetExpressions.map(ex =>
-        `"${ex.front}" (meaning: ${ex.back})${ex.example ? ` - Example: "${ex.example}"` : ''}`
-      ).join(" | ");
-      activeRecallInst = `[ACTIVE RECALL MISSION] The student is currently learning these expressions: ${expList}. Subtly steer the conversation to create natural opportunities for the student to use them. If they use one correctly, acknowledge it enthusiastically.`;
+    let conversationVibeInst = "";
+    if (practiceSubView === "chat") {
+      conversationVibeInst = `[REAL-LIFE CONVERSATION GOD MODE]
+You are a warm, magnetic, articulate, and authentic English conversation partner.
+You speak like a real native friend having an engaging, natural dialogue in real life.
+Your goal is to build genuine conversational confidence and spontaneity.
+Greet the student warmly and dynamically vary your topics (daily life, hobbies, current thoughts, unexpected dilemmas, funny anecdotes, or fresh projects). Warmly invite them to introduce themselves if they want to break the ice only on their very first session.
+CRITICAL CONVERSATION VARIETY: NEVER repeat the same greeting or ask them to introduce themselves over and over! Treat them like a friend you know and dive into real, varied topics naturally!
+Never sound like a school teacher, quiz, or vocabulary tester. Have fun and let the conversation breathe!`;
     }
 
     let modeInstruction = "";
@@ -1378,20 +1186,20 @@ YOUR ROLE: Stay fully in character. Respond naturally in character in English, a
       modeInstruction = `MODE: IELTS SPEAKING EXAM.
 You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart || 1}. Ask formal IELTS questions and evaluate fluency. Keep responses concise (1-3 sentences).`;
     } else {
-      modeInstruction = `You are NOVA — a professional English coach for an ambitious adult learner. Tone: composed, articulate, respectful, high signal. No slang, no bestie/hype energy, no 'vibing', no emojis. Speak like a top-tier private tutor: warm but serious, concise, precise.`;
+      modeInstruction = `You are NOVA — the world's most engaging and natural real-life English conversation partner. Tone: charismatic, empathetic, articulate, effortless conversational rhythm. Speak like a top-tier native peer.`;
     }
 
     return [
       modeInstruction,
       nameInst,
-      "CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly — no parentheses, no brackets, no 'small correction:', nothing that interrupts the conversation. If the student makes a grammar, vocabulary, or preposition mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply (a natural corrective recast), then keep the conversation flowing exactly as if nothing happened. The mistake will be turned into a flashcard automatically behind the scenes — your only job is to always use the correct form yourself and never break the flow.",
+      conversationVibeInst,
+      "CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly. If the student makes a mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply (a natural corrective recast), then keep the conversation flowing smoothly. Never break the flow.",
       profileInst,
       continuityInst,
       relationshipInst,
-      activeRecallInst,
-      "CRITICAL RULES: Replies 1–3 sentences MAX. End with one focused, adult open question. Neutral professional register. No slang, no emojis, no 'vibing/slay/bestie/energy' vocabulary, no stacked exclamations. Never use lists or bullet points.",
+      "CRITICAL RULES: Replies 1–3 sentences MAX. End with one focused, engaging open question. Natural real-life spoken register. Never use lists or bullet points.",
     ].filter(Boolean).join("\n");
-  }, [effectiveTargetExpressions, studentName, practiceSubView, practiceDebateTopic, practiceRoleplayScenario, practiceRoleplayCharacter, practiceIeltsPart, practiceLevel]);
+  }, [studentName, practiceSubView, practiceDebateTopic, practiceRoleplayScenario, practiceRoleplayCharacter, practiceIeltsPart, practiceLevel]);
 
   const liveKitSystemPrompt = useMemo(
     () => buildLiveKitSystemPrompt(),
@@ -1399,18 +1207,17 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   );
 
   // ── Pre-warming intelligent du token LiveKit Nova ─────────────────────────
-  // Déclenché APRÈS l'initialisation de liveKitSystemPrompt (zéro TDZ)
+  // Déclenché dès le montage de la vue anglaise pour que le token soit prêt à 0ms au premier clic
   useEffect(() => {
-    if (["chat", "debate", "roleplay", "ielts"].includes(practiceSubView)) {
-      prewarmNovaToken({
-        studentName,
-        level: practiceLevel,
-        sessionGoal: effectiveSessionGoal,
-        targetExpressions: effectiveTargetExpressions,
-        systemPrompt: liveKitSystemPrompt,
-      }).catch(() => {});
-    }
-  }, [practiceSubView, studentName, practiceLevel, effectiveSessionGoal, effectiveTargetExpressions, liveKitSystemPrompt]);
+    prewarmNovaToken({
+      studentName,
+      level: practiceLevel,
+      sessionGoal: effectiveSessionGoal,
+      targetExpressions: effectiveTargetExpressions,
+      systemPrompt: liveKitSystemPrompt,
+      continuityMemory,
+    }).catch(() => {});
+  }, [practiceSubView, studentName, practiceLevel, effectiveSessionGoal, effectiveTargetExpressions, liveKitSystemPrompt, continuityMemory]);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const practiceEndRef = useRef(null);
@@ -2012,35 +1819,29 @@ Renvoie UNIQUEMENT un objet JSON valide (sans markdown, sans backticks) avec ces
     storage.set("english_subview", view)?.catch?.(() => { });  // persist so navigation away and back restores position
   };
 
-  const generateDynamicGreeting = async (topic = practiceTopic, level = practiceLevel) => {
-    setPracticeLoading(true);
-    setPracticeMessages([{ role: "assistant", text: "..." }]);
-    try {
-      let prompt = "";
-      if (novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0) {
-        const targetList = dailyOralTargetsData.targets.map(t => `"${t.front}" (= ${t.back})`).join(", ");
-        prompt = `Tu es Nova, un coach d'anglais ultra-charismatique et bienveillant pour un apprenant adulte nommé ${studentName || "l'étudiant"}.
-Niveau CEFR : ${level || "intermediate"}.
-L'étudiant a révisé ces expressions aujourd'hui : ${targetList}.
-Génère une phrase d'accroche captivante, vivante et courte (2 à 3 phrases max) où tu lances un mini-dilemme ou une anecdote concrète qui tisse le sens de ces expressions, et termine par une vraie question ouverte invitant l'étudiant à partager son point de vue.
-Ne cite JAMAIS les mots comme une liste de vocabulaire ou un exercice scolaire. Parle uniquement en anglais, sans guillemets autour.`;
-      } else {
-        prompt = `Tu es Nova, un coach d'anglais ultra-charismatique et amical. Le sujet de conversation choisi par l'étudiant est "${topic || "Free conversation"}" et son niveau estimé est ${level}.
-Génère une phrase d'accroche chaleureuse et courte (2 phrases max) pour commencer la conversation, qui se termine par une vraie question ouverte pertinente sur ce sujet.
-Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne mets pas de guillemets autour de ta réponse. Parle uniquement en anglais.`;
-      }
-      const response = await callClaude(prompt, "Génération de l'accroche Nova");
-      if (response) {
-        setPracticeMessages([{ role: "assistant", text: response.trim() }]);
-      } else {
-        setPracticeMessages([{ role: "assistant", text: `Great! Let's talk about "${topic}". I'm ready whenever you are! 🎤` }]);
-      }
-    } catch (e) {
-      setPracticeMessages([{ role: "assistant", text: `Great! Let's talk about "${topic}". I'm ready whenever you are! 🎤` }]);
-    } finally {
-      setPracticeLoading(false);
-    }
-  };
+  const handleStartLiveNova = useCallback(() => {
+    armIosAudio();
+    setAgentTranscript([]);
+    setAgentError("");
+    const [t1, t2] = getRandomTopicPair();
+    const name = studentName?.trim();
+    const lastSession = learnerProfile?.recentTopics?.slice(-1)[0];
+    const topicTitle = practiceTopic || (novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "Daily Target Mission" : t1?.title || "Free conversation");
+    const greetingText = lastSession?.topic
+      ? `Hey ${name || "there"}! Great to see you again. Last time we were talking about ${lastSession.topic}. What would you love to chat about today?`
+      : getRandomOpeningGreeting(name, t1, t2);
+    setPracticeMessages([{ role: "assistant", text: greetingText }]);
+    agent.start(MODE_CONFIGS.chat({ topic: topicTitle, level: practiceLevel }));
+  }, [agent, practiceTopic, novaDailyTargetMode, dailyOralTargetsData.targets.length, studentName, practiceLevel, learnerProfile]);
+
+  const generateDynamicGreeting = useCallback((topic = practiceTopic, level = practiceLevel) => {
+    setPracticeLoading(false);
+    const name = studentName?.trim();
+    const [t1, t2] = getRandomTopicPair();
+    // Warmly invite them to introduce themselves if they want to break the ice (only for onboarding)
+    const greetingText = getRandomOpeningGreeting(name, t1, t2);
+    setPracticeMessages([{ role: "assistant", text: greetingText }]);
+  }, [studentName, practiceTopic, practiceLevel]);
 
   const resetPracticeChat = () => {
     window.speechSynthesis?.cancel();
@@ -2048,6 +1849,91 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
     storage.set("nova_practice_messages", null).catch(() => { });
     generateDynamicGreeting();
   };
+
+  // Création instantanée de fiches pour TOUTES les expressions d'une réplique de Coach Nova (Tap-to-Card)
+  const handleQuickSaveExpression = useCallback(async (phrase, userContext = "") => {
+    if (!phrase || !callClaude) return;
+    try {
+      showToast?.("🧠 Extraction des expressions clés...", "info");
+      const safePhrase = String(phrase).replace(/"/g, "'");
+      const safeContext = userContext ? String(userContext).replace(/"/g, "'").slice(0, 140) : "";
+      const prompt = `Extrais TOUTES les expressions idiomatiques, phrasal verbs, collocations ou tournures natives fortes (1 à 3 fiches distinctes si la réplique en contient plusieurs) contenues dans cette réplique de Coach Nova.
+L'apprenant souhaite enregistrer toutes les expressions d'un coup pour ne jamais interrompre sa discussion orale en direct, et il supprimera en un clic celles qu'il comprend déjà plus tard lors de ses révisions.
+${safeContext ? `Ce que l'élève venait de dire : "${safeContext}"\n` : ""}
+Réplique de Coach Nova :
+"${safePhrase}"
+
+Réponds STRICTEMENT sous forme de JSON valide avec la clé "cards" :
+{
+  "cards": [
+    {
+      "front": "<l'expression ou le phrasal verb clé en anglais>",
+      "type": "idiom" | "phrasal_verb" | "vocabulary",
+      "difficulty": "B1" | "B2" | "C1",
+      "back": "### 🎙️ Découvert avec Coach Nova\\n* 💎 **Expression :** <l'expression>\\n* 📖 **Traduction :** <traduction française précise>\\n* 🎯 **Dans la discussion :** \\\"${safePhrase.slice(0, 90)}\\\"\\n\\n💡 **Le réflexe natif :**\\n<explication claire et vivante de la logique ou de l'image mentale>\\n\\n💬 **Mini-dialogue :**\\n* **A :** \`<réplique A en anglais>\`  \\n  ↳ *<traduction française de la réplique A>*\\n* **B :** \`<réplique B en anglais>\`  \\n  ↳ *<traduction française de la réplique B>*",
+      "example": "<exemple court en anglais>"
+    }
+  ]
+}`;
+      const raw = await callClaude("Ingénieur linguistique d'élite MemoMaster. JSON strict uniquement.", prompt);
+      const cleanJson = String(raw || "").replace(/```json|```/gi, "").trim();
+      let parsed = null;
+      try {
+        parsed = JSON.parse(cleanJson);
+      } catch (parseErr) {
+        // Fallback extraction si balises résiduelles
+        const match = cleanJson.match(/\{[\s\S]*\}/);
+        if (match) parsed = JSON.parse(match[0]);
+      }
+
+      let rawList = [];
+      if (Array.isArray(parsed)) {
+        rawList = parsed;
+      } else if (parsed && Array.isArray(parsed.cards)) {
+        rawList = parsed.cards;
+      } else if (parsed && parsed.front && parsed.back) {
+        rawList = [parsed];
+      }
+
+      const validCards = rawList.filter(c => c && c.front && c.back);
+      if (validCards.length > 0) {
+        const dateStr = typeof today === "function" ? today() : new Date().toISOString().slice(0, 10);
+        const baseTs = Date.now();
+        const createdCards = validCards.map((card, idx) => ({
+          id: `coach-${baseTs}-${idx}`,
+          front: String(card.front).trim(),
+          back: String(card.back).trim(),
+          example: card.example?.trim() || phrase,
+          category: englishCategory || "🇬🇧 Anglais",
+          level: 0,
+          nextReview: dateStr,
+          createdAt: dateStr,
+          updatedAt: new Date().toISOString(),
+          easeFactor: 2.5,
+          interval: 1,
+          repetitions: 0,
+          reviewHistory: [],
+          _agentDetected: true,
+          _source: "coach_input",
+          _novaV8: true,
+        }));
+
+        setExpressions(prev => [...createdCards, ...(prev || [])]);
+        setManualSessionCards(prev => [...createdCards, ...(prev || [])]);
+
+        if (createdCards.length === 1) {
+          showToast?.(`✨ Fiche créée : "${createdCards[0].front}"`, "success");
+        } else {
+          showToast?.(`✨ ${createdCards.length} fiches créées : ${createdCards.map(c => `"${c.front}"`).join(", ")}`, "success");
+        }
+      } else {
+        showToast?.("Aucune expression particulière trouvée", "info");
+      }
+    } catch (err) {
+      console.warn("Erreur création manuelle fiches:", err);
+      showToast?.("Impossible d'extraire les fiches", "error");
+    }
+  }, [callClaude, englishCategory, today, setExpressions, showToast]);
 
   // Helper : transcrit un audioBlob via Groq Whisper
   // ⚠️ L'extension du fichier doit correspondre au vrai MIME type du blob.
@@ -2335,7 +2221,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "US Customs & Border Protection",
       role: "a strict US immigration officer at JFK airport",
       opening: "Next! Passport please. What is the purpose of your visit to the United States?",
-      color: "#1D3461",
+      color: "var(--mm-primary)",
       tip: "Be concise, direct, and polite. Have your answers ready."
     },
     {
@@ -2345,7 +2231,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "Busy Manhattan diner",
       role: "a fast-talking, no-nonsense New York City waiter in a busy diner",
       opening: "Alright folks, what can I getcha? We got the daily special — pastrami on rye, can't go wrong. You ready to order or you need another minute?",
-      color: "#E63946",
+      color: "var(--mm-danger)",
       tip: "Speak fast, use casual expressions, be decisive"
     },
     {
@@ -2355,7 +2241,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "Difficult client wants a discount",
       role: "a tough business client who wants a significant price reduction and is ready to walk away",
       opening: "Look, I've been looking at your quote and frankly, it's way over our budget. Your competitor is offering 30% less. What can you do for me?",
-      color: "#F4A261",
+      color: "var(--mm-warning)",
       tip: "Use persuasive language, justify your value, find middle ground"
     },
     {
@@ -2365,7 +2251,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "US Emergency Room",
       role: "an efficient American emergency room doctor taking a patient history quickly",
       opening: "Hi there, I'm Dr. Johnson. What brings you into the ER today? On a scale of 1 to 10, how would you rate your pain?",
-      color: "#2EC4B6",
+      color: "var(--mm-primary)",
       tip: "Describe symptoms clearly, use body part names, mention duration"
     },
     {
@@ -2375,7 +2261,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "Casual coffee chat",
       role: "a curious, funny, charming person on a first date at a coffee shop",
       opening: "Hey, I'm so glad we finally met! I have to ask — your profile said you love adventures. What's the craziest thing you've ever done?",
-      color: "#FF6B6B",
+      color: "var(--mm-danger)",
       tip: "Be natural, use humor, ask follow-up questions"
     },
     {
@@ -2385,7 +2271,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "US Police Officer",
       role: "a professional American police officer who has pulled someone over for speeding",
       opening: "Good evening. License and registration, please. Do you know why I pulled you over today?",
-      color: "#264653",
+      color: "var(--mm-primary)",
       tip: "Stay calm, be respectful, answer clearly and honestly"
     },
     {
@@ -2395,7 +2281,7 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
       subtitle: "Tricky HR screening",
       role: "an HR recruiter conducting a 15-minute phone screening, asking behavioral and trick questions",
       opening: "Hi, this is Sarah from the HR department. Thanks for taking my call! Let's jump right in. Can you tell me — what would your biggest weakness be?",
-      color: "#7B2D8B",
+      color: "var(--mm-primary)",
       tip: "Structure answers, be specific, turn weaknesses into growth stories"
     },
   ];
@@ -2416,12 +2302,12 @@ Varie ton style à chaque fois comme un vrai humain qui entame la discussion. Ne
   // Start speech capture to get user reply
   const rpListen = (onResult, onError) => {
     if (customAgent.isConnected) {
-      const startCount = (liveKitTranscriptions || []).filter(t => t.role === "user").length;
+      const startCount = groupSpeechTurns(liveKitTranscriptions || []).filter(t => t.role === "user").length;
       let checkTimer = setInterval(() => {
-        const userSegs = (liveKitTranscriptions || []).filter(t => t.role === "user");
-        if (userSegs.length > startCount) {
+        const userTurns = groupSpeechTurns(liveKitTranscriptions || []).filter(t => t.role === "user");
+        if (userTurns.length > startCount) {
           clearInterval(checkTimer);
-          onResult(userSegs[userSegs.length - 1].text);
+          onResult(userTurns[userTurns.length - 1].text);
         }
       }, 500);
       rpRecogRef.current = { abort: () => clearInterval(checkTimer) };
@@ -3047,8 +2933,8 @@ Texte: """${practiceWritingText}"""`,
       result.push(
         <span key={"mistake_" + idx} style={{ position: "relative", display: "inline" }} className="mistake-group">
           <span style={{
-            textDecoration: "underline dashed #EF4444",
-            backgroundColor: "rgba(239, 68, 68, 0.15)",
+            textDecoration: "underline dashed var(--mm-danger)",
+            backgroundColor: "color-mix(in srgb, var(--mm-danger) 15%, transparent)",
             cursor: "pointer",
             borderRadius: 4,
             padding: "2px 0",
@@ -3066,7 +2952,7 @@ Texte: """${practiceWritingText}"""`,
             borderRadius: 12,
             width: "max-content",
             maxWidth: "min(300px, 80vw)",
-            boxShadow: "0 20px 40px rgba(0,0,0,0.4)",
+            boxShadow: "0 20px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)",
             zIndex: 50,
             pointerEvents: "none",
             display: "none",
@@ -3074,7 +2960,7 @@ Texte: """${practiceWritingText}"""`,
             gap: 8,
             whiteSpace: "normal"
           }}>
-            <div style={{ color: "#10B981", fontWeight: "900", fontSize: 15, display: "flex", gap: 8, alignItems: "flex-start" }}>
+            <div style={{ color: "var(--mm-success)", fontWeight: "900", fontSize: 15, display: "flex", gap: 8, alignItems: "flex-start" }}>
               <span>✨</span>
               <span>{m.correctedText}</span>
             </div>
@@ -3127,9 +3013,9 @@ Texte: """${practiceWritingText}"""`,
 
       result.push(
         <span key={"mistake_" + idx} style={{ position: "relative", display: "inline" }} className="mistake-group">
-          <span style={{ textDecoration: "underline dashed #EF4444", backgroundColor: "rgba(239, 68, 68, 0.15)", cursor: "pointer", borderRadius: 4, padding: "2px 0", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" }}>{m.originalText}</span>
-          <div className="mistake-tooltip" style={{ position: "absolute", bottom: "calc(100% + 5px)", left: "0", transform: "translateX(-16px)", background: "var(--mm-bg-elev)", border: `1px solid ${theme.border}`, padding: "16px", borderRadius: 12, width: "max-content", maxWidth: "min(300px, 80vw)", boxShadow: "0 20px 40px rgba(0,0,0,0.4)", zIndex: 50, pointerEvents: "auto", display: "none", flexDirection: "column", gap: 8, whiteSpace: "normal" }}>
-            <div style={{ color: "#10B981", fontWeight: "900", fontSize: 15, display: "flex", gap: 8, alignItems: "flex-start" }}><span>✨</span><span>{m.correctedText}</span></div>
+          <span style={{ textDecoration: "underline dashed var(--mm-danger)", backgroundColor: "color-mix(in srgb, var(--mm-danger) 15%, transparent)", cursor: "pointer", borderRadius: 4, padding: "2px 0", WebkitBoxDecorationBreak: "clone", boxDecorationBreak: "clone" }}>{m.originalText}</span>
+          <div className="mistake-tooltip" style={{ position: "absolute", bottom: "calc(100% + 5px)", left: "0", transform: "translateX(-16px)", background: "var(--mm-bg-elev)", border: `1px solid ${theme.border}`, padding: "16px", borderRadius: 12, width: "max-content", maxWidth: "min(300px, 80vw)", boxShadow: "0 20px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)", zIndex: 50, pointerEvents: "auto", display: "none", flexDirection: "column", gap: 8, whiteSpace: "normal" }}>
+            <div style={{ color: "var(--mm-success)", fontWeight: "900", fontSize: 15, display: "flex", gap: 8, alignItems: "flex-start" }}><span>✨</span><span>{m.correctedText}</span></div>
             <div style={{ color: theme.text, fontSize: 13, lineHeight: 1.5, opacity: 0.9 }}>{m.rule}</div>
             {m.oralFeedback && (
               <button
@@ -3285,7 +3171,7 @@ Réponds UNIQUEMENT avec ce JSON valide, sans markdown ni backticks:
             const userH = userWaveformLive[i] * (canvas.height * 0.8);
 
             // Draw Ghost Bar (La voix parfaite/native en bleu néon translucide)
-            ctx.fillStyle = isDarkMode ? "rgba(139, 92, 246, 0.25)" : "rgba(139, 92, 246, 0.2)";
+            ctx.fillStyle = isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)";
             ctx.shadowBlur = 0;
             ctx.fillRect(x, centerY - ghostH / 2, barWidth, Math.max(2, ghostH));
 
@@ -3296,8 +3182,8 @@ Réponds UNIQUEMENT avec ce JSON valide, sans markdown ni backticks:
               const isMatch = diff < 0.25 && targetWaveform[i] > 0.2 && userWaveformLive[i] > 0.2;
 
               if (isMatch) {
-                ctx.fillStyle = "#F59E0B"; // Or
-                ctx.shadowColor = "#FCD34D";
+                ctx.fillStyle = "var(--mm-warning)"; // Or
+                ctx.shadowColor = "var(--mm-warning)";
                 ctx.shadowBlur = 10;
               } else {
                 ctx.fillStyle = "var(--mm-primary)"; // Violet
@@ -3312,7 +3198,7 @@ Réponds UNIQUEMENT avec ce JSON valide, sans markdown ni backticks:
           // Draw Playhead
           if (currentBar < numBars) {
             const playheadX = currentBar * (canvas.width / numBars);
-            ctx.fillStyle = isDarkMode ? "rgba(255, 255, 255, 0.6)" : "rgba(0, 0, 0, 0.3)";
+            ctx.fillStyle = isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 60%, transparent)" : "color-mix(in srgb, var(--mm-fg) 30%, transparent)";
             ctx.shadowBlur = 0;
             ctx.fillRect(playheadX, 0, 2, canvas.height);
           }
@@ -3517,12 +3403,12 @@ Réponds UNIQUEMENT en anglais, comme un vrai examinateur IELTS (1-3 phrases max
 
   const THEME_COLORS = {
     "Business": { bg: "var(--mm-primary-deep)", glow: "var(--mm-primary)", text: "color-mix(in srgb, var(--mm-primary) 22%, white)" },
-    "Academic": { bg: "#064E3B", glow: "#10B981", text: "#A7F3D0" },
-    "Daily Life": { bg: "#7C2D12", glow: "#F97316", text: "#FED7AA" },
-    "Technology": { bg: "#312E81", glow: "var(--mm-primary)", text: "#E9D5FF" },
-    "Nature": { bg: "#14532D", glow: "#22C55E", text: "#BBF7D0" },
-    "Social": { bg: "#831843", glow: "#EC4899", text: "#FBCFE8" },
-    "Other": { bg: "#1C1917", glow: "#A8A29E", text: "#D6D3D1" },
+    "Academic": { bg: "var(--mm-success)", glow: "var(--mm-success)", text: "var(--mm-success)" },
+    "Daily Life": { bg: "var(--mm-danger)", glow: "var(--mm-warning)", text: "var(--mm-warning)" },
+    "Technology": { bg: "var(--mm-primary)", glow: "var(--mm-primary)", text: "var(--mm-bg-elev)" },
+    "Nature": { bg: "var(--mm-success)", glow: "var(--mm-success)", text: "var(--mm-success)" },
+    "Social": { bg: "var(--mm-primary)", glow: "var(--mm-primary)", text: "var(--mm-primary-glow)" },
+    "Other": { bg: "var(--mm-bg-card)", glow: "var(--mm-fg-muted)", text: "var(--mm-border-strong)" },
   };
 
   const buildBrainMap = async () => {
@@ -3649,7 +3535,7 @@ Réponds UNIQUEMENT en JSON: {"definition":"définition courte en français","ex
     "th": {
       label: "TH — /θ/ et /ð/",
       emoji: "👅",
-      color: "#EF4444",
+      color: "var(--mm-danger)",
       desc: "Le son le plus difficile pour les francophones. La langue touche les dents.",
       guide: [
         { step: "Position", detail: "Place le bout de ta langue entre tes dents supérieures et inférieures, légèrement sortie." },
@@ -3686,7 +3572,7 @@ Réponds UNIQUEMENT en JSON: {"definition":"définition courte en français","ex
     "h": {
       label: "H — /h/",
       emoji: "💨",
-      color: "#10B981",
+      color: "var(--mm-success)",
       desc: "Le H anglais est aspiré. Il n'existe pas en français comme son.",
       guide: [
         { step: "Production", detail: "Expire un souffle chaud d'air depuis la gorge avant la voyelle. Comme si tu soufflais sur tes mains pour les réchauffer." },
@@ -3698,7 +3584,7 @@ Réponds UNIQUEMENT en JSON: {"definition":"définition courte en français","ex
     "r": {
       label: "R américain — /ɹ/",
       emoji: "🌀",
-      color: "#F59E0B",
+      color: "var(--mm-warning)",
       desc: "Le R américain est rétrofléchi — rien à voir avec le R français ou espagnol.",
       guide: [
         { step: "Position", detail: "La langue se recourbe vers l'arrière sans toucher le palais. Les lèvres s'arrondissent légèrement." },
@@ -3710,7 +3596,7 @@ Réponds UNIQUEMENT en JSON: {"definition":"définition courte en français","ex
     "short_vowels": {
       label: "Voyelles courtes /ɪ/ /æ/ /ʌ/",
       emoji: "🎵",
-      color: "#EC4899",
+      color: "var(--mm-primary)",
       desc: "Les voyelles courtes anglaises n'existent pas en français et sont souvent aplaties.",
       guide: [
         { step: "/ɪ/ (bit, sit)", detail: "Plus court et relâché que le 'i' français. La bouche est mi-ouverte. Ne dis pas 'beet', dis 'bit'." },
@@ -3978,23 +3864,23 @@ ${SPEECH_HYGIENE_PROMPT}`,
         @keyframes ink-pop { 0% { opacity: 0; transform: translateY(10px) scale(0.8); } 70% { transform: translateY(-2px) scale(1.1); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         @keyframes realityDistortHeader { 0%, 100% { filter: hue-rotate(0deg) contrast(100%); } 50% { filter: hue-rotate(15deg) contrast(110%); } }
         @keyframes pulseAstral { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.05); opacity: 1; } }
-        .magic-ink-text del { color: #EF4444; text-decoration: none; position: relative; display: inline-block; opacity: 0.8; }
-        .magic-ink-text del::after { content: ''; position: absolute; left: 0; top: 55%; height: 2px; background: #EF4444; animation: ink-strike 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) forwards; box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
-        .magic-ink-text ins { color: #10B981; text-decoration: none; font-weight: 800; display: inline-block; margin: 0 4px; animation: ink-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; position: relative; top: -6px; font-size: 0.9em; text-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
+        .magic-ink-text del { color: var(--mm-danger); text-decoration: none; position: relative; display: inline-block; opacity: 0.8; }
+        .magic-ink-text del::after { content: ''; position: absolute; left: 0; top: 55%; height: 2px; background: var(--mm-danger); animation: ink-strike 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) forwards; box-shadow: 0 0 4px color-mix(in srgb, var(--mm-danger) 40%, transparent); }
+        .magic-ink-text ins { color: var(--mm-success); text-decoration: none; font-weight: 800; display: inline-block; margin: 0 4px; animation: ink-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; position: relative; top: -6px; font-size: 0.9em; text-shadow: 0 0 10px color-mix(in srgb, var(--mm-success) 30%, transparent); }
       `}</style>
       {/* ══ HEADER (Fond Blanc Pur en Light Mode - Format Compact Réduit de Moitié) ══ */}
       <div style={{
         background: isDarkMode
-          ? "radial-gradient(circle at 10% 20%, rgba(37, 99, 235, 0.2), transparent 70%), radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.15), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
-          : "#FFFFFF",
+          ? "radial-gradient(circle at 10% 20%, color-mix(in srgb, var(--mm-primary) 20%, transparent), transparent 70%), radial-gradient(circle at 90% 80%, color-mix(in srgb, var(--mm-primary) 15%, transparent), transparent 70%), var(--mm-bg-elev, var(--mm-bg-card))"
+          : "var(--mm-on-primary)",
         borderRadius: 18, padding: "10px 18px", marginBottom: 12, position: "relative", overflow: "hidden",
-        boxShadow: isDarkMode ? "0 10px 24px rgba(0,0,0,0.35)" : "0 2px 12px rgba(0, 0, 0, 0.03)",
-        border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(15, 23, 42, 0.07)"}`,
+        boxShadow: isDarkMode ? "0 10px 24px color-mix(in srgb, var(--mm-fg) 35%, transparent)" : "0 2px 12px color-mix(in srgb, var(--mm-fg) 3%, transparent)",
+        border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 7%, transparent)"}`,
       }} className="section-header academy-header ep-hero-card">
 
         {/* Effet lumineux de fond Astral (Dark Mode uniquement pour préserver le fond blanc pur en Light Mode) */}
         {isDarkMode && (
-          <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400, background: "radial-gradient(circle, rgba(37, 99, 235, 0.18) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none", animation: "pulseAstral 4s infinite" }} />
+          <div style={{ position: "absolute", top: -100, right: -100, width: 400, height: 400, background: "radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 18%, transparent) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none", animation: "pulseAstral 4s infinite" }} />
         )}
         <div style={{ position: "absolute", top: -20, left: -20, fontSize: 160, opacity: isDarkMode ? 0.04 : 0.02, pointerEvents: "none" }}>🇬🇧</div>
 
@@ -4024,11 +3910,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   marginBottom: 10,
                   padding: "6px 14px",
                   borderRadius: 12,
-                  background: isDarkMode ? "rgba(15, 23, 42, 0.75)" : "rgba(255, 255, 255, 0.9)",
-                  border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.18)"}`,
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 75%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)",
+                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
                   backdropFilter: "blur(14px)",
                   WebkitBackdropFilter: "blur(14px)",
-                  boxShadow: "0 2px 8px rgba(0, 0, 0, 0.04)",
+                  boxShadow: "0 2px 8px color-mix(in srgb, var(--mm-fg) 4%, transparent)",
                   cursor: "pointer",
                   transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)"
                 }}
@@ -4036,17 +3922,17 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 title="Cliquer pour déplier l'en-tête et les statistiques complètes"
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: isDarkMode ? "#F8FAFC" : "#0F172A" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a" }}>
                     🇬🇧 {practiceImmersionMode ? "Full Immersion" : "Practice Room"}
                   </span>
                   <span style={{
-                    background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                    background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                     padding: "2px 8px", borderRadius: 8,
                     fontSize: 11, fontWeight: 900, color: "white"
                   }}>
                     Lv.{lvl} {getLbl(lvl)}
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: isDarkMode ? "#60A5FA" : "#2563EB" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)" }}>
                     {xp.toLocaleString()} XP
                   </span>
                 </div>
@@ -4054,21 +3940,21 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 12 }}>🔥</span>
-                    <span style={{ fontWeight: 800, fontSize: 11.5, color: streak > 0 ? "#F59E0B" : theme?.textMuted || "#64748b" }}>{streak}j</span>
+                    <span style={{ fontWeight: 800, fontSize: 11.5, color: streak > 0 ? "var(--mm-warning)" : theme?.textMuted || "var(--mm-fg-muted)" }}>{streak}j</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontSize: 12 }}>🪙</span>
-                    <span style={{ fontWeight: 800, fontSize: 11.5, color: isDarkMode ? "#FCD34D" : "#D97706" }}>{coins.toLocaleString()}</span>
+                    <span style={{ fontWeight: 800, fontSize: 11.5, color: isDarkMode ? "var(--mm-warning)" : "var(--mm-warning)" }}>{coins.toLocaleString()}</span>
                   </div>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setIsHudCollapsed(false); }}
                     style={{
-                      background: "rgba(37, 99, 235, 0.1)",
+                      background: "color-mix(in srgb, var(--mm-primary) 10%, transparent)",
                       border: "none",
                       borderRadius: 6,
                       padding: "3px 8px",
-                      color: isDarkMode ? "#93C5FD" : "#2563EB",
+                      color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
                       fontSize: 10.5,
                       fontWeight: 800,
                       cursor: "pointer"
@@ -4085,20 +3971,20 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 10, position: "relative", zIndex: 10 }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                  <div style={{ fontSize: 10, fontWeight: 900, color: isDarkMode ? "#60A5FA" : "#2563EB", letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>
+                  <div style={{ fontSize: 10, fontWeight: 900, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", letterSpacing: 1.5, fontFamily: "'JetBrains Mono', monospace", textTransform: "uppercase" }}>
                     ⚡ AI English Training Center
                   </div>
                   <button
                     type="button"
                     onClick={() => setIsHudCollapsed(true)}
                     style={{
-                      background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)",
-                      border: "1px solid var(--mm-border, rgba(0,0,0,0.08))",
+                      background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-fg) 5%, transparent)",
+                      border: "1px solid var(--mm-border, color-mix(in srgb, var(--mm-fg) 8%, transparent))",
                       borderRadius: 6,
                       padding: "1px 6px",
                       fontSize: 9.5,
                       fontWeight: 700,
-                      color: "var(--mm-fg-muted, #64748b)",
+                      color: "var(--mm-fg-muted, var(--mm-fg-muted))",
                       cursor: "pointer"
                     }}
                     title="Réduire l'en-tête pour avoir plus d'espace"
@@ -4106,45 +3992,45 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     ▲ Réduire
                   </button>
                 </div>
-                <h1 style={{ fontSize: 18, fontWeight: 900, color: isDarkMode ? "#F8FAFC" : "#0F172A", margin: 0, letterSpacing: "-0.3px", lineHeight: 1.2 }}>
+                <h1 style={{ fontSize: 18, fontWeight: 900, color: isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a", margin: 0, letterSpacing: "-0.3px", lineHeight: 1.2 }}>
                   {practiceImmersionMode ? "Full Immersion 🇬🇧" : "Practice Room 🇬🇧"}
                 </h1>
               </div>
 
               {/* PLAYER STATUS BAR (HUD COMPACT RÉDUIT DE MOITIÉ) */}
               <div style={{
-                background: isDarkMode ? "rgba(15, 23, 42, 0.7)" : "rgba(255, 255, 255, 0.88)",
-                border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.18)"}`,
+                background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 70%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 88%, transparent)",
+                border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
                 borderRadius: 14, padding: "6px 12px", display: "flex", flexDirection: "column", gap: 5,
                 backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)", minWidth: 240,
-                boxShadow: isDarkMode ? "0 6px 16px rgba(0,0,0,0.25)" : "0 2px 10px rgba(37, 99, 235, 0.06)"
+                boxShadow: isDarkMode ? "0 6px 16px color-mix(in srgb, var(--mm-fg) 25%, transparent)" : "0 2px 10px color-mix(in srgb, var(--mm-primary) 6%, transparent)"
               }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <div style={{ background: "linear-gradient(135deg, #2563EB, #1D4ED8)", padding: "2px 8px", borderRadius: 8, fontWeight: 900, fontSize: 11, color: "white" }}>
+                    <div style={{ background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", padding: "2px 8px", borderRadius: 8, fontWeight: 900, fontSize: 11, color: "white" }}>
                       Lv.{lvl} {getLbl(lvl)}
                     </div>
-                    <div style={{ fontSize: 11.5, color: isDarkMode ? "#60A5FA" : "#1D4ED8", fontWeight: 700 }}>{xp.toLocaleString()} XP</div>
+                    <div style={{ fontSize: 11.5, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", fontWeight: 700 }}>{xp.toLocaleString()} XP</div>
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <div title="Streak" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(37, 99, 235, 0.05)", borderRadius: 6, padding: "2px 6px" }}>
+                    <div title="Streak" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)", borderRadius: 6, padding: "2px 6px" }}>
                       <span style={{ fontSize: 12, animation: streak > 0 ? "pulse 1.5s infinite" : "none" }}>🔥</span>
-                      <span style={{ fontWeight: 800, color: streak > 0 ? "#F59E0B" : theme?.textMuted || "#64748b", fontSize: 11.5 }}>{streak}j</span>
+                      <span style={{ fontWeight: 800, color: streak > 0 ? "var(--mm-warning)" : theme?.textMuted || "var(--mm-fg-muted)", fontSize: 11.5 }}>{streak}j</span>
                     </div>
-                    <div title="Coins" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(37, 99, 235, 0.05)", borderRadius: 6, padding: "2px 6px" }}>
+                    <div title="Coins" style={{ display: "flex", alignItems: "center", gap: 3, background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)", borderRadius: 6, padding: "2px 6px" }}>
                       <span style={{ fontSize: 12 }}>🪙</span>
-                      <span style={{ fontWeight: 800, color: isDarkMode ? "#FCD34D" : "#D97706", fontSize: 11.5 }}>{coins.toLocaleString()}</span>
+                      <span style={{ fontWeight: 800, color: isDarkMode ? "var(--mm-warning)" : "var(--mm-warning)", fontSize: 11.5 }}>{coins.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>
                 <div>
-                  <div style={{ height: 3, background: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(37, 99, 235, 0.1)", borderRadius: 2, overflow: "hidden", position: "relative" }}>
-                    <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, #2563EB, #60A5FA)", borderRadius: 2, transition: "width 0.8s ease" }} />
+                  <div style={{ height: 3, background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)", borderRadius: 2, overflow: "hidden", position: "relative" }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, var(--mm-primary), var(--mm-primary-glow))", borderRadius: 2, transition: "width 0.8s ease" }} />
                   </div>
                 </div>
                 {/* XP popup toast intra-HUD */}
                 {practiceXpPopup && (
-                  <div style={{ position: "absolute", top: -12, right: 0, background: "linear-gradient(135deg,#059669,#10B981)", color: "white", borderRadius: 8, padding: "2px 8px", fontWeight: 900, fontSize: 10.5, animation: "fadeUp 0.3s ease forwards", pointerEvents: "none", zIndex: 100, boxShadow: "0 4px 10px rgba(16,185,129,0.3)" }}>
+                  <div style={{ position: "absolute", top: -12, right: 0, background: "linear-gradient(135deg,var(--mm-success),var(--mm-success))", color: "white", borderRadius: 8, padding: "2px 8px", fontWeight: 900, fontSize: 10.5, animation: "fadeUp 0.3s ease forwards", pointerEvents: "none", zIndex: 100, boxShadow: "0 4px 10px color-mix(in srgb, var(--mm-success) 30%, transparent)" }}>
                     +{practiceXpPopup.xp} XP {practiceXpPopup.coins > 0 ? `• +${practiceXpPopup.coins} 🪙` : ""}
                   </div>
                 )}
@@ -4156,9 +4042,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
         {/* ── COMMAND DOCK : BARRE UNIQUE STICKY (toutes les vues) ── */}
         <div style={{
           position: "sticky", top: 0, zIndex: 100,
-          background: isDarkMode ? "rgba(10, 17, 40, 0.85)" : "rgba(255, 255, 255, 0.9)",
+          background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 85%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)",
           backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-          borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}`,
+          borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`,
           marginLeft: -36, marginRight: -36, paddingLeft: 36, paddingRight: 36,
           paddingTop: 12, paddingBottom: 12,
         }}>
@@ -4184,7 +4070,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   border: "1px solid var(--mm-primary-glow)", borderRadius: 14, color: "white",
                   fontWeight: 900, fontSize: 13, cursor: "pointer",
                   display: "inline-flex", alignItems: "center", gap: 6,
-                  boxShadow: "0 4px 14px rgba(37, 99, 235, 0.25)",
+                  boxShadow: "0 4px 14px color-mix(in srgb, var(--mm-primary) 25%, transparent)",
                   whiteSpace: "nowrap", flexShrink: 0
                 }}
               >
@@ -4197,11 +4083,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div className="tabs-scroll english-tabs-cluster ep-tabbar" role="tablist" aria-label="Modes de pratique">
               {[
                 { id: "chat", icon: "🎙️", label: "Live Nova", accent: "var(--mm-primary)" },
-                { id: "reallife", icon: "🌍", label: "RealLife", accent: "#F97316" },
-                { id: "wild", icon: "📺", label: "In The Wild", accent: "#F97316" },
-                { id: "debate", icon: "⚖️", label: "Débat", accent: "#EAB308" },
-                { id: "roleplay", icon: "🎭", label: "Roleplay", accent: "#D946EF" },
-                { id: "writing", icon: "📝", label: "Écriture", accent: "#22C55E" },
+                { id: "reallife", icon: "🌍", label: "RealLife", accent: "var(--mm-warning)" },
+                { id: "wild", icon: "📺", label: "In The Wild", accent: "var(--mm-warning)" },
+                { id: "debate", icon: "⚖️", label: "Débat", accent: "var(--mm-warning)" },
+                { id: "roleplay", icon: "🎭", label: "Roleplay", accent: "var(--mm-primary)" },
+                { id: "writing", icon: "📝", label: "Écriture", accent: "var(--mm-success)" },
                 { id: "dictation", icon: "✍️", label: "Dictée", accent: "var(--mm-primary)" },
               ].map(tab => {
                 const isActive = practiceSubView === tab.id;
@@ -4234,18 +4120,18 @@ ${SPEECH_HYGIENE_PROMPT}`,
           className="ep-glass-panel ep-live-nova-panel"
           style={{
             position: "relative",
-            border: `1px solid ${isDarkMode ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.22)"}`,
+            border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, transparent)"}`,
             borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column",
             height: "clamp(440px, 70vh, 640px)",
             paddingBottom: 0,
-            boxShadow: isDarkMode ? "0 16px 36px rgba(0,0,0,0.4)" : "0 10px 28px rgba(37,99,235,0.08)"
+            boxShadow: isDarkMode ? "0 16px 36px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 28px color-mix(in srgb, var(--mm-primary) 8%, transparent)"
           }}
         >
           {/* ── CHAT TOP HEADER BAR (Statut + Historique + Profil) ── */}
           <div style={{
             padding: "10px 14px",
-            borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(37, 99, 235, 0.12)"}`,
-            background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(241, 245, 249, 0.85)",
+            borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
+            background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 85%, transparent)",
             backdropFilter: "blur(14px)",
             WebkitBackdropFilter: "blur(14px)",
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
@@ -4254,13 +4140,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
             {/* Statut Nova */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
               <div style={{ position: "relative", width: 9, height: 9, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ position: "absolute", inset: -2, borderRadius: "50%", background: "#10B981", animation: "ping 2s cubic-bezier(0, 0, 0.2, 1) infinite", opacity: 0.6 }} />
-                <span style={{ position: "relative", width: 8, height: 8, borderRadius: "50%", background: "#10B981" }} />
+                <span style={{ position: "absolute", inset: -2, borderRadius: "50%", background: "var(--mm-success)", animation: "ping 2s cubic-bezier(0, 0, 0.2, 1) infinite", opacity: 0.6 }} />
+                <span style={{ position: "relative", width: 8, height: 8, borderRadius: "50%", background: "var(--mm-success)" }} />
               </div>
-              <span style={{ fontSize: 12.5, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#1E40AF", letterSpacing: "0.2px" }}>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", letterSpacing: "0.2px" }}>
                 Coach NOVA
               </span>
-              <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.08)", color: isDarkMode ? "#93C5FD" : "#2563EB", fontWeight: 700 }}>
+              <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 6, background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, transparent)", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", fontWeight: 700 }}>
                 En direct
               </span>
             </div>
@@ -4280,10 +4166,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   background: subtitlesEnabled
-                    ? (isDarkMode ? "rgba(37,99,235,0.3)" : "rgba(37,99,235,0.14)")
-                    : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"),
-                  border: `1px solid ${subtitlesEnabled ? (isDarkMode ? "rgba(59,130,246,0.35)" : "rgba(59,130,246,0.25)") : "transparent"}`,
-                  color: subtitlesEnabled ? (isDarkMode ? "#93C5FD" : "#1D4ED8") : theme.textMuted,
+                    ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 14%, transparent)")
+                    : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-fg) 5%, transparent)"),
+                  border: `1px solid ${subtitlesEnabled ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25%, transparent)") : "transparent"}`,
+                  color: subtitlesEnabled ? (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)") : theme.textMuted,
                   padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700,
                   whiteSpace: "nowrap",
                   transition: "all 0.2s ease"
@@ -4298,10 +4184,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   background: chatShowHistory
-                    ? (isDarkMode ? "rgba(37,99,235,0.3)" : "rgba(37,99,235,0.14)")
-                    : (isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.9)"),
-                  border: `1px solid ${isDarkMode ? "rgba(59,130,246,0.3)" : "rgba(59,130,246,0.2)"}`,
-                  color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+                    ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 14%, transparent)")
+                    : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)"),
+                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
+                  color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
                   padding: "4px 8px", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 700,
                   whiteSpace: "nowrap",
                   transition: "all 0.2s"
@@ -4323,9 +4209,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       }
                     }}
                     style={{
-                      background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                      background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                       border: "none", color: "white", padding: "4px 10px", borderRadius: 16, cursor: "pointer",
-                      fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)",
+                      fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px color-mix(in srgb, var(--mm-primary) 25%, transparent)",
                       whiteSpace: "nowrap", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis"
                     }}
                   >
@@ -4343,9 +4229,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       }
                     }}
                     style={{
-                      background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.9)",
-                      border: `1px dashed ${isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(59,130,246,0.35)"}`,
-                      color: isDarkMode ? theme.textMuted : "#1D4ED8",
+                      background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)",
+                      border: `1px dashed ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 35%, transparent)"}`,
+                      color: isDarkMode ? theme.textMuted : "var(--mm-primary)",
                       padding: "4px 8px", borderRadius: 16, cursor: "pointer", fontSize: 11, fontWeight: 700,
                       whiteSpace: "nowrap"
                     }}
@@ -4401,11 +4287,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   );
                 })
               ) : (
-                <span style={{ fontSize: 11, color: isDarkMode ? "#94A3B8" : "#64748B", fontStyle: "italic" }}>
-                  {novaDailyTargetMode === "free"
-                    ? "Conversation libre — parle de n'importe quel sujet"
-                    : "Aucune fiche cible — conversation ouverte"}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", fontWeight: 800 }}>
+                    ✨ 100 sujets réels intégrés
+                  </span>
+                  <span style={{ fontSize: 11, color: isDarkMode ? "var(--mm-fg-muted)" : "var(--mm-fg-muted)" }}>
+                    · Nova te propose directement les thèmes et te pousse à parler à l'oral
+                  </span>
+                </div>
               )}
             </div>
           </div>
@@ -4416,7 +4305,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "20px 0" }}>
                 <div style={{
                   width: 60, height: 60, borderRadius: "50%",
-                  background: "radial-gradient(circle, rgba(37,99,235,0.18), transparent 70%)",
+                  background: "radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 18%, transparent), transparent 70%)",
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 12
                 }}>
                   {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "🎯" : "✨"}
@@ -4424,22 +4313,22 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 <h3 style={{ margin: "0 0 6px 0", color: theme.text, fontSize: 18, fontWeight: 800 }}>
                   {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0
                     ? (dailyOralTargetsData.totalReviewedToday > 0 ? "Prêt pour tes fiches du jour ?" : "Prêt à t'entraîner avec Nova ?")
-                    : "Ready to chat?"}
+                    : "Envie d'échanger comme dans la vraie vie ?"}
                 </h3>
-                <p style={{ margin: "0 0 18px 0", color: theme.textMuted, fontSize: 13.5, textAlign: "center", maxWidth: 340, lineHeight: 1.5 }}>
+                <p style={{ margin: "0 0 18px 0", color: theme.textMuted, fontSize: 13.5, textAlign: "center", maxWidth: 360, lineHeight: 1.5 }}>
                   {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0
                     ? `Nova lance un sujet immersif pour t'amener naturellement à placer tes ${dailyOralTargetsData.targets.length} expressions cibles.`
-                    : "Démarre une conversation vivante avec NOVA, ton coach d’anglais interactif."}
+                    : "Nova t'accueille naturellement, te demande de quoi tu veux parler ou te propose des sujets pour t'exprimer sans filtre."}
                 </p>
                 <button
-                  onClick={() => generateDynamicGreeting()}
+                  onClick={() => handleStartLiveNova()}
                   style={{
-                    background: "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                    background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                     color: "white", border: "none", padding: "12px 24px", borderRadius: 999, fontWeight: 800, fontSize: 14, cursor: "pointer",
-                    boxShadow: "0 6px 20px rgba(37, 99, 235, 0.35)", transition: "transform 0.15s ease"
+                    boxShadow: "0 6px 20px color-mix(in srgb, var(--mm-primary) 35%, transparent)", transition: "transform 0.15s ease"
                   }}
                 >
-                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "🎙️ Lancer la mission du jour" : "Démarrer la discussion"}
+                  {novaDailyTargetMode === "daily" && dailyOralTargetsData.targets.length > 0 ? "🎙️ Lancer la mission du jour" : "🎙️ Parler avec Nova (Vie réelle)"}
                 </button>
               </div>
             )}
@@ -4458,9 +4347,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     {!isUser && (
                       <div style={{
                         width: 34, height: 34, borderRadius: "50%", flexShrink: 0,
-                        background: "linear-gradient(135deg, #2563EB, #60A5FA)",
+                        background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 16, color: "white", boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)"
+                        fontSize: 16, color: "white", boxShadow: "0 4px 12px color-mix(in srgb, var(--mm-primary) 25%, transparent)"
                       }}>
                         ✨
                       </div>
@@ -4471,30 +4360,30 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       style={{
                         maxWidth: "82%",
                         background: isUser
-                          ? "linear-gradient(135deg, #2563EB, #1D4ED8)"
-                          : (isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.96)"),
-                        color: isUser ? "#FFFFFF" : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                          ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
+                          : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-card) 95%, transparent)" : "#ffffff"),
+                        color: isUser ? "var(--mm-on-primary, #ffffff)" : (isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a"),
                         borderRadius: isUser ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
-                        border: isUser ? "none" : `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.2)"}`,
-                        boxShadow: isUser ? "0 6px 18px rgba(37, 99, 235, 0.28)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.08)"),
+                        border: isUser ? "none" : `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
+                        boxShadow: isUser ? "0 6px 18px color-mix(in srgb, var(--mm-primary) 28%, transparent)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.35)" : "0 8px 24px color-mix(in srgb, var(--mm-primary) 8%, transparent)"),
                         padding: "14px 18px", fontSize: 14.5, lineHeight: 1.6
                       }}
                     >
                       {!isUser && (
-                        <div style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#2563EB", marginBottom: 4, letterSpacing: "0.4px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", marginBottom: 4, letterSpacing: "0.4px" }}>
                           COACH NOVA
                         </div>
                       )}
-                      <div>{msg.text}</div>
+                      <div style={{ color: isUser ? "var(--mm-on-primary, #ffffff)" : (isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a") }}>{msg.text}</div>
                       {msg.needsPlay && (
                         <button
                           onClick={() => { markInteracted(); speakText(msg.text, true); }}
                           style={{
                             display: "inline-flex", alignItems: "center", gap: 6,
-                            marginTop: 10, background: isUser ? "rgba(255,255,255,0.2)" : (isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.1)"),
-                            border: `1px solid ${isUser ? "rgba(255,255,255,0.3)" : "rgba(37,99,235,0.2)"}`,
+                            marginTop: 10, background: isUser ? "color-mix(in srgb, var(--mm-bg-elev) 20%, transparent)" : (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)"),
+                            border: `1px solid ${isUser ? "color-mix(in srgb, var(--mm-bg-elev) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
                             borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700,
-                            color: isUser ? "white" : (isDarkMode ? "#93C5FD" : "#1D4ED8"), transition: "all 0.15s"
+                            color: isUser ? "white" : (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)"), transition: "all 0.15s"
                           }}
                         >
                           🔊 Écouter
@@ -4508,11 +4397,12 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
             {/* Transcriptions LiveKit en temps réel (si Sous-titres ON) */}
             {customAgent.isConnected && subtitlesEnabled && (() => {
-              const lastLkUser = [...liveKitTranscriptions].reverse().find(msg => msg.role === "user");
-              const lastLkAgent = [...liveKitTranscriptions].reverse().find(msg => msg.role === "agent");
+              const turns = groupSpeechTurns(liveKitTranscriptions);
+              const lastLkUser = [...turns].reverse().find(msg => msg.role === "user");
+              const lastLkAgent = [...turns].reverse().find(msg => msg.role === "agent");
               const displayLkMsgs = chatShowHistory
-                ? liveKitTranscriptions
-                : liveKitTranscriptions.filter(m => m === lastLkUser || m === lastLkAgent);
+                ? turns
+                : turns.filter(m => m === lastLkUser || m === lastLkAgent);
 
               return displayLkMsgs.map((msg, i) => {
                 const isUser = msg.role === "user";
@@ -4521,9 +4411,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     {!isUser && (
                       <div style={{
                         width: 34, height: 34, borderRadius: "50%", flexShrink: 0,
-                        background: "linear-gradient(135deg, #2563EB, #60A5FA)",
+                        background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))",
                         display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 16, color: "white", boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)"
+                        fontSize: 16, color: "white", boxShadow: "0 4px 12px color-mix(in srgb, var(--mm-primary) 25%, transparent)"
                       }}>
                         ✨
                       </div>
@@ -4533,29 +4423,57 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       borderRadius: isUser ? "20px 20px 4px 20px" : "20px 20px 20px 4px",
                       wordBreak: "break-word",
                       background: isUser
-                        ? "linear-gradient(135deg, #2563EB, #1D4ED8)"
-                        : (isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.96)"),
-                      color: isUser ? "#FFFFFF" : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                        ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
+                        : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-card) 95%, transparent)" : "#ffffff"),
+                      color: isUser ? "var(--mm-on-primary, #ffffff)" : (isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a"),
                       fontSize: 14.5, lineHeight: 1.6, fontWeight: 500,
-                      boxShadow: isUser ? "0 6px 18px rgba(37, 99, 235, 0.28)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.08)"),
-                      border: isUser ? "none" : `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.2)"}`,
+                      boxShadow: isUser ? "0 6px 18px color-mix(in srgb, var(--mm-primary) 28%, transparent)" : (isDarkMode ? "0 8px 24px rgba(0,0,0,0.35)" : "0 8px 24px color-mix(in srgb, var(--mm-primary) 8%, transparent)"),
+                      border: isUser ? "none" : `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
                       opacity: msg.isFinal ? 1 : 0.88,
                     }}>
                       {!isUser && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "#93C5FD" : "#2563EB", letterSpacing: "0.4px" }}>
-                            COACH NOVA
-                          </span>
-                          {!msg.isFinal && (
-                            <span style={{ fontSize: 10, background: "rgba(37,99,235,0.15)", color: isDarkMode ? "#93C5FD" : "#2563EB", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
-                              en direct…
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, marginBottom: 4 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", letterSpacing: "0.4px" }}>
+                              COACH NOVA
                             </span>
+                            {!msg.isFinal && (
+                              <span style={{ fontSize: 10, background: "color-mix(in srgb, var(--mm-primary) 15%, transparent)", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", padding: "1px 6px", borderRadius: 4, fontWeight: 700 }}>
+                                en direct…
+                              </span>
+                            )}
+                          </div>
+                          {msg.isFinal && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleQuickSaveExpression(msg.text, lastLkUser?.text);
+                              }}
+                              title="Créer les fiches pour toutes les expressions de cette réplique de Nova"
+                              style={{
+                                background: "color-mix(in srgb, var(--mm-primary) 12%, transparent)",
+                                border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, transparent)"}`,
+                                borderRadius: 8,
+                                padding: "2px 8px",
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                transition: "all 0.2s ease",
+                              }}
+                            >
+                              💡 + Fiches
+                            </button>
                           )}
                         </div>
                       )}
-                      <div>
+                      <div style={{ color: isUser ? "var(--mm-on-primary, #ffffff)" : (isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a") }}>
                         {msg.text}
-                        {!msg.isFinal && <span style={{ display: "inline-block", marginLeft: 4, animation: "pulse 1s infinite", color: "#2563EB" }}>●</span>}
+                        {!msg.isFinal && <span style={{ display: "inline-block", marginLeft: 4, animation: "pulse 1s infinite", color: "var(--mm-primary)" }}>●</span>}
                       </div>
                     </div>
                   </div>
@@ -4565,13 +4483,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
             {practiceLoading && (
               <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-                <div style={{ width: 34, height: 34, borderRadius: "50%", background: "linear-gradient(135deg, #2563EB, #60A5FA)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white" }}>
+                <div style={{ width: 34, height: 34, borderRadius: "50%", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white" }}>
                   ✨
                 </div>
-                <div style={{ padding: "12px 18px", borderRadius: "18px 18px 18px 4px", background: isDarkMode ? "rgba(15, 23, 42, 0.8)" : "rgba(255, 255, 255, 0.95)", border: `1px solid rgba(59, 130, 246, 0.2)`, display: "flex", gap: 6, alignItems: "center" }}>
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s infinite" }} />
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s 0.2s infinite" }} />
-                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2563EB", animation: "pulse 0.8s 0.4s infinite" }} />
+                <div style={{ padding: "12px 18px", borderRadius: "18px 18px 18px 4px", background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 80%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 95%, transparent)", border: `1px solid color-mix(in srgb, var(--mm-primary) 20%, transparent)`, display: "flex", gap: 6, alignItems: "center" }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--mm-primary)", animation: "pulse 0.8s infinite" }} />
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--mm-primary)", animation: "pulse 0.8s 0.2s infinite" }} />
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--mm-primary)", animation: "pulse 0.8s 0.4s infinite" }} />
                 </div>
               </div>
             )}
@@ -4585,10 +4503,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
               }}>
                 <div style={{
                   width: 72, height: 72, borderRadius: "50%",
-                  background: "radial-gradient(circle, rgba(37,99,235,0.18), transparent 70%)",
-                  border: "1px solid rgba(59,130,246,0.3)",
+                  background: "radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 18%, transparent), transparent 70%)",
+                  border: "1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)",
                   display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32,
-                  boxShadow: "0 8px 24px rgba(37,99,235,0.15)"
+                  boxShadow: "0 8px 24px color-mix(in srgb, var(--mm-primary) 15%, transparent)"
                 }}>
                   🎧
                 </div>
@@ -4600,7 +4518,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       key={idx}
                       style={{
                         width: 4, height: 24, borderRadius: 2,
-                        background: "linear-gradient(180deg, #2563EB, #60A5FA)",
+                        background: "linear-gradient(180deg, var(--mm-primary), var(--mm-primary-glow))",
                         animation: customAgent.isSpeaking ? `mm-pulse 1s infinite ${delay * 0.2}s` : "none",
                         opacity: customAgent.isSpeaking ? 1 : 0.4
                       }}
@@ -4627,9 +4545,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 6,
                     padding: "8px 16px", borderRadius: 12,
-                    background: isDarkMode ? "rgba(37,99,235,0.2)" : "rgba(37,99,235,0.1)",
-                    border: "1px solid rgba(59,130,246,0.3)",
-                    color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+                    background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)",
+                    border: "1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)",
+                    color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
                     fontSize: 12.5, fontWeight: 700, cursor: "pointer",
                     transition: "all 0.2s ease"
                   }}
@@ -4644,10 +4562,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
           {/* ── DOCK VOCAL COMPACT STYLE CHATGPT (Épuré & Ultra-gain d'espace) ── */}
           <div style={{
             padding: "10px 16px",
-            borderTop: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(37, 99, 235, 0.12)"}`,
+            borderTop: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
             background: isDarkMode
-              ? "linear-gradient(180deg, rgba(15, 23, 42, 0.85) 0%, rgba(10, 15, 28, 0.98) 100%)"
-              : "linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(241, 245, 249, 0.98) 100%)",
+              ? "linear-gradient(180deg, color-mix(in srgb, var(--mm-primary) 85%, transparent) 0%, color-mix(in srgb, var(--mm-primary) 98%, transparent) 100%)"
+              : "linear-gradient(180deg, color-mix(in srgb, var(--mm-bg-elev) 94%, transparent) 0%, color-mix(in srgb, var(--mm-bg-elev) 98%, transparent) 100%)",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
             display: "flex",
@@ -4663,14 +4581,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
               <span style={{
                 position: "relative", width: 8, height: 8, borderRadius: "50%",
-                background: customAgent.isConnected ? "#10B981" : (isDarkMode ? "#60A5FA" : "#2563EB"),
-                boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "none",
+                background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)"),
+                boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
                 flexShrink: 0
               }}>
                 {customAgent.isConnected && (
                   <span style={{
                     position: "absolute", inset: -3, borderRadius: "50%",
-                    border: "2px solid #10B981", animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite", opacity: 0.6
+                    border: "2px solid var(--mm-success)", animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite", opacity: 0.6
                   }} />
                 )}
               </span>
@@ -4678,8 +4596,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 <span style={{
                   fontSize: 13, fontWeight: 800,
                   color: customAgent.isConnected
-                    ? (customAgent.isSpeaking ? "#10B981" : (isDarkMode ? "#93C5FD" : "#1D4ED8"))
-                    : (isDarkMode ? "#F8FAFC" : "#0F172A"),
+                    ? (customAgent.isSpeaking ? "var(--mm-success)" : (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)"))
+                    : (isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a"),
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"
                 }}>
                   {customAgent.isConnected
@@ -4694,7 +4612,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             : "NOVA est prête")
                     : "Session vocale NOVA"}
                 </span>
-                <span style={{ fontSize: 11, fontWeight: 500, color: isDarkMode ? "#94A3B8" : "#64748B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: isDarkMode ? "var(--mm-fg-muted)" : "var(--mm-fg-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {practiceTopic ? `Sujet : ${practiceTopic}` : "Parle librement en anglais"}
                 </span>
               </div>
@@ -4734,16 +4652,16 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   justifyContent: "center",
                   background: sessionCardsCount > 0
                     ? (isDarkMode
-                        ? "linear-gradient(135deg, rgba(37,99,235,0.4), rgba(29,78,216,0.65))"
-                        : "linear-gradient(135deg, #EFF6FF, #DBEAFE)")
-                    : (isDarkMode ? "rgba(30, 41, 59, 0.65)" : "rgba(241, 245, 249, 0.85)"),
+                        ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 40%, transparent), color-mix(in srgb, var(--mm-primary) 65%, transparent))"
+                        : "linear-gradient(135deg, var(--mm-bg-elev), var(--mm-bg-elev))")
+                    : (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 85%, transparent)"),
                   border: sessionCardsCount > 0
-                    ? `1.5px solid ${isDarkMode ? "rgba(96,165,250,0.65)" : "rgba(37,99,235,0.5)"}`
-                    : `1px solid ${isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}`,
+                    ? `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-primary) 50%, transparent)"}`
+                    : `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`,
                   boxShadow: sessionCardsCount > 0
                     ? (isDarkMode
-                        ? "0 4px 14px rgba(37, 99, 235, 0.4), inset 0 1px 0 rgba(255,255,255,0.25)"
-                        : "0 4px 14px rgba(37, 99, 235, 0.22), inset 0 1px 0 rgba(255,255,255,0.85)")
+                        ? "0 4px 14px color-mix(in srgb, var(--mm-primary) 40%, transparent), inset 0 1px 0 color-mix(in srgb, var(--mm-bg-elev) 25%, transparent)"
+                        : "0 4px 14px color-mix(in srgb, var(--mm-primary) 22%, transparent), inset 0 1px 0 color-mix(in srgb, var(--mm-bg-elev) 85%, transparent)")
                     : "none",
                   position: "relative",
                   transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
@@ -4763,8 +4681,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   fontSize: 12,
                   fontWeight: 900,
                   color: sessionCardsCount > 0
-                    ? (isDarkMode ? "#93C5FD" : "#1D4ED8")
-                    : (isDarkMode ? "#94A3B8" : "#64748B"),
+                    ? (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)")
+                    : (isDarkMode ? "var(--mm-fg-muted)" : "var(--mm-fg-muted)"),
                   lineHeight: 1,
                   fontFamily: "'JetBrains Mono', monospace"
                 }}>
@@ -4780,8 +4698,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     width: 10,
                     height: 10,
                     borderRadius: "50%",
-                    background: "#10B981",
-                    boxShadow: "0 0 8px #10B981",
+                    background: "var(--mm-success)",
+                    boxShadow: "0 0 8px var(--mm-success)",
                     animation: "pulse 2s infinite"
                   }} />
                 )}
@@ -4793,8 +4711,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
           {agentError && (
             <div style={{
               padding: "8px 14px",
-              background: "#FEF2F2",
-              color: "#EF4444",
+              background: "var(--mm-bg-elev)",
+              color: "var(--mm-danger)",
               borderRadius: 10,
               fontSize: 13,
               fontWeight: 600,
@@ -4927,7 +4845,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     <span className="ev-today-reviewed-badge">{todayReviewedExpressions.length}</span>
                     <ChevronDown size={12} className={`ev-today-chevron ${showReviewedDrawer ? "is-open" : ""}`} />
                   </button>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--mm-primary, #b4552d)", whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--mm-primary, var(--mm-danger))", whiteSpace: "nowrap" }}>
                     {showWritingTip ? "▲ Replier" : "💡 Astuce & Thèmes"}
                   </span>
                 </div>
@@ -4938,7 +4856,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 <div
                   className="ev-today-reviewed-drawer"
                   onClick={(e) => e.stopPropagation()}
-                  style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed rgba(180, 85, 45, 0.25)" }}
+                  style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed color-mix(in srgb, var(--mm-danger) 25%, transparent)" }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 6 }}>
                     <div style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-fg)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -4989,7 +4907,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               )}
 
               {showWritingTip && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed rgba(180, 85, 45, 0.2)", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed color-mix(in srgb, var(--mm-danger) 20%, transparent)", display: "flex", flexWrap: "wrap", gap: 6 }}>
                   <span style={{ fontSize: 11, color: "var(--mm-fg-muted)", marginRight: 4, alignSelf: "center" }}>Thèmes recommandés :</span>
                   {IELTS_TOPIC_BANK.map((item, idx) => (
                     <button
@@ -5116,7 +5034,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     <span
                       className="ev-report-toggle-score"
                       style={{
-                        background: practiceWritingFeedback.score >= 7 ? "#10B981" : practiceWritingFeedback.score >= 5.5 ? "#F59E0B" : "#EF4444"
+                        background: practiceWritingFeedback.score >= 7 ? "var(--mm-success)" : practiceWritingFeedback.score >= 5.5 ? "var(--mm-warning)" : "var(--mm-danger)"
                       }}
                     >
                       Score {practiceWritingFeedback.score}
@@ -5135,8 +5053,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         className="ev-wl-score-orb"
                         style={{
                           background: `linear-gradient(135deg, ${
-                            practiceWritingFeedback.score >= 7 ? "#10B981" :
-                            practiceWritingFeedback.score >= 5.5 ? "#F59E0B" : "#EF4444"
+                            practiceWritingFeedback.score >= 7 ? "var(--mm-success)" :
+                            practiceWritingFeedback.score >= 5.5 ? "var(--mm-warning)" : "var(--mm-danger)"
                           }, var(--mm-primary))`
                         }}
                       >
@@ -5189,8 +5107,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             >
                               <div className="ev-overview-shortcut-header">
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <Sparkles size={16} color="#10B981" />
-                                  <span className="ev-overview-shortcut-title" style={{ color: "#10B981" }}>Version Corrigée &amp; Audio</span>
+                                  <Sparkles size={16} color="var(--mm-success)" />
+                                  <span className="ev-overview-shortcut-title" style={{ color: "var(--mm-success)" }}>Version Corrigée &amp; Audio</span>
                                 </div>
                                 <span className="ev-overview-shortcut-cta">Ouvrir ➔</span>
                               </div>
@@ -5211,8 +5129,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             >
                               <div className="ev-overview-shortcut-header">
                                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                  <Search size={16} color="#EF4444" />
-                                  <span className="ev-overview-shortcut-title" style={{ color: "#EF4444" }}>
+                                  <Search size={16} color="var(--mm-danger)" />
+                                  <span className="ev-overview-shortcut-title" style={{ color: "var(--mm-danger)" }}>
                                     Diagnostic Ciblé ({practiceWritingFeedback.mistakes.length} fautes)
                                   </span>
                                 </div>
@@ -5258,8 +5176,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             data-accent="success"
                           >
                             <div className="ev-ielts-card-header">
-                              <span className="ev-ielts-card-label" style={{ color: "#10B981" }}>STRUCTURE</span>
-                              <span className="ev-ielts-card-link" style={{ color: "#10B981" }}>Détails ↗</span>
+                              <span className="ev-ielts-card-label" style={{ color: "var(--mm-success)" }}>STRUCTURE</span>
+                              <span className="ev-ielts-card-link" style={{ color: "var(--mm-success)" }}>Détails ↗</span>
                             </div>
                             <div className="ev-ielts-card-preview">{practiceWritingFeedback.structureFeedback}</div>
                           </div>
@@ -5270,8 +5188,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             data-accent="danger"
                           >
                             <div className="ev-ielts-card-header">
-                              <span className="ev-ielts-card-label" style={{ color: "#EF4444" }}>MAGIC INK</span>
-                              <span className="ev-ielts-card-link" style={{ color: "#EF4444" }}>Voir ↗</span>
+                              <span className="ev-ielts-card-label" style={{ color: "var(--mm-danger)" }}>MAGIC INK</span>
+                              <span className="ev-ielts-card-link" style={{ color: "var(--mm-danger)" }}>Voir ↗</span>
                             </div>
                             <div className="ev-ielts-card-preview">Consulter le texte avec les erreurs surlignées et les corrections.</div>
                           </div>
@@ -5296,14 +5214,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
                     {(ieltsActiveTab === "structure" || ieltsActiveTab === "all") && (
                       <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="success">
-                        <div className="ev-ielts-detail-label" style={{ color: "#10B981" }}>LOGIQUE &amp; STRUCTURE DU DISCOURS</div>
+                        <div className="ev-ielts-detail-label" style={{ color: "var(--mm-success)" }}>LOGIQUE &amp; STRUCTURE DU DISCOURS</div>
                         <div className="ev-ielts-detail-text">{practiceWritingFeedback.structureFeedback}</div>
                       </div>
                     )}
 
                     {(ieltsActiveTab === "magicink" || ieltsActiveTab === "all") && (
                       <div className="ev-ielts-detail-card ev-ielts-magicink-card" data-accent="danger">
-                        <div className="ev-ielts-detail-label" style={{ color: "#EF4444" }}>MAGIC INK — CORRECTIONS ANNOTÉES</div>
+                        <div className="ev-ielts-detail-label" style={{ color: "var(--mm-danger)" }}>MAGIC INK — CORRECTIONS ANNOTÉES</div>
                         <div
                           className="liquid-morph-text ev-ielts-magicink-text"
                           dangerouslySetInnerHTML={safeHTML((practiceWritingFeedback.magicInkText || practiceWritingFeedback.correctedText || "").replace(/\n/g, "<br/>"))}
@@ -5312,9 +5230,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     )}
 
                     {(ieltsActiveTab === "corrected" || ieltsActiveTab === "all") && (
-                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="success" style={{ borderLeft: "4px solid #10B981" }}>
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="success" style={{ borderLeft: "4px solid var(--mm-success)" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-                          <div className="ev-ielts-detail-label" style={{ color: "#10B981", margin: 0 }}>VERSION INTÉGRALEMENT CORRIGÉE EN ANGLAIS</div>
+                          <div className="ev-ielts-detail-label" style={{ color: "var(--mm-success)", margin: 0 }}>VERSION INTÉGRALEMENT CORRIGÉE EN ANGLAIS</div>
                           {practiceWritingFeedback.correctedText && (
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                               <button
@@ -5340,7 +5258,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 onClick={() => handleCopyText(practiceWritingFeedback.correctedText, "editor-active")}
                                 className="ev-history-copy-btn"
                               >
-                                {copiedDraftId === "editor-active" ? <Check size={13} color="#10B981" /> : <Copy size={13} />}
+                                {copiedDraftId === "editor-active" ? <Check size={13} color="var(--mm-success)" /> : <Copy size={13} />}
                                 <span>{copiedDraftId === "editor-active" ? "Copié !" : "Copier"}</span>
                               </button>
                             </div>
@@ -5359,8 +5277,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     )}
 
                     {(ieltsActiveTab === "mistakes" || ieltsActiveTab === "all") && practiceWritingFeedback.mistakes && practiceWritingFeedback.mistakes.length > 0 && (
-                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="danger" style={{ borderLeft: "4px solid #EF4444" }}>
-                        <div className="ev-ielts-detail-label" style={{ color: "#EF4444", marginBottom: 12 }}>DIAGNOSTIC PÉDAGOGIQUE — POURQUOI &amp; PIÈGES D&apos;EXAMEN</div>
+                      <div className={`ev-ielts-detail-card ${ieltsActiveTab === "all" ? "is-stacked" : ""}`} data-accent="danger" style={{ borderLeft: "4px solid var(--mm-danger)" }}>
+                        <div className="ev-ielts-detail-label" style={{ color: "var(--mm-danger)", marginBottom: 12 }}>DIAGNOSTIC PÉDAGOGIQUE — POURQUOI &amp; PIÈGES D&apos;EXAMEN</div>
                         {renderDetailedMistakes(practiceWritingFeedback.mistakes)}
                       </div>
                     )}
@@ -5553,7 +5471,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 className="ev-history-delete-btn"
                                 title="Supprimer cet essai"
                               >
-                                <Trash2 size={14} color="#EF4444" />
+                                <Trash2 size={14} color="var(--mm-danger)" />
                               </button>
                             </div>
                           </div>
@@ -5631,7 +5549,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                     )}
                                     {draft.feedback.structureFeedback && (
                                       <div className="ev-history-feedback-item">
-                                        <span className="ev-history-crit-tag" style={{ color: "#10B981" }}>Structure :</span>
+                                        <span className="ev-history-crit-tag" style={{ color: "var(--mm-success)" }}>Structure :</span>
                                         <span>{draft.feedback.structureFeedback}</span>
                                       </div>
                                     )}
@@ -5700,7 +5618,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                     className="ev-history-copy-btn"
                                     title="Copier la version anglaise corrigée"
                                   >
-                                    {copiedDraftId === draft.id ? <Check size={13} color="#10B981" /> : <Copy size={13} />}
+                                    {copiedDraftId === draft.id ? <Check size={13} color="var(--mm-success)" /> : <Copy size={13} />}
                                     <span>{copiedDraftId === draft.id ? "Copié !" : "Copier"}</span>
                                   </button>
                                 </div>
@@ -6146,33 +6064,33 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <button onClick={startIeltsSimulation} style={{ padding: "12px 24px", background: "var(--mm-grad-aurora)", color: "white", border: "none", borderRadius: 10, fontWeight: 800, marginBottom: 16 }}>Démarrer la simulation</button>
             <div style={{ maxHeight: 400, overflowY: "auto", marginBottom: 12 }}>
               {(customAgent.isConnected && liveKitTranscriptions.length > 0
-                ? liveKitTranscriptions.map(m => ({ role: m.role === "user" ? "candidate" : "examiner", text: m.text, id: m.id }))
+                ? groupSpeechTurns(liveKitTranscriptions).map(m => ({ role: m.role === "user" ? "candidate" : "examiner", text: m.text, id: m.id }))
                 : practiceIeltsHistory
               ).map((entry, i) => (
                 <div key={entry.id || i} style={{ marginBottom: 10, textAlign: entry.role === "candidate" ? "right" : "left" }}>
-                  <div style={{ display: "inline-block", padding: "10px 18px", borderRadius: 16, background: entry.role === "candidate" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : "#E5E7EB", color: entry.role === "candidate" ? "white" : "#1F2937", maxWidth: "80%" }}>
+                  <div style={{ display: "inline-block", padding: "10px 18px", borderRadius: 16, background: entry.role === "candidate" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : "var(--mm-bg-elev)", color: entry.role === "candidate" ? "white" : "var(--mm-primary)", maxWidth: "80%" }}>
                     {entry.text}
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.05)"}`, background: isDarkMode ? "rgba(10,15,30,0.6)" : "rgba(255,255,255,0.6)", backdropFilter: "blur(20px)", margin: "16px -24px -24px" }}>
+            <div style={{ padding: "16px 20px", borderTop: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)"}`, background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 60%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 60%, transparent)", backdropFilter: "blur(20px)", margin: "16px -24px -24px" }}>
               <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                 <div style={{
                   flex: 1, display: "flex", alignItems: "center", gap: 8,
-                  background: customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.05)" : "#F0FDF4") : theme.inputBg,
-                  border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.3)" : "#86EFAC") : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`,
+                  background: customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 5%, transparent)" : "var(--mm-bg-elev)") : theme.inputBg,
+                  border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "var(--mm-success)") : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)")}`,
                   borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
                 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{
                       width: 8, height: 8, borderRadius: "50%",
-                      background: customAgent.isConnected ? "#10B981" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
-                      boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "none",
+                      background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
+                      boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
                       animation: customAgent.isConnected ? "pulse 1.5s infinite" : "none"
                     }} />
                     {customAgent.isConnected && (
-                      <span style={{ fontSize: 12, fontWeight: 800, color: "#10B981", whiteSpace: "nowrap" }} className="hide-mobile">
+                      <span style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-success)", whiteSpace: "nowrap" }} className="hide-mobile">
                         {customAgent.isSpeaking ? "🗣️ Parle" : "👂 T'écoute"}
                       </span>
                     )}
@@ -6193,10 +6111,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     isDarkMode={isDarkMode}
                   />
                 </div>
-                <button onClick={() => { if (customAgent.isConnected) return; answerIelts(practiceInput); setPracticeInput(""); }} disabled={customAgent.isConnected || !practiceInput.trim()} style={{ width: 50, height: 50, borderRadius: 16, background: (!customAgent.isConnected && practiceInput.trim()) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${!customAgent.isConnected && practiceInput.trim() ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (!customAgent.isConnected && practiceInput.trim()) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (!customAgent.isConnected && practiceInput.trim()) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (!customAgent.isConnected && practiceInput.trim()) ? "white" : theme.textMuted }}>➤</button>
+                <button onClick={() => { if (customAgent.isConnected) return; answerIelts(practiceInput); setPracticeInput(""); }} disabled={customAgent.isConnected || !practiceInput.trim()} style={{ width: 50, height: 50, borderRadius: 16, background: (!customAgent.isConnected && practiceInput.trim()) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${!customAgent.isConnected && practiceInput.trim() ? "transparent" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (!customAgent.isConnected && practiceInput.trim()) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (!customAgent.isConnected && practiceInput.trim()) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (!customAgent.isConnected && practiceInput.trim()) ? "white" : theme.textMuted }}>➤</button>
               </div>
               {agentError && (
-                <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
+                <div style={{ marginTop: 12, padding: "8px 14px", background: "var(--mm-bg-elev)", color: "var(--mm-danger)", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
                   {agentError}
                 </div>
               )}
@@ -6216,7 +6134,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
             {!practiceDailyChallenge ? (
               <div style={{ textAlign: "center", padding: "40px 0" }}>
                 <div style={{ fontSize: 48, marginBottom: 16 }}>🎯</div>
-                <button onClick={loadDailyChallenge} disabled={practiceDailyLoading} style={{ padding: "14px 32px", background: "var(--mm-grad-aurora)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 0 15px rgba(124, 58, 237,0.3)" }}>
+                <button onClick={loadDailyChallenge} disabled={practiceDailyLoading} style={{ padding: "14px 32px", background: "var(--mm-grad-aurora)", color: "white", border: "none", borderRadius: 14, fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 0 15px color-mix(in srgb, var(--mm-primary) 30%, transparent)" }}>
                   {practiceDailyLoading ? "⏳ Génération…" : "🎯 Charger le défi"}
                 </button>
               </div>
@@ -6238,7 +6156,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 {practiceDailyChallenge.hint && !practiceDailyResult && (
                   <details style={{ fontSize: 13, color: theme.textMuted }}>
                     <summary style={{ cursor: "pointer", fontWeight: 600 }}>💡 Voir un indice</summary>
-                    <div style={{ marginTop: 8, padding: "10px 14px", background: isDarkMode ? "#1A1200" : "#FFFBEB", borderRadius: 10, color: isDarkMode ? "#FCD34D" : "#92400E" }}>{practiceDailyChallenge.hint}</div>
+                    <div style={{ marginTop: 8, padding: "10px 14px", background: isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)", borderRadius: 10, color: isDarkMode ? "var(--mm-warning)" : "var(--mm-warning)" }}>{practiceDailyChallenge.hint}</div>
                   </details>
                 )}
 
@@ -6260,8 +6178,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
                 {/* Résultat */}
                 {practiceDailyResult && (
-                  <div style={{ borderRadius: 16, padding: "18px 22px", background: practiceDailyResult.correct ? (isDarkMode ? "#052E16" : "#F0FDF4") : (isDarkMode ? "#2D0A0A" : "#FEF2F2"), border: `2px solid ${practiceDailyResult.correct ? "#22C55E" : "#EF4444"}` }}>
-                    <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8, color: practiceDailyResult.correct ? "#22C55E" : "#EF4444" }}>
+                  <div style={{ borderRadius: 16, padding: "18px 22px", background: practiceDailyResult.correct ? (isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)") : (isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)"), border: `2px solid ${practiceDailyResult.correct ? "var(--mm-success)" : "var(--mm-danger)"}` }}>
+                    <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8, color: practiceDailyResult.correct ? "var(--mm-success)" : "var(--mm-danger)" }}>
                       {practiceDailyResult.correct ? "✅ Correct !" : "❌ Pas tout à fait…"}
                     </div>
                     {practiceDailyResult.feedback && (
@@ -6303,14 +6221,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
               <h2 style={{ marginTop: 0 }}>📊 Progression</h2>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 14, marginBottom: 20 }}>
                 {[
-                  { icon: "⚡", val: xp.toLocaleString(), label: "Total XP", color: "#F59E0B" },
-                  { icon: "🔥", val: practiceStats.streak || 0, label: "Streak (jours)", color: "#EF4444" },
-                  { icon: "🪙", val: (practiceStats.coins || 0).toLocaleString(), label: "Coins", color: "#FCD34D" },
+                  { icon: "⚡", val: xp.toLocaleString(), label: "Total XP", color: "var(--mm-warning)" },
+                  { icon: "🔥", val: practiceStats.streak || 0, label: "Streak (jours)", color: "var(--mm-danger)" },
+                  { icon: "🪙", val: (practiceStats.coins || 0).toLocaleString(), label: "Coins", color: "var(--mm-warning)" },
                   { icon: "🏅", val: `Lv.${lvl}`, label: getLbl(lvl), color: "var(--mm-primary-glow)" },
                   { icon: "💬", val: practiceStats.totalMessages, label: "Messages", color: "var(--mm-primary)" },
                   { icon: "🎓", val: practiceStats.sessionsCompleted, label: "Sessions", color: "var(--mm-primary)" },
                   { icon: "📖", val: practiceStats.levelEstimate, label: "Niveau estimé", color: "var(--mm-primary)" },
-                  { icon: "📚", val: practiceStats.vocabDiversity || 0, label: "Mots uniques", color: "#059669" },
+                  { icon: "📚", val: practiceStats.vocabDiversity || 0, label: "Mots uniques", color: "var(--mm-success)" },
                 ].map(({ icon, val, label, color }) => (
                   <div key={label} style={{ background: theme.inputBg, borderRadius: 14, padding: 16, textAlign: "center" }}>
                     <div style={{ fontSize: 22, marginBottom: 4 }}>{icon}</div>
@@ -6356,12 +6274,12 @@ ${SPEECH_HYGIENE_PROMPT}`,
             className="ep-glass-panel"
             style={{
               position: "relative", borderRadius: 24,
-              border: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.4)" : "rgba(59, 130, 246, 0.35)"}`,
+              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "color-mix(in srgb, var(--mm-primary) 35%, transparent)"}`,
               overflow: "hidden",
               background: isDarkMode
-                ? "radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.2), transparent 70%), var(--mm-bg-elev, #0b0d1e)"
-                : "radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.12), transparent 70%), #FFFFFF",
-              boxShadow: isDarkMode ? "0 16px 40px rgba(0,0,0,0.4)" : "0 10px 30px rgba(37, 99, 235, 0.08)",
+                ? "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--mm-primary) 20%, transparent), transparent 70%), var(--mm-bg-elev, var(--mm-bg-card))"
+                : "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--mm-primary) 12%, transparent), transparent 70%), var(--mm-on-primary)",
+              boxShadow: isDarkMode ? "0 16px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 30px color-mix(in srgb, var(--mm-primary) 8%, transparent)",
               transition: "background 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
               animation: debateShatter > 0 && Date.now() - debateShatter < 1000 ? "shake-ring 0.4s" : "none"
             }}
@@ -6371,7 +6289,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
             {debateShatter > 0 && (
               <div key={debateShatter} style={{ position: "absolute", inset: 0, zIndex: 50, pointerEvents: "none", animation: "shatter-flash 1s forwards" }}>
                 <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <path d="M0,0 L50,50 L100,0 M0,100 L50,50 L100,100 M20,0 L50,50 L80,100 M0,30 L50,50 L100,70 M30,100 L50,50 L70,0" stroke="rgba(255,255,255,0.9)" strokeWidth="0.5" fill="none" style={{ animation: "shatter-cracks 0.3s forwards" }} />
+                  <path d="M0,0 L50,50 L100,0 M0,100 L50,50 L100,100 M20,0 L50,50 L80,100 M0,30 L50,50 L100,70 M30,100 L50,50 L70,0" stroke="color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)" strokeWidth="0.5" fill="none" style={{ animation: "shatter-cracks 0.3s forwards" }} />
                 </svg>
               </div>
             )}
@@ -6380,17 +6298,17 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <div style={{
               position: "relative", zIndex: 1,
               background: isDarkMode
-                ? "linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(99, 102, 241, 0.35))"
-                : "linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.22))",
+                ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 25%, transparent), color-mix(in srgb, var(--mm-primary) 35%, transparent))"
+                : "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 14%, transparent), color-mix(in srgb, var(--mm-primary) 22%, transparent))",
               padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
               backdropFilter: "blur(16px)",
-              borderBottom: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.35)" : "rgba(59, 130, 246, 0.25)"}`
+              borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25%, transparent)"}`
             }}>
               <div>
                 <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🌌 Cosmic Arena Debate</div>
-                {practiceDebateTopic && <div style={{ fontSize: 12, color: isDarkMode ? "#93C5FD" : "#1D4ED8", marginTop: 2, fontWeight: 700 }}>Topic : {practiceDebateTopic}</div>}
+                {practiceDebateTopic && <div style={{ fontSize: 12, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", marginTop: 2, fontWeight: 700 }}>Topic : {practiceDebateTopic}</div>}
               </div>
-              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeDebateTopic(""); setPracticeDebateHistory([]); setDebateBalance(50); }} style={{ background: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
+              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeDebateTopic(""); setPracticeDebateHistory([]); setDebateBalance(50); }} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
             </div>
             {!practiceDebateTopic && !customAgent.isConnected && (
               <div style={{ padding: 28, position: "relative", zIndex: 1 }}>
@@ -6403,14 +6321,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       style={{
                         padding: "8px 14px",
                         borderRadius: 20,
-                        border: `2px solid ${practiceDebateTopic === topic ? "#2563EB" : "var(--mm-border)"}`,
-                        background: practiceDebateTopic === topic ? "#2563EB" : "var(--mm-bg-card)",
+                        border: `2px solid ${practiceDebateTopic === topic ? "var(--mm-primary)" : "var(--mm-border)"}`,
+                        background: practiceDebateTopic === topic ? "var(--mm-primary)" : "var(--mm-bg-card)",
                         color: practiceDebateTopic === topic ? "white" : "var(--mm-fg)",
                         fontWeight: 600,
                         cursor: "pointer",
                         fontSize: 13,
                         transition: "all 0.2s ease",
-                        boxShadow: practiceDebateTopic === topic ? "0 4px 15px rgba(37, 99, 235, 0.4)" : "none"
+                        boxShadow: practiceDebateTopic === topic ? "0 4px 15px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none"
                       }}
                     >
                       {topic}
@@ -6424,7 +6342,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     placeholder="Ou tape ton propre sujet…"
                     style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid var(--mm-border)`, background: "var(--mm-bg-elev)", color: "var(--mm-fg)", fontSize: 14, outline: "none" }}
                     onKeyDown={e => e.key === "Enter" && startDebate(practiceDebateTopic)}
-                    onFocus={e => e.target.style.borderColor = "#2563EB"}
+                    onFocus={e => e.target.style.borderColor = "var(--mm-primary)"}
                     onBlur={e => e.target.style.borderColor = "var(--mm-border)"}
                   />
                   <button
@@ -6433,14 +6351,14 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     style={{
                       padding: "12px 24px",
                       background: !practiceDebateTopic.trim()
-                        ? "rgba(37, 99, 235, 0.45)"
-                        : "linear-gradient(135deg, #2563EB, #1D4ED8)",
+                        ? "color-mix(in srgb, var(--mm-primary) 45%, transparent)"
+                        : "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                       color: "white",
                       border: "none",
                       borderRadius: 12,
                       fontWeight: 900,
                       cursor: !practiceDebateTopic.trim() ? "not-allowed" : "pointer",
-                      boxShadow: !practiceDebateTopic.trim() ? "none" : "0 4px 15px rgba(37, 99, 235, 0.45)",
+                      boxShadow: !practiceDebateTopic.trim() ? "none" : "0 4px 15px color-mix(in srgb, var(--mm-primary) 45%, transparent)",
                       transition: "all 0.2s ease"
                     }}
                   >
@@ -6453,16 +6371,16 @@ ${SPEECH_HYGIENE_PROMPT}`,
               <>
                 <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16, position: "relative", zIndex: 1 }}>
                   {(customAgent.isConnected && liveKitTranscriptions.length > 0
-                    ? liveKitTranscriptions.map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
+                    ? groupSpeechTurns(liveKitTranscriptions).map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
                     : practiceDebateHistory
                   ).map((msg, i) => (
                     <div key={msg.id || i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
-                      {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,#BE123C,#E11D48)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px rgba(225, 29, 72, 0.4)" }}>🤖</div>}
-                      <div style={{ maxWidth: "78%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : "linear-gradient(135deg,#BE123C,#E11D48)", color: "white", fontSize: 15, lineHeight: 1.6, boxShadow: msg.role === "user" ? "0 4px 15px rgba(147, 51, 234, 0.4)" : "0 4px 15px rgba(225, 29, 72, 0.4)", opacity: msg.isFinal === false ? 0.7 : 1 }}>
+                      {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px color-mix(in srgb, var(--mm-danger) 40%, transparent)" }}>🤖</div>}
+                      <div style={{ maxWidth: "78%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))", color: "white", fontSize: 15, lineHeight: 1.6, boxShadow: msg.role === "user" ? "0 4px 15px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "0 4px 15px color-mix(in srgb, var(--mm-danger) 40%, transparent)", opacity: msg.isFinal === false ? 0.7 : 1 }}>
                         {msg.role === "assistant" ? renderDraggableWord(msg.text) : msg.text}
                         {msg.isFinal === false && <span style={{ marginLeft: 4, opacity: 0.7, animation: "pulse 1.5s infinite" }}>…</span>}
                       </div>
-                      {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px rgba(147, 51, 234, 0.4)" }}>🥊</div>}
+                      {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px color-mix(in srgb, var(--mm-primary) 40%, transparent)" }}>🥊</div>}
                     </div>
                   ))}
                   {/* FIX : ancre de scroll manquante — sans elle, practiceEndRef.current
@@ -6477,19 +6395,19 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div style={{
                       flex: 1, display: "flex", alignItems: "center", gap: 8,
-                      background: customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.05)" : "#F0FDF4") : "var(--mm-bg-elev)",
-                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.3)" : "#86EFAC") : "var(--mm-border-strong)"}`,
+                      background: customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 5%, transparent)" : "var(--mm-bg-elev)") : "var(--mm-bg-elev)",
+                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "var(--mm-success)") : "var(--mm-border-strong)"}`,
                       borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{
                           width: 8, height: 8, borderRadius: "50%",
-                          background: customAgent.isConnected ? "#10B981" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
-                          boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "none",
+                          background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
+                          boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
                           animation: customAgent.isConnected ? "pulse 1.5s infinite" : "none"
                         }} />
                         {customAgent.isConnected && (
-                          <span style={{ fontSize: 12, fontWeight: 800, color: "#10B981", whiteSpace: "nowrap" }} className="hide-mobile">
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-success)", whiteSpace: "nowrap" }} className="hide-mobile">
                             {customAgent.isSpeaking ? "🗣️ ARGOS parle" : "👂 T'écoute"}
                           </span>
                         )}
@@ -6509,10 +6427,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,#2563EB,#1D4ED8)" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(139, 92, 246,0.1)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px rgba(37, 99, 235, 0.4)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
+                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
                   </div>
                   {agentError && (
-                    <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
+                    <div style={{ marginTop: 12, padding: "8px 14px", background: "var(--mm-bg-elev)", color: "var(--mm-danger)", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
                       {agentError}
                     </div>
                   )}
@@ -6530,24 +6448,24 @@ ${SPEECH_HYGIENE_PROMPT}`,
             className="ep-glass-panel"
             style={{
               position: "relative", borderRadius: 24,
-              border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.18)"}`,
+              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
               overflow: "hidden",
-              boxShadow: isDarkMode ? "0 16px 40px rgba(0,0,0,0.4)" : "0 10px 30px rgba(15,23,42,0.06)"
+              boxShadow: isDarkMode ? "0 16px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 30px color-mix(in srgb, var(--mm-primary) 6%, transparent)"
             }}
           >
             <div style={{
               background: isDarkMode
-                ? "linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(139, 92, 246, 0.4))"
-                : "linear-gradient(135deg, rgba(238, 242, 255, 0.95), rgba(224, 231, 255, 0.9))",
+                ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 90%, transparent), color-mix(in srgb, var(--mm-primary) 40%, transparent))"
+                : "linear-gradient(135deg, color-mix(in srgb, var(--mm-bg-elev) 95%, transparent), color-mix(in srgb, var(--mm-bg-elev) 90%, transparent))",
               padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
               backdropFilter: "blur(16px)",
-              borderBottom: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.1)" : "rgba(0,0,0,0.08)"}`
+              borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`
             }}>
               <div>
                 <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🎭 Roleplay en anglais</div>
                 {practiceRoleplayScenario && <div style={{ fontSize: 12, color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary-deep)", marginTop: 2, fontWeight: 700 }}>Scénario : {practiceRoleplayScenario}</div>}
               </div>
-              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeRoleplayScenario(""); setPracticeRoleplayHistory([]); }} style={{ background: isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.06)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
+              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeRoleplayScenario(""); setPracticeRoleplayHistory([]); }} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
             </div>
             {!practiceRoleplayScenario && !customAgent.isConnected && (
               <div style={{ padding: 28 }}>
@@ -6569,13 +6487,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         className="ep-glass-panel ep-glass-panel-hover"
                         style={{
                           padding: "16px 16px", borderRadius: 16,
-                          border: `2px solid ${isSelected ? "var(--mm-primary)" : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)")}`,
+                          border: `2px solid ${isSelected ? "var(--mm-primary)" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)")}`,
                           background: isSelected
-                            ? (isDarkMode ? "rgba(139, 92, 246,0.2)" : "rgba(139, 92, 246,0.1)")
-                            : (isDarkMode ? "rgba(15,23,42,0.4)" : "#FFFFFF"),
+                            ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)")
+                            : (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "var(--mm-on-primary)"),
                           color: theme.text, fontWeight: 700, cursor: "pointer", textAlign: "left",
                           display: "flex", flexDirection: "column", gap: 6, transition: "all 0.22s ease",
-                          boxShadow: isSelected ? "0 8px 20px rgba(139, 92, 246,0.25)" : "none"
+                          boxShadow: isSelected ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "none"
                         }}
                       >
                         <span style={{ fontSize: 26 }}>{icon}</span>
@@ -6592,8 +6510,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     placeholder="Ou décris ton propre scénario…"
                     style={{
                       flex: 1, padding: "12px 18px", borderRadius: 14,
-                      border: `1.5px solid ${isDarkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)"}`,
-                      background: isDarkMode ? "rgba(15,23,42,0.6)" : "#FFFFFF",
+                      border: `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 12%, transparent)"}`,
+                      background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 60%, transparent)" : "var(--mm-on-primary)",
                       color: theme.text, fontSize: 14, outline: "none"
                     }}
                     onKeyDown={e => e.key === "Enter" && practiceRoleplayScenario.trim() && beginRoleplayScenario(practiceRoleplayScenario)}
@@ -6605,7 +6523,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                       padding: "12px 24px",
                       background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
                       color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer",
-                      boxShadow: "0 4px 16px rgba(139, 92, 246,0.35)", transition: "all 0.2s"
+                      boxShadow: "0 4px 16px color-mix(in srgb, var(--mm-primary) 35%, transparent)", transition: "all 0.2s"
                     }}
                   >
                     🎭 Lancer
@@ -6617,7 +6535,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               <>
                 <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
                   {(customAgent.isConnected && liveKitTranscriptions.length > 0
-                    ? liveKitTranscriptions.map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
+                    ? groupSpeechTurns(liveKitTranscriptions).map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
                     : practiceRoleplayHistory
                   ).map((msg, i) => (
                     <div key={msg.id || i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
@@ -6638,19 +6556,19 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div style={{
                       flex: 1, display: "flex", alignItems: "center", gap: 8,
-                      background: customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.05)" : "#F0FDF4") : "var(--mm-bg-elev)",
-                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "rgba(16,185,129,0.3)" : "#86EFAC") : "var(--mm-border-strong)"}`,
+                      background: customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 5%, transparent)" : "var(--mm-bg-elev)") : "var(--mm-bg-elev)",
+                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "var(--mm-success)") : "var(--mm-border-strong)"}`,
                       borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{
                           width: 8, height: 8, borderRadius: "50%",
-                          background: customAgent.isConnected ? "#10B981" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
-                          boxShadow: customAgent.isConnected ? "0 0 10px #10B981" : "none",
+                          background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
+                          boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
                           animation: customAgent.isConnected ? "pulse 1.5s infinite" : "none"
                         }} />
                         {customAgent.isConnected && (
-                          <span style={{ fontSize: 12, fontWeight: 800, color: "#10B981", whiteSpace: "nowrap" }} className="hide-mobile">
+                          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-success)", whiteSpace: "nowrap" }} className="hide-mobile">
                             {customAgent.isSpeaking ? "🗣️ Parle" : "👂 T'écoute"}
                           </span>
                         )}
@@ -6674,10 +6592,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         isDarkMode={isDarkMode}
                       />
                     </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "rgba(255,255,255,0.1)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
+                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
                   </div>
                   {agentError && (
-                    <div style={{ marginTop: 12, padding: "8px 14px", background: "#FEF2F2", color: "#EF4444", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
+                    <div style={{ marginTop: 12, padding: "8px 14px", background: "var(--mm-bg-elev)", color: "var(--mm-danger)", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
                       {agentError}
                     </div>
                   )}
@@ -6857,24 +6775,24 @@ ${SPEECH_HYGIENE_PROMPT}`,
           const filtered = brainMapFilter === "all" ? brainMapWords : brainMapWords.filter(w => w.theme === brainMapFilter);
           const THEME_COLORS = {
             "Business": { glow: "var(--mm-primary)", node: "var(--mm-primary-deep)", text: "color-mix(in srgb, var(--mm-primary) 22%, white)" },
-            "Academic": { glow: "#10B981", node: "#064E3B", text: "#A7F3D0" },
-            "Daily Life": { glow: "#F97316", node: "#7C2D12", text: "#FED7AA" },
-            "Technology": { glow: "var(--mm-primary)", node: "#312E81", text: "#E9D5FF" },
-            "Nature": { glow: "#22C55E", node: "#14532D", text: "#BBF7D0" },
-            "Social": { glow: "#EC4899", node: "#831843", text: "#FBCFE8" },
-            "Other": { glow: "#A8A29E", node: "#1C1917", text: "#D6D3D1" },
+            "Academic": { glow: "var(--mm-success)", node: "var(--mm-success)", text: "var(--mm-success)" },
+            "Daily Life": { glow: "var(--mm-warning)", node: "var(--mm-danger)", text: "var(--mm-warning)" },
+            "Technology": { glow: "var(--mm-primary)", node: "var(--mm-primary)", text: "var(--mm-bg-elev)" },
+            "Nature": { glow: "var(--mm-success)", node: "var(--mm-success)", text: "var(--mm-success)" },
+            "Social": { glow: "var(--mm-primary)", node: "var(--mm-primary)", text: "var(--mm-primary-glow)" },
+            "Other": { glow: "var(--mm-fg-muted)", node: "var(--mm-bg-card)", text: "var(--mm-border-strong)" },
           };
           const getColors = (theme) => THEME_COLORS[theme] || THEME_COLORS["Other"];
-          const rarityGlow = (r) => r === 3 ? "0 0 18px 6px rgba(250,204,21,0.7), 0 0 40px rgba(250,204,21,0.3)" : r === 2 ? "0 0 10px 3px rgba(139, 92, 246,0.5)" : "none";
+          const rarityGlow = (r) => r === 3 ? "0 0 18px 6px color-mix(in srgb, var(--mm-warning) 70%, transparent), 0 0 40px color-mix(in srgb, var(--mm-warning) 30%, transparent)" : r === 2 ? "0 0 10px 3px color-mix(in srgb, var(--mm-primary) 50%, transparent)" : "none";
           const fontSize = (count, rarity) => Math.min(18, Math.max(10, 10 + count * 1.5 + rarity * 1.5));
 
           return (
             <div style={{ background: "var(--mm-bg-card)", borderRadius: 24, border: "1px solid var(--mm-border)", overflow: "hidden", boxShadow: "var(--mm-shadow)" }}>
               {/* Header */}
-              <div style={{ background: "var(--mm-grad-aurora)", padding: "22px 26px", position: "relative", overflow: "hidden", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+              <div style={{ background: "var(--mm-grad-aurora)", padding: "22px 26px", position: "relative", overflow: "hidden", borderBottom: "1px solid color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" }}>
                 <div style={{ position: "absolute", top: -30, right: -30, fontSize: 120, opacity: 0.07 }}>🧠</div>
                 <div style={{ fontWeight: 800, fontSize: 18, color: "white" }}>🧠 Vocabulary Brain Map</div>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 3 }}>Tous tes mots organisés par thème · Les mots rares brillent en or · Clique pour une explication</div>
+                <div style={{ fontSize: 12, color: "color-mix(in srgb, var(--mm-bg-elev) 80%, transparent)", marginTop: 3 }}>Tous tes mots organisés par thème · Les mots rares brillent en or · Clique pour une explication</div>
               </div>
 
               <div style={{ padding: 20 }}>
@@ -6883,13 +6801,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   <button
                     onClick={buildBrainMap}
                     disabled={brainMapLoading}
-                    style={{ padding: "10px 22px", background: brainMapLoading ? "var(--mm-bg-elev)" : "var(--mm-grad-aurora)", color: brainMapLoading ? "var(--mm-fg-muted)" : "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: brainMapLoading ? "default" : "pointer", fontSize: 13, boxShadow: brainMapLoading ? "none" : "0 0 15px rgba(124, 58, 237,0.3)" }}
+                    style={{ padding: "10px 22px", background: brainMapLoading ? "var(--mm-bg-elev)" : "var(--mm-grad-aurora)", color: brainMapLoading ? "var(--mm-fg-muted)" : "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: brainMapLoading ? "default" : "pointer", fontSize: 13, boxShadow: brainMapLoading ? "none" : "0 0 15px color-mix(in srgb, var(--mm-primary) 30%, transparent)" }}
                   >
                     {brainMapLoading ? "⏳ Analyse en cours…" : "✨ Générer / Rafraîchir"}
                   </button>
                   {themes.length > 0 && (
                     <>
-                      <button onClick={() => setBrainMapFilter("all")} style={{ padding: "8px 14px", borderRadius: 10, border: `2px solid ${brainMapFilter === "all" ? "var(--mm-primary)" : "var(--mm-border)"}`, background: brainMapFilter === "all" ? "rgba(124, 58, 237,0.1)" : "var(--mm-bg-elev)", color: brainMapFilter === "all" ? "var(--mm-primary)" : "var(--mm-fg)", fontWeight: 700, cursor: "pointer", fontSize: 12, transition: "all 0.2s" }}>Tous</button>
+                      <button onClick={() => setBrainMapFilter("all")} style={{ padding: "8px 14px", borderRadius: 10, border: `2px solid ${brainMapFilter === "all" ? "var(--mm-primary)" : "var(--mm-border)"}`, background: brainMapFilter === "all" ? "color-mix(in srgb, var(--mm-primary) 10%, transparent)" : "var(--mm-bg-elev)", color: brainMapFilter === "all" ? "var(--mm-primary)" : "var(--mm-fg)", fontWeight: 700, cursor: "pointer", fontSize: 12, transition: "all 0.2s" }}>Tous</button>
                       {themes.map(t => {
                         const c = getColors(t);
                         return (
@@ -6907,7 +6825,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 {brainMapWords.length > 0 && (
                   <div style={{ display: "flex", gap: 16, marginBottom: 14, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, color: theme.textMuted }}>✨ Rareté :</span>
-                    {[["🟡 Or pulsant", "Mot rare (C1/C2)", "#FACC15"], ["🔵 Halo violet", "Intermédiaire (B1/B2)", "var(--mm-primary-glow)"], ["⚪ Standard", "Commun (A1/A2)", "var(--mm-fg-muted)"]].map(([label, desc, col]) => (
+                    {[["🟡 Or pulsant", "Mot rare (C1/C2)", "var(--mm-warning)"], ["🔵 Halo violet", "Intermédiaire (B1/B2)", "var(--mm-primary-glow)"], ["⚪ Standard", "Commun (A1/A2)", "var(--mm-fg-muted)"]].map(([label, desc, col]) => (
                       <span key={label} style={{ fontSize: 11, color: col, fontWeight: 600 }}>{label} <span style={{ color: theme.textMuted, fontWeight: 400 }}>= {desc}</span></span>
                     ))}
                   </div>
@@ -6925,7 +6843,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
                     {/* SVG Brain Map */}
                     <div
-                      style={{ flex: 1, minWidth: 0, position: "relative", borderRadius: 18, overflow: "hidden", background: "var(--mm-bg-elev)", border: "1px solid var(--mm-border)", boxShadow: "inset 0 0 40px rgba(139, 92, 246,0.2)" }}
+                      style={{ flex: 1, minWidth: 0, position: "relative", borderRadius: 18, overflow: "hidden", background: "var(--mm-bg-elev)", border: "1px solid var(--mm-border)", boxShadow: "inset 0 0 40px color-mix(in srgb, var(--mm-primary) 20%, transparent)" }}
                       onMouseMove={e => {
                         const rect = e.currentTarget.getBoundingClientRect();
                         setBrainMapMouse({ x: e.clientX - rect.left, y: e.clientY - rect.top });
@@ -7016,32 +6934,32 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 <g style={{ animation: `float-organic ${3 + (i % 2)}s ease-in-out infinite alternate`, animationDelay: `-${i * 0.2}s` }}>
                                   {pulse && (
                                     <>
-                                      <circle r={fs * 1.6} fill="rgba(250,204,21,0.15)" style={{ animation: "pulse 2s infinite" }}>
+                                      <circle r={fs * 1.6} fill="color-mix(in srgb, var(--mm-warning) 15%, transparent)" style={{ animation: "pulse 2s infinite" }}>
                                         <animate attributeName="r" values={`${fs * 1.4};${fs * 2};${fs * 1.4}`} dur="2s" repeatCount="indefinite" />
                                         <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2s" repeatCount="indefinite" />
                                       </circle>
                                       <g style={{ animation: "orbit-particle 4s linear infinite" }}>
-                                        <circle cx={0} cy={0} r={2.5} fill="#FACC15" filter="url(#glow-gold)" />
+                                        <circle cx={0} cy={0} r={2.5} fill="var(--mm-warning)" filter="url(#glow-gold)" />
                                       </g>
                                       <g style={{ animation: "orbit-particle 5s linear infinite reverse", animationDelay: "-1.5s" }}>
-                                        <circle cx={0} cy={0} r={1.5} fill="#FDE047" />
+                                        <circle cx={0} cy={0} r={1.5} fill="var(--mm-warning)" />
                                       </g>
                                     </>
                                   )}
-                                  {w.rarity === 2 && <circle r={fs * 1.4} fill="rgba(139, 92, 246,0.12)" />}
+                                  {w.rarity === 2 && <circle r={fs * 1.4} fill="color-mix(in srgb, var(--mm-primary) 12%, transparent)" />}
                                   <rect
                                     x={-(fs * 3.5)} y={-(fs * 0.9)}
                                     width={fs * 7} height={fs * 1.8}
                                     rx={fs * 0.9}
-                                    fill={isSelected ? "#FACC15" : c.node}
-                                    stroke={w.rarity === 3 ? "#FACC15" : isSelected ? "#FACC15" : c.glow}
+                                    fill={isSelected ? "var(--mm-warning)" : c.node}
+                                    stroke={w.rarity === 3 ? "var(--mm-warning)" : isSelected ? "var(--mm-warning)" : c.glow}
                                     strokeWidth={isSelected ? 2.5 : w.rarity === 3 ? 1.5 : 0.8}
                                     opacity={0.92}
                                     filter={w.rarity === 3 ? "url(#glow-gold)" : w.rarity === 2 ? "url(#glow-purple)" : "none"}
                                   />
                                   <text
                                     textAnchor="middle" dominantBaseline="middle"
-                                    fill={isSelected ? "#1C1917" : c.text}
+                                    fill={isSelected ? "var(--mm-bg-card)" : c.text}
                                     fontSize={fs}
                                     fontWeight={w.rarity === 3 ? "900" : w.rarity === 2 ? "700" : "600"}
                                     fontFamily="'JetBrains Mono', monospace"
@@ -7049,7 +6967,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                     {isExplaining ? "⏳" : w.word}
                                   </text>
                                   {w.count > 1 && (
-                                    <text x={fs * 3} y={-fs * 0.7} textAnchor="middle" fill="#FACC15" fontSize="7" fontWeight="800">{w.count}×</text>
+                                    <text x={fs * 3} y={-fs * 0.7} textAnchor="middle" fill="var(--mm-warning)" fontSize="7" fontWeight="800">{w.count}×</text>
                                   )}
                                 </g>
                               </g>
@@ -7068,13 +6986,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
                             position: 'absolute',
                             left: isNearRight ? brainMapMouse.x - 190 : brainMapMouse.x + 15,
                             top: brainMapMouse.y + 15,
-                            background: isDarkMode ? 'rgba(15, 23, 42, 0.75)' : 'rgba(255, 255, 255, 0.85)',
+                            background: isDarkMode ? 'color-mix(in srgb, var(--mm-primary) 75%, transparent)' : 'color-mix(in srgb, var(--mm-bg-elev) 85%, transparent)',
                             backdropFilter: 'blur(20px)',
                             WebkitBackdropFilter: 'blur(20px)',
                             border: `1px solid ${colorMix(getColors(hw.theme).glow, 38)}`,
                             borderRadius: 16,
                             padding: '14px 18px',
-                            boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+                            boxShadow: '0 10px 40px color-mix(in srgb, var(--mm-fg) 30%, transparent)',
                             pointerEvents: 'none',
                             zIndex: 10,
                             animation: 'fadeUp 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -7100,11 +7018,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
                         <div style={{ background: getColors(brainMapSelected.theme).node, padding: "14px 18px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                             <div style={{ fontWeight: 900, fontSize: 20, color: "white", letterSpacing: -0.5 }}>{brainMapSelected.word}</div>
-                            <button onClick={() => setBrainMapSelected(null)} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8, color: "white", cursor: "pointer", fontSize: 16, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                            <button onClick={() => setBrainMapSelected(null)} style={{ background: "color-mix(in srgb, var(--mm-bg-elev) 15%, transparent)", border: "none", borderRadius: 8, color: "white", cursor: "pointer", fontSize: 16, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
                           </div>
                           <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                            <span style={{ fontSize: 10, fontWeight: 800, background: "rgba(255,255,255,0.15)", color: "white", padding: "3px 8px", borderRadius: 20 }}>{brainMapSelected.theme}</span>
-                            <span style={{ fontSize: 10, fontWeight: 800, background: brainMapSelected.rarity === 3 ? "#FACC15" : brainMapSelected.rarity === 2 ? "var(--mm-primary-glow)" : "rgba(255,255,255,0.1)", color: brainMapSelected.rarity === 3 ? "#1C1917" : "white", padding: "3px 8px", borderRadius: 20 }}>
+                            <span style={{ fontSize: 10, fontWeight: 800, background: "color-mix(in srgb, var(--mm-bg-elev) 15%, transparent)", color: "white", padding: "3px 8px", borderRadius: 20 }}>{brainMapSelected.theme}</span>
+                            <span style={{ fontSize: 10, fontWeight: 800, background: brainMapSelected.rarity === 3 ? "var(--mm-warning)" : brainMapSelected.rarity === 2 ? "var(--mm-primary-glow)" : "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)", color: brainMapSelected.rarity === 3 ? "var(--mm-bg-card)" : "white", padding: "3px 8px", borderRadius: 20 }}>
                               {brainMapSelected.level} · {brainMapSelected.rarity === 3 ? "✨ Rare" : brainMapSelected.rarity === 2 ? "🔵 Intermédiaire" : "⚪ Commun"}
                             </span>
                           </div>
@@ -7125,7 +7043,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 </div>
                               )}
                               {brainMapSelected.example && (
-                                <div style={{ background: isDarkMode ? "#1E1040" : "color-mix(in srgb, var(--mm-primary) 10%, white)", borderRadius: 12, padding: "10px 14px" }}>
+                                <div style={{ background: isDarkMode ? "var(--mm-bg-card)" : "color-mix(in srgb, var(--mm-primary) 10%, white)", borderRadius: 12, padding: "10px 14px" }}>
                                   <div style={{ fontSize: 10, fontWeight: 800, color: getColors(brainMapSelected.theme).glow, letterSpacing: 2, marginBottom: 4 }}>EXEMPLE</div>
                                   <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.5, fontStyle: "italic" }}>"{brainMapSelected.example}"</div>
                                   <button onClick={() => speakText(brainMapSelected.example)} style={{ marginTop: 6, background: "none", border: "none", color: getColors(brainMapSelected.theme).glow, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: 0 }}>🔊 Écouter</button>
@@ -7142,9 +7060,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
                                 </div>
                               )}
                               {brainMapSelected.tip && (
-                                <div style={{ background: isDarkMode ? "#2D1B00" : "#FFFBEB", borderRadius: 12, padding: "10px 14px", border: "1px solid #FCD34D30" }}>
-                                  <div style={{ fontSize: 10, fontWeight: 800, color: "#F59E0B", letterSpacing: 2, marginBottom: 4 }}>💡 CONSEIL MÉMO</div>
-                                  <div style={{ fontSize: 12, color: isDarkMode ? "#FDE68A" : "#92400E", lineHeight: 1.5 }}>{brainMapSelected.tip}</div>
+                                <div style={{ background: isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)", borderRadius: 12, padding: "10px 14px", border: "1px solid color-mix(in srgb, var(--mm-warning) 19%, transparent)" }}>
+                                  <div style={{ fontSize: 10, fontWeight: 800, color: "var(--mm-warning)", letterSpacing: 2, marginBottom: 4 }}>💡 CONSEIL MÉMO</div>
+                                  <div style={{ fontSize: 12, color: isDarkMode ? "var(--mm-warning)" : "var(--mm-warning)", lineHeight: 1.5 }}>{brainMapSelected.tip}</div>
                                 </div>
                               )}
                             </>
@@ -7248,13 +7166,13 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 style={{
                   marginTop: 16, width: "100%", padding: "16px",
                   background: notebookLoading || !notebookText.trim()
-                    ? (isDarkMode ? "#1F1F1F" : "#E5E7EB")
+                    ? (isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)")
                     : "linear-gradient(135deg,var(--mm-primary),var(--mm-primary),var(--mm-primary))",
                   color: notebookLoading || !notebookText.trim() ? theme.textMuted : "white",
                   border: "none", borderRadius: 16, fontWeight: 900, fontSize: 16,
                   cursor: notebookLoading || !notebookText.trim() ? "not-allowed" : "pointer",
                   transition: "all 0.2s",
-                  boxShadow: notebookLoading || !notebookText.trim() ? "none" : "0 4px 20px rgba(139, 92, 246,0.4)"
+                  boxShadow: notebookLoading || !notebookText.trim() ? "none" : "0 4px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)"
                 }}
               >
                 {notebookLoading ? "⏳ L'IA génère tes fiches…" : "✨ Générer mes fiches de révision"}
@@ -7275,7 +7193,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     {["vocab", "grammar", "idiom", "phrase"].map(tag => {
                       const count = notebookCards.filter(c => c.tag === tag).length;
                       if (!count) return null;
-                      const colors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
+                      const colors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "var(--mm-warning)", phrase: "var(--mm-success)" };
                       const labels = { vocab: "Vocab", grammar: "Gram.", idiom: "Idiome", phrase: "Phrase" };
                       return (
                         <span key={tag} style={{ fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 8, background: `${colorMix(colors[tag], 13)}`, color: colors[tag] }}>
@@ -7289,15 +7207,15 @@ ${SPEECH_HYGIENE_PROMPT}`,
                 {/* Cards list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 20 }}>
                   {notebookCards.map((card, i) => {
-                    const tagColors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "#F59E0B", phrase: "#10B981" };
+                    const tagColors = { vocab: "var(--mm-primary)", grammar: "var(--mm-primary)", idiom: "var(--mm-warning)", phrase: "var(--mm-success)" };
                     const tc = tagColors[card.tag] || "var(--mm-fg)";
                     return (
-                      <div key={i} style={{ background: isDarkMode ? "#0F0F0F" : "#F9FAFB", borderRadius: 16, padding: "16px 20px", border: `1.5px solid ${tc}30`, position: "relative" }}>
+                      <div key={i} style={{ background: isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)", borderRadius: 16, padding: "16px 20px", border: `1.5px solid ${tc}30`, position: "relative" }}>
                         <div style={{ position: "absolute", top: 12, right: 14, fontSize: 10, fontWeight: 800, color: tc, background: `${tc}15`, padding: "3px 8px", borderRadius: 8, textTransform: "uppercase", letterSpacing: 1 }}>
                           {card.tag || "vocab"}
                         </div>
                         <div style={{ fontWeight: 900, fontSize: 16, color: theme.text, marginBottom: 6, paddingRight: 60 }}>{card.front}</div>
-                        <div style={{ fontSize: 14, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", fontWeight: 700, marginBottom: card.example ? 8 : 0 }}>{card.back}</div>
+                        <div style={{ fontSize: 14, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", fontWeight: 700, marginBottom: card.example ? 8 : 0 }}>{card.back}</div>
                         {card.example && (
                           <div style={{ fontSize: 12, color: theme.textMuted, fontStyle: "italic", borderTop: `1px solid ${theme.border}`, paddingTop: 8 }}>
                             💡 {card.example}
@@ -7314,10 +7232,10 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   disabled={notebookSaving}
                   style={{
                     width: "100%", padding: "16px",
-                    background: "linear-gradient(135deg,#059669,#10B981)",
+                    background: "linear-gradient(135deg,var(--mm-success),var(--mm-success))",
                     color: "white", border: "none", borderRadius: 16,
                     fontWeight: 900, fontSize: 16, cursor: notebookSaving ? "not-allowed" : "pointer",
-                    boxShadow: "0 4px 20px rgba(16,185,129,0.3)"
+                    boxShadow: "0 4px 20px color-mix(in srgb, var(--mm-success) 30%, transparent)"
                   }}
                 >
                   {notebookSaving ? "⏳ Sauvegarde…" : `💾 Ajouter ces ${notebookCards.length} fiches à MemoMaster`}
@@ -7327,11 +7245,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
 
             {/* ── Message confirmation ── */}
             {notebookSaved && (
-              <div style={{ background: isDarkMode ? "#052e16" : "#F0FDF4", borderRadius: 20, padding: "20px 24px", border: "1.5px solid #22C55E40", textAlign: "center" }}>
+              <div style={{ background: isDarkMode ? "var(--mm-bg-card)" : "var(--mm-bg-elev)", borderRadius: 20, padding: "20px 24px", border: "1.5px solid color-mix(in srgb, var(--mm-success) 25%, transparent)", textAlign: "center" }}>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>🎉</div>
-                <div style={{ fontWeight: 900, fontSize: 16, color: isDarkMode ? "#86EFAC" : "#166534" }}>Fiches ajoutées avec succès !</div>
+                <div style={{ fontWeight: 900, fontSize: 16, color: isDarkMode ? "var(--mm-success)" : "var(--mm-success)" }}>Fiches ajoutées avec succès !</div>
                 <div style={{ fontSize: 13, color: theme.textMuted, marginTop: 4 }}>Tu peux les retrouver dans ta liste de révision MemoMaster.</div>
-                <button onClick={() => setNotebookSaved(false)} style={{ marginTop: 12, padding: "8px 20px", background: "#22C55E", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>
+                <button onClick={() => setNotebookSaved(false)} style={{ marginTop: 12, padding: "8px 20px", background: "var(--mm-success)", color: "white", border: "none", borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>
                   ✏️ Ajouter d'autres notes
                 </button>
               </div>
@@ -7385,7 +7303,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                     style={{
                       padding: "10px 20px", borderRadius: 100, fontWeight: 800, fontSize: 14, cursor: "pointer",
                       whiteSpace: "nowrap", transition: "all 0.2s", border: "none",
-                      background: coachMode === t.id ? theme.primary : isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139, 92, 246,0.05)",
+                      background: coachMode === t.id ? theme.primary : isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 5%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)",
                       color: coachMode === t.id ? "white" : theme.textMuted
                     }}
                   >
@@ -7516,17 +7434,17 @@ Analyze pronunciation word by word.`
                 };
 
                 const SpeechRec_supported = !!SpeechRec;
-                const scoreColor = coachScoreAnim >= 80 ? "#22C55E" : coachScoreAnim >= 60 ? "#F59E0B" : "#EF4444";
+                const scoreColor = coachScoreAnim >= 80 ? "var(--mm-success)" : coachScoreAnim >= 60 ? "var(--mm-warning)" : "var(--mm-danger)";
                 const scoreGrad = coachScoreAnim >= 80
-                  ? "linear-gradient(135deg,#059669,#22C55E)"
+                  ? "linear-gradient(135deg,var(--mm-success),var(--mm-success))"
                   : coachScoreAnim >= 60
-                    ? "linear-gradient(135deg,#D97706,#F59E0B)"
-                    : "linear-gradient(135deg,#DC2626,#EF4444)";
+                    ? "linear-gradient(135deg,var(--mm-warning),var(--mm-warning))"
+                    : "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))";
 
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                     <style>{`
-              @keyframes coachListen { 0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(139, 92, 246,0.7)} 70%{transform:scale(1.05);box-shadow:0 0 0 18px rgba(139, 92, 246,0)} }
+              @keyframes coachListen { 0%,100%{transform:scale(1);box-shadow:0 0 0 0 color-mix(in srgb, var(--mm-primary) 70%, transparent)} 70%{transform:scale(1.05);box-shadow:0 0 0 18px color-mix(in srgb, var(--mm-primary) 0%, transparent)} }
               @keyframes coachScore { from{stroke-dashoffset:283} }
               @keyframes coachWordIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
               @keyframes coachTipIn { from{opacity:0;transform:translateY(-6px)scale(0.95)} to{opacity:1;transform:translateY(0)scale(1)} }
@@ -7538,33 +7456,33 @@ Analyze pronunciation word by word.`
                     {/* ─── Header card ─── */}
                     <div style={{
                       background: isDarkMode
-                        ? "linear-gradient(135deg,var(--mm-bg-elev),#312e81)"
+                        ? "linear-gradient(135deg,var(--mm-bg-elev),var(--mm-primary))"
                         : "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
                       borderRadius: 24, padding: "28px 32px",
-                      boxShadow: "0 20px 60px rgba(124, 58, 237,0.4)",
+                      boxShadow: "0 20px 60px color-mix(in srgb, var(--mm-primary) 40%, transparent)",
                       position: "relative", overflow: "hidden"
                     }}>
-                      <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, background: "radial-gradient(circle,rgba(192, 132, 252,0.3),transparent)", borderRadius: "50%", pointerEvents: "none" }} />
-                      <div style={{ fontSize: 11, fontWeight: 900, color: "#C4B5FD", letterSpacing: 3, marginBottom: 8, textTransform: "uppercase" }}>PRONUNCIATION COACH</div>
+                      <div style={{ position: "absolute", top: -40, right: -40, width: 200, height: 200, background: "radial-gradient(circle,color-mix(in srgb, var(--mm-primary) 30%, transparent),transparent)", borderRadius: "50%", pointerEvents: "none" }} />
+                      <div style={{ fontSize: 11, fontWeight: 900, color: "var(--mm-primary-glow)", letterSpacing: 3, marginBottom: 8, textTransform: "uppercase" }}>PRONUNCIATION COACH</div>
                       <div style={{ fontSize: 26, fontWeight: 900, color: "white", marginBottom: 6 }}>🎙️ Coach Prononciation</div>
-                      <div style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", lineHeight: 1.5 }}>
+                      <div style={{ fontSize: 14, color: "color-mix(in srgb, var(--mm-bg-elev) 70%, transparent)", lineHeight: 1.5 }}>
                         Lis la phrase à voix haute — l'IA analyse ta prononciation mot par mot.
                       </div>
 
                       {/* Difficulty selector */}
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 20, flexWrap: "wrap" }}>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 1 }}>Difficulté</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: "color-mix(in srgb, var(--mm-bg-elev) 60%, transparent)", textTransform: "uppercase", letterSpacing: 1 }}>Difficulté</span>
                         {[1, 2, 3, 4, 5].map(d => (
                           <button key={d} onClick={() => { setCoachDifficulty(d); setCoachPhrase(null); setCoachFeedback(null); setCoachTranscript(""); }}
                             style={{
                               width: 36, height: 36, borderRadius: "50%", border: "none", cursor: "pointer", fontWeight: 900, fontSize: 13,
-                              background: coachDifficulty === d ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.12)",
-                              color: coachDifficulty === d ? "var(--mm-primary)" : "rgba(255,255,255,0.7)",
-                              boxShadow: coachDifficulty === d ? "0 4px 12px rgba(0,0,0,0.3)" : "none",
+                              background: coachDifficulty === d ? "color-mix(in srgb, var(--mm-bg-elev) 95%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)",
+                              color: coachDifficulty === d ? "var(--mm-primary)" : "color-mix(in srgb, var(--mm-bg-elev) 70%, transparent)",
+                              boxShadow: coachDifficulty === d ? "0 4px 12px color-mix(in srgb, var(--mm-fg) 30%, transparent)" : "none",
                               transition: "all 0.2s"
                             }}>{d}</button>
                         ))}
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginLeft: 4 }}>
+                        <span style={{ fontSize: 11, color: "color-mix(in srgb, var(--mm-bg-elev) 50%, transparent)", marginLeft: 4 }}>
                           {{ 1: "A1-A2 Débutant", 2: "B1 Intermédiaire", 3: "B1-B2 Avancé", 4: "B2-C1 Expert", 5: "C1-C2 Maîtrise" }[coachDifficulty]}
                         </span>
                       </div>
@@ -7574,8 +7492,8 @@ Analyze pronunciation word by word.`
                     <div style={{
                       background: isDarkMode ? "var(--mm-bg-elev)" : "white",
                       borderRadius: 24, padding: 28,
-                      border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.2)"}`,
-                      boxShadow: isDarkMode ? "0 10px 40px rgba(0,0,0,0.4)" : "0 10px 40px rgba(139, 92, 246,0.08)"
+                      border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
+                      boxShadow: isDarkMode ? "0 10px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 40px color-mix(in srgb, var(--mm-primary) 8%, transparent)"
                     }}>
                       {/* Phrase display */}
                       {!coachPhrase && !coachGenerating && (
@@ -7585,7 +7503,7 @@ Analyze pronunciation word by word.`
                           <button onClick={generatePhrase} style={{
                             padding: "14px 36px", background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
                             color: "white", border: "none", borderRadius: 16, fontWeight: 900, fontSize: 16,
-                            cursor: "pointer", boxShadow: "0 8px 24px rgba(124, 58, 237,0.4)"
+                            cursor: "pointer", boxShadow: "0 8px 24px color-mix(in srgb, var(--mm-primary) 40%, transparent)"
                           }}>✨ Générer une phrase</button>
                         </div>
                       )}
@@ -7601,7 +7519,7 @@ Analyze pronunciation word by word.`
                         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                           {/* CEFR badge */}
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span style={{ fontSize: 11, fontWeight: 900, padding: "4px 12px", borderRadius: 20, background: "rgba(124, 58, 237,0.12)", color: "var(--mm-primary)", letterSpacing: 1, textTransform: "uppercase" }}>
+                            <span style={{ fontSize: 11, fontWeight: 900, padding: "4px 12px", borderRadius: 20, background: "color-mix(in srgb, var(--mm-primary) 12%, transparent)", color: "var(--mm-primary)", letterSpacing: 1, textTransform: "uppercase" }}>
                               {coachPhrase.cefrLevel}
                             </span>
                             <button onClick={generatePhrase} disabled={coachListening || coachLoading} style={{
@@ -7612,19 +7530,19 @@ Analyze pronunciation word by word.`
 
                           {/* Target phrase — colored when feedback available */}
                           <div style={{
-                            background: isDarkMode ? "rgba(139, 92, 246,0.08)" : "var(--mm-bg-elev)",
+                            background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 8%, transparent)" : "var(--mm-bg-elev)",
                             borderRadius: 16, padding: "20px 24px",
-                            border: `2px solid ${isDarkMode ? "rgba(139, 92, 246,0.25)" : "rgba(139, 92, 246,0.2)"}`
+                            border: `2px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`
                           }}>
                             {coachFeedback ? (
                               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, lineHeight: 2 }}>
                                 {coachFeedback.words.map((w, i) => {
-                                  const color = w.status === "correct" ? "#22C55E" : w.status === "wrong" ? "#EF4444" : "var(--mm-fg-muted)";
+                                  const color = w.status === "correct" ? "var(--mm-success)" : w.status === "wrong" ? "var(--mm-danger)" : "var(--mm-fg-muted)";
                                   const bg = w.status === "correct"
-                                    ? (isDarkMode ? "rgba(34,197,94,0.15)" : "rgba(34,197,94,0.12)")
+                                    ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 15%, transparent)" : "color-mix(in srgb, var(--mm-success) 12%, transparent)")
                                     : w.status === "wrong"
-                                      ? (isDarkMode ? "rgba(239,68,68,0.15)" : "rgba(239,68,68,0.12)")
-                                      : (isDarkMode ? "rgba(148,163,184,0.1)" : "rgba(148,163,184,0.1)");
+                                      ? (isDarkMode ? "color-mix(in srgb, var(--mm-danger) 15%, transparent)" : "color-mix(in srgb, var(--mm-danger) 12%, transparent)")
+                                      : (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)");
                                   const isSelected = coachWordTip?.index === i;
                                   return (
                                     <span
@@ -7654,20 +7572,20 @@ Analyze pronunciation word by word.`
                             <div style={{
                               background: isDarkMode ? "var(--mm-bg-elev)" : "var(--mm-bg-elev)",
                               borderRadius: 14, padding: "14px 18px",
-                              border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.4)" : "rgba(139, 92, 246,0.3)"}`,
+                              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "color-mix(in srgb, var(--mm-primary) 30%, transparent)"}`,
                               animation: "coachTipIn 0.25s ease",
                               display: "flex", flexDirection: "column", gap: 6
                             }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontSize: 16, fontWeight: 900, color: coachWordTip.status === "correct" ? "#22C55E" : coachWordTip.status === "wrong" ? "#EF4444" : "var(--mm-fg-muted)" }}>
+                                <span style={{ fontSize: 16, fontWeight: 900, color: coachWordTip.status === "correct" ? "var(--mm-success)" : coachWordTip.status === "wrong" ? "var(--mm-danger)" : "var(--mm-fg-muted)" }}>
                                   {coachWordTip.status === "correct" ? "✅" : coachWordTip.status === "wrong" ? "❌" : "⬜"} « {coachWordTip.word} »
                                 </span>
                                 {coachWordTip.userSaid && coachWordTip.userSaid !== coachWordTip.word && (
-                                  <span style={{ fontSize: 13, color: "#EF4444", fontStyle: "italic" }}>→ tu as dit « {coachWordTip.userSaid} »</span>
+                                  <span style={{ fontSize: 13, color: "var(--mm-danger)", fontStyle: "italic" }}>→ tu as dit « {coachWordTip.userSaid} »</span>
                                 )}
                               </div>
                               {coachWordTip.tip && (
-                                <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {coachWordTip.tip}</div>
+                                <div style={{ fontSize: 13, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {coachWordTip.tip}</div>
                               )}
                             </div>
                           )}
@@ -7677,8 +7595,8 @@ Analyze pronunciation word by word.`
                             onClick={() => { markInteracted(); speakText(coachPhrase.text, true); }}
                             style={{
                               alignSelf: "flex-start", padding: "10px 20px",
-                              background: isDarkMode ? "rgba(139, 92, 246,0.12)" : "rgba(139, 92, 246,0.08)",
-                              border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.3)" : "rgba(139, 92, 246,0.25)"}`,
+                              background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 12%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, transparent)",
+                              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25%, transparent)"}`,
                               borderRadius: 12, cursor: "pointer", color: "var(--mm-primary)", fontWeight: 700, fontSize: 13,
                               display: "flex", alignItems: "center", gap: 8
                             }}
@@ -7694,10 +7612,10 @@ Analyze pronunciation word by word.`
                                 style={{
                                   width: 80, height: 80, borderRadius: "50%", border: "none", cursor: coachLoading ? "not-allowed" : "pointer",
                                   background: coachListening
-                                    ? "linear-gradient(135deg,#EF4444,#DC2626)"
+                                    ? "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))"
                                     : "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
                                   fontSize: 32, display: "flex", alignItems: "center", justifyContent: "center",
-                                  boxShadow: coachListening ? "0 0 0 0 rgba(239,68,68,0.5)" : "0 8px 24px rgba(124, 58, 237,0.5)",
+                                  boxShadow: coachListening ? "0 0 0 0 color-mix(in srgb, var(--mm-danger) 50%, transparent)" : "0 8px 24px color-mix(in srgb, var(--mm-primary) 50%, transparent)",
                                   animation: coachListening ? "coachListen 1.5s infinite" : "none",
                                   transition: "background 0.3s, box-shadow 0.3s"
                                 }}
@@ -7712,7 +7630,7 @@ Analyze pronunciation word by word.`
                               {coachTranscript && (
                                 <div style={{
                                   width: "100%", padding: "12px 18px",
-                                  background: isDarkMode ? "rgba(255,255,255,0.04)" : "rgba(139, 92, 246,0.05)",
+                                  background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 4%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)",
                                   borderRadius: 12, border: `1px solid ${theme.border}`,
                                   fontSize: 14, color: theme.textMuted, fontStyle: "italic", lineHeight: 1.5
                                 }}>
@@ -7732,7 +7650,7 @@ Analyze pronunciation word by word.`
                               )}
                             </div>
                           ) : (
-                            <div style={{ padding: "16px", background: isDarkMode ? "rgba(239,68,68,0.1)" : "#FEF2F2", borderRadius: 12, color: "#EF4444", fontSize: 13, fontWeight: 600 }}>
+                            <div style={{ padding: "16px", background: isDarkMode ? "color-mix(in srgb, var(--mm-danger) 10%, transparent)" : "var(--mm-bg-elev)", borderRadius: 12, color: "var(--mm-danger)", fontSize: 13, fontWeight: 600 }}>
                               ⚠️ SpeechRecognition non disponible sur ce navigateur. Utilise Chrome ou Edge.
                             </div>
                           )}
@@ -7745,15 +7663,15 @@ Analyze pronunciation word by word.`
                       <div style={{
                         background: isDarkMode ? "var(--mm-bg-elev)" : "white",
                         borderRadius: 24, padding: 28,
-                        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(139, 92, 246,0.05)"}`,
-                        boxShadow: isDarkMode ? "0 16px 48px rgba(0,0,0,0.5)" : "0 16px 48px rgba(139, 92, 246,0.05)"
+                        border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)"}`,
+                        boxShadow: isDarkMode ? "0 16px 48px color-mix(in srgb, var(--mm-fg) 50%, transparent)" : "0 16px 48px color-mix(in srgb, var(--mm-primary) 5%, transparent)"
                       }}>
                         <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap", marginBottom: 24 }}>
 
                           {/* Score ring */}
                           <div style={{ position: "relative", width: 100, height: 100, flexShrink: 0 }}>
                             <svg width="100" height="100" viewBox="0 0 100 100">
-                              <circle cx="50" cy="50" r="45" fill="none" stroke={isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(139, 92, 246,0.05)"} strokeWidth="8" />
+                              <circle cx="50" cy="50" r="45" fill="none" stroke={isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)"} strokeWidth="8" />
                               <circle
                                 cx="50" cy="50" r="45" fill="none"
                                 stroke={scoreColor} strokeWidth="8"
@@ -7777,7 +7695,7 @@ Analyze pronunciation word by word.`
                           <div style={{ flex: 1, minWidth: 180 }}>
                             <div style={{
                               fontSize: 20, fontWeight: 900, marginBottom: 8,
-                              color: coachFeedback.score >= 80 ? "#22C55E" : coachFeedback.score >= 60 ? "#F59E0B" : "#EF4444"
+                              color: coachFeedback.score >= 80 ? "var(--mm-success)" : coachFeedback.score >= 60 ? "var(--mm-warning)" : "var(--mm-danger)"
                             }}>
                               {coachFeedback.score >= 80 ? "🎉 Excellent !" : coachFeedback.score >= 60 ? "👍 Bien joué !" : "💪 Continue !"}
                             </div>
@@ -7789,7 +7707,7 @@ Analyze pronunciation word by word.`
 
                         {/* Légende */}
                         <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-                          {[{ c: "#22C55E", l: "✅ Correct" }, { c: "#EF4444", l: "❌ Raté" }, { c: "var(--mm-fg-muted)", l: "⬜ Manqué" }].map(({ c, l }) => (
+                          {[{ c: "var(--mm-success)", l: "✅ Correct" }, { c: "var(--mm-danger)", l: "❌ Raté" }, { c: "var(--mm-fg-muted)", l: "⬜ Manqué" }].map(({ c, l }) => (
                             <div key={l} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: theme.textMuted }}>
                               <div style={{ width: 10, height: 10, borderRadius: "50%", background: c }} />{l}
                             </div>
@@ -7800,7 +7718,7 @@ Analyze pronunciation word by word.`
                         {/* Per-word detail list */}
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                           {coachFeedback.words.filter(w => w.status !== "correct").map((w, i) => {
-                            const c = w.status === "wrong" ? "#EF4444" : "var(--mm-fg-muted)";
+                            const c = w.status === "wrong" ? "var(--mm-danger)" : "var(--mm-fg-muted)";
                             return (
                               <div key={i} style={{
                                 display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px",
@@ -7819,14 +7737,14 @@ Analyze pronunciation word by word.`
                                     )}
                                   </div>
                                   {w.tip && (
-                                    <div style={{ fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {w.tip}</div>
+                                    <div style={{ fontSize: 13, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", lineHeight: 1.5 }}>💡 {w.tip}</div>
                                   )}
                                 </div>
                               </div>
                             );
                           })}
                           {coachFeedback.words.every(w => w.status === "correct") && (
-                            <div style={{ textAlign: "center", padding: "16px", color: "#22C55E", fontWeight: 800, fontSize: 16 }}>
+                            <div style={{ textAlign: "center", padding: "16px", color: "var(--mm-success)", fontWeight: 800, fontSize: 16 }}>
                               🏆 Prononciation parfaite ! Tous les mots sont corrects !
                             </div>
                           )}
@@ -7836,9 +7754,9 @@ Analyze pronunciation word by word.`
                         {coachFeedback.nextPhrase && (
                           <div style={{
                             marginTop: 20, padding: "14px 18px",
-                            background: isDarkMode ? "rgba(139, 92, 246,0.1)" : "rgba(139, 92, 246,0.06)",
-                            borderRadius: 14, border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.3)" : "rgba(139, 92, 246,0.2)"}`,
-                            fontSize: 13, color: isDarkMode ? "#C4B5FD" : "var(--mm-primary-deep)", lineHeight: 1.5
+                            background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 6%, transparent)",
+                            borderRadius: 14, border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
+                            fontSize: 13, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", lineHeight: 1.5
                           }}>
                             🤖 {coachFeedback.nextPhrase}
                           </div>
@@ -7850,8 +7768,8 @@ Analyze pronunciation word by word.`
                             onClick={() => { setCoachFeedback(null); setCoachTranscript(""); setCoachWordTip(null); setCoachScoreAnim(0); }}
                             style={{
                               flex: 1, padding: "14px", borderRadius: 14,
-                              background: isDarkMode ? "rgba(139, 92, 246,0.15)" : "rgba(139, 92, 246,0.08)",
-                              border: `1px solid ${isDarkMode ? "rgba(139, 92, 246,0.3)" : "rgba(139, 92, 246,0.2)"}`,
+                              background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 15%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, transparent)",
+                              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
                               color: "var(--mm-primary)", fontWeight: 800, fontSize: 14, cursor: "pointer"
                             }}
                           >🔁 Réessayer cette phrase</button>
@@ -7866,7 +7784,7 @@ Analyze pronunciation word by word.`
                               flex: 1, padding: "14px", borderRadius: 14,
                               background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))",
                               border: "none", color: "white", fontWeight: 800, fontSize: 14, cursor: "pointer",
-                              boxShadow: "0 6px 20px rgba(124, 58, 237,0.4)"
+                              boxShadow: "0 6px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)"
                             }}
                           >➡️ Phrase suivante {coachFeedback.score >= 75 && coachDifficulty < 5 ? "(+1 niveau)" : ""}</button>
                         </div>
@@ -7907,7 +7825,7 @@ Analyze pronunciation word by word.`
                       padding: "12px 20px", borderRadius: 14,
                       background: practiceExamSection === sec
                         ? "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))"
-                        : "rgba(255,255,255,0.05)",
+                        : "color-mix(in srgb, var(--mm-bg-elev) 5%, transparent)",
                       color: practiceExamSection === sec ? "white" : theme?.textMuted,
                       border: `1px solid ${practiceExamSection === sec ? "transparent" : "var(--mm-border)"}`,
                       fontWeight: 800, fontSize: 14, cursor: "pointer",
@@ -7928,7 +7846,7 @@ Analyze pronunciation word by word.`
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 {practiceExamQuestions.map((q, qi) => (
                   <div key={qi} style={{
-                    background: "rgba(255,255,255,0.03)", borderRadius: 16,
+                    background: "color-mix(in srgb, var(--mm-bg-elev) 3%, transparent)", borderRadius: 16,
                     padding: "20px 22px", border: "1px solid var(--mm-border)"
                   }}>
                     <div style={{ fontWeight: 800, fontSize: 15, color: theme?.text, marginBottom: 14 }}>
@@ -7940,8 +7858,8 @@ Analyze pronunciation word by word.`
                           display: "flex", alignItems: "center", gap: 10,
                           padding: "10px 14px", borderRadius: 10, cursor: "pointer",
                           background: practiceExamAnswers[qi] === opt
-                            ? "rgba(139, 92, 246,0.15)"
-                            : "rgba(255,255,255,0.03)",
+                            ? "color-mix(in srgb, var(--mm-primary) 15%, transparent)"
+                            : "color-mix(in srgb, var(--mm-bg-elev) 3%, transparent)",
                           border: `1px solid ${practiceExamAnswers[qi] === opt ? "var(--mm-primary)" : "var(--mm-border)"}`,
                           transition: "all 0.15s",
                         }}>
@@ -7973,7 +7891,7 @@ Analyze pronunciation word by word.`
                     color: "white", border: "none", borderRadius: 14,
                     fontWeight: 800, fontSize: 15, cursor: "pointer",
                     opacity: practiceExamAnswers.filter(Boolean).length < practiceExamQuestions.length ? 0.5 : 1,
-                    boxShadow: "0 8px 20px rgba(139, 92, 246,0.3)", transition: "all 0.2s",
+                    boxShadow: "0 8px 20px color-mix(in srgb, var(--mm-primary) 30%, transparent)", transition: "all 0.2s",
                   }}
                 >
                   ✅ Soumettre ({practiceExamAnswers.filter(Boolean).length}/{practiceExamQuestions.length} répondues)
@@ -8002,16 +7920,16 @@ Analyze pronunciation word by word.`
                     return (
                       <div key={qi} style={{
                         padding: "14px 18px", borderRadius: 14,
-                        background: isCorrect ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)",
-                        border: `1px solid ${isCorrect ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.3)"}`,
+                        background: isCorrect ? "color-mix(in srgb, var(--mm-success) 8%, transparent)" : "color-mix(in srgb, var(--mm-danger) 8%, transparent)",
+                        border: `1px solid ${isCorrect ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "color-mix(in srgb, var(--mm-danger) 30%, transparent)"}`,
                       }}>
                         <div style={{ fontWeight: 700, color: theme?.text, fontSize: 14, marginBottom: 6 }}>
                           {isCorrect ? "✅" : "❌"} {qi + 1}. {q.question}
                         </div>
                         {!isCorrect && (
                           <div style={{ fontSize: 13, color: theme?.textMuted }}>
-                            Ta réponse : <span style={{ color: "#ef4444" }}>{practiceExamAnswers[qi] || "Aucune"}</span>
-                            {" · "}Bonne réponse : <span style={{ color: "#10B981", fontWeight: 800 }}>{q.correct}</span>
+                            Ta réponse : <span style={{ color: "var(--mm-danger)" }}>{practiceExamAnswers[qi] || "Aucune"}</span>
+                            {" · "}Bonne réponse : <span style={{ color: "var(--mm-success)", fontWeight: 800 }}>{q.correct}</span>
                           </div>
                         )}
                       </div>
@@ -8027,7 +7945,7 @@ Analyze pronunciation word by word.`
                     🔄 Réessayer cette section
                   </button>
                   <button onClick={() => { setPracticeExamMode(false); setPracticeExamScore(null); setPracticeExamQuestions([]); setPracticeExamAnswers([]); }} style={{
-                    padding: "12px 24px", background: "rgba(255,255,255,0.06)",
+                    padding: "12px 24px", background: "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)",
                     color: theme?.text, border: "1px solid var(--mm-border)", borderRadius: 12,
                     fontWeight: 700, fontSize: 14, cursor: "pointer",
                   }}>
@@ -8115,12 +8033,24 @@ Analyze pronunciation word by word.`
       {customAgent.isConnected && (
         <LiveKitVoiceAssistant
           onClose={() => {
+            const currentMsgs = liveKitTranscriptions;
             agent.stop();
             // Débriefing & gratification de production active si des cibles ont été prononcées
             if (spokenTargetIds.size > 0 && effectiveTargetExpressions.length > 0) {
               const count = spokenTargetIds.size;
               awardXP(count * 15, count * 5, `🎯 ${count} fiche(s) du jour validée(s) à l'oral`);
               showToast(`🎯 Superbe ! ${count} expression(s) du jour ancrée(s) à l'oral avec Nova ! (+${count * 15} XP)`, "success");
+            }
+            // Mémorisation de session & mise à jour du profil apprenant de Nova
+            if (currentMsgs && currentMsgs.length >= 2 && callClaude) {
+              updateLearnerProfileFromSession({
+                transcript: currentMsgs,
+                currentProfile: learnerProfile,
+                callClaude,
+                storage,
+              }).then(updated => {
+                if (updated) setLearnerProfile(updated);
+              }).catch(() => {});
             }
           }}
           isDarkMode={isDarkMode}
@@ -8130,6 +8060,7 @@ Analyze pronunciation word by word.`
           studentName={studentName}
           sessionGoal={effectiveSessionGoal}
           targetExpressions={effectiveTargetExpressions}
+          continuityMemory={continuityMemory}
         />
       )}
 
@@ -8143,6 +8074,280 @@ Analyze pronunciation word by word.`
           onClose={() => setPostSessionChallenge(null)}
           onValidate={validateProductionSentence}
         />
+      )}
+
+      {/* POPUP DES RECTOS DES EXPRESSIONS APPRISES DURANT LA SESSION */}
+      {showSessionCardsModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="session-cards-modal-title"
+          onClick={() => setShowSessionCardsModal(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 99999,
+            background: isDarkMode ? "rgba(0, 0, 0, 0.75)" : "rgba(15, 23, 42, 0.48)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            animation: "zenFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: "min(440px, 92vw)",
+              background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-card, #111827) 96%, transparent)" : "#ffffff",
+              color: isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a",
+              borderRadius: 24,
+              border: `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 32%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
+              boxShadow: isDarkMode
+                ? "0 24px 60px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.15)"
+                : "0 20px 48px color-mix(in srgb, var(--mm-primary) 14%, transparent), 0 4px 16px rgba(0,0,0,0.06)",
+              padding: "24px 22px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
+              maxHeight: "82vh",
+              overflow: "hidden",
+            }}
+          >
+            {/* Entête */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 12,
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 18,
+                  border: `1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)`,
+                }}>
+                  🗂️
+                </div>
+                <div>
+                  <h3 id="session-cards-modal-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: isDarkMode ? "#f8fafc" : "#0f172a" }}>
+                    Expressions apprises ({sessionCardsCount})
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, opacity: 0.75, color: isDarkMode ? "#94a3b8" : "#64748b" }}>
+                    Recto des fiches de cette session
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSessionCardsModal(false)}
+                title="Fermer"
+                aria-label="Fermer"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  border: "none",
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev, #334155) 60%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)",
+                  color: isDarkMode ? "#f8fafc" : "#0f172a",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 15,
+                  fontWeight: 700,
+                  transition: "all 0.15s ease",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Liste scrollable des rectos uniquement + action suppression rapide */}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                overflowY: "auto",
+                paddingRight: 4,
+                marginRight: -4,
+                maxHeight: "52vh",
+              }}
+            >
+              {allSessionCards.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "32px 16px",
+                    color: isDarkMode ? "#94a3b8" : "#64748b",
+                    fontSize: 13.5,
+                    lineHeight: 1.6,
+                    background: isDarkMode ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)",
+                    borderRadius: 16,
+                    border: `1px dashed ${isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.12)"}`,
+                  }}
+                >
+                  <div style={{ fontSize: 26, marginBottom: 6 }}>🎉</div>
+                  <div style={{ fontWeight: 800, color: isDarkMode ? "#f1f5f9" : "#1e293b" }}>
+                    Toutes les expressions ont été traitées !
+                  </div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>
+                    Tu as supprimé les fiches que tu comprenais déjà.
+                  </div>
+                </div>
+              ) : (
+                allSessionCards.map((card, idx) => {
+                  const cardKey = card.id || card.front || `card-${idx}`;
+                  const isExpanded = previewSessionCardId === cardKey;
+                  return (
+                    <div
+                      key={cardKey}
+                      onClick={() => setPreviewSessionCardId(prev => prev === cardKey ? null : cardKey)}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                        padding: "12px 14px",
+                        borderRadius: 14,
+                        background: isDarkMode
+                          ? "color-mix(in srgb, var(--mm-bg-elev, #1f2937) 80%, transparent)"
+                          : "color-mix(in srgb, var(--mm-primary) 5%, transparent)",
+                        border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, transparent)" : "color-mix(in srgb, var(--mm-primary) 14%, transparent)"}`,
+                        transition: "all 0.15s ease",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
+                          <span style={{ fontSize: 14, flexShrink: 0 }}>✨</span>
+                          <span
+                            style={{
+                              fontSize: 14.5,
+                              fontWeight: 700,
+                              color: isDarkMode ? "#ffffff" : "#0f172a",
+                              wordBreak: "break-word",
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            {card.front}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                          {card._source && (
+                            <span
+                              style={{
+                                fontSize: 10.5,
+                                fontWeight: 800,
+                                padding: "2px 8px",
+                                borderRadius: 999,
+                                background: card._source === "coach_input"
+                                  ? "color-mix(in srgb, var(--mm-primary) 18%, transparent)"
+                                  : "color-mix(in srgb, var(--mm-success, #10b981) 18%, transparent)",
+                                color: card._source === "coach_input"
+                                  ? (isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)")
+                                  : (isDarkMode ? "#34d399" : "#059669"),
+                                letterSpacing: "0.2px",
+                              }}
+                            >
+                              {card._source === "coach_input" ? "💎 Nova" : "🎯 Réflexe"}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const targetId = card.id;
+                              const targetKey = (card.front || "").toLowerCase().trim();
+                              setDismissedSessionCardKeys(prev => new Set([...prev, targetKey, targetId]));
+                              setExpressions(prev => (prev || []).filter(c => c.id !== targetId && (c.front || "").toLowerCase().trim() !== targetKey));
+                              setManualSessionCards(prev => (prev || []).filter(c => c.id !== targetId && (c.front || "").toLowerCase().trim() !== targetKey));
+                              showToast?.(`🗑️ Fiche supprimée : "${card.front}" (déjà acquise)`, "info");
+                            }}
+                            title="Je comprends déjà cette expression — Supprimer la fiche"
+                            aria-label={`Supprimer ${card.front}`}
+                            style={{
+                              flexShrink: 0,
+                              width: 30,
+                              height: 30,
+                              borderRadius: 8,
+                              border: `1px solid ${isDarkMode ? "rgba(239, 68, 68, 0.4)" : "rgba(239, 68, 68, 0.25)"}`,
+                              background: isDarkMode ? "rgba(239, 68, 68, 0.15)" : "rgba(239, 68, 68, 0.08)",
+                              color: isDarkMode ? "#fca5a5" : "#dc2626",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              fontSize: 13,
+                              cursor: "pointer",
+                              transition: "all 0.15s ease",
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Aperçu déroulant si l'utilisateur clique sur la ligne */}
+                      {isExpanded && (
+                        <div
+                          style={{
+                            marginTop: 8,
+                            padding: "10px 12px",
+                            borderRadius: 10,
+                            background: isDarkMode ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 255, 255, 0.7)",
+                            borderTop: `1px dashed ${isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.1)"}`,
+                            fontSize: 12.5,
+                            lineHeight: 1.5,
+                            color: isDarkMode ? "#cbd5e1" : "#334155",
+                          }}
+                        >
+                          {card.example && (
+                            <div style={{ marginBottom: 4 }}>
+                              <strong style={{ color: isDarkMode ? "#93c5fd" : "#2563eb" }}>Exemple : </strong>
+                              <em>"{card.example}"</em>
+                            </div>
+                          )}
+                          {card.back && (
+                            <div style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
+                              {card.back.replace(/### 🎙️[^\n]*\n?/g, "").trim().slice(0, 240)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Pied de popup */}
+            <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+              <button
+                type="button"
+                onClick={() => setShowSessionCardsModal(false)}
+                style={{
+                  flex: 1,
+                  padding: "12px",
+                  borderRadius: 12,
+                  border: "none",
+                  background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))",
+                  color: "#ffffff",
+                  fontSize: 13.5,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                  boxShadow: "0 4px 14px color-mix(in srgb, var(--mm-primary) 30%, transparent)",
+                  transition: "transform 0.15s ease",
+                }}
+              >
+                Continuer la discussion
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div >
   );
@@ -8163,7 +8368,7 @@ const _providerMountedRef = { current: false };
 
 export default function EnglishPractice(props) {
   return (
-    <EnglishPracticeInner {...props} />
+    <div className="english-experience"><EnglishPracticeInner {...props} /></div>
   );
 }
 

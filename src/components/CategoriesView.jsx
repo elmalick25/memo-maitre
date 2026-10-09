@@ -1,5 +1,8 @@
 import React, { useState, useMemo } from "react";
 import HoloCard from "./HoloCard";
+import ModuleButton from "./modules/ModuleButton";
+import { getModuleCards, isAvailableModuleName, mergeModuleData } from "../lib/moduleActions";
+import "../styles/modules.css";
 import { safeParseJSON } from "../lib/textUtils";
 import { computeModuleComparison } from "../lib/reviewStats";
 
@@ -33,7 +36,8 @@ export default function CategoriesView({
   pauseDripQuota,
   setPauseDripQuota,
 }) {
-  const [newCat, setNewCat] = useState({ name: "", targetScore: 80, priority: "normale", color: "var(--mm-primary)" });
+  const [newCat, setNewCat] = useState({ name: "", targetScore: 80, color: "var(--mm-primary)" });
+  const [creationOpen, setCreationOpen] = useState(false);
   const [catsViewMode, setCatsViewMode] = useState("cards"); // cards | table | timeline | prep
   const [catsMergeSource, setCatsMergeSource] = useState("");
   const [catsMergeTarget, setCatsMergeTarget] = useState("");
@@ -74,7 +78,7 @@ export default function CategoriesView({
 
   const handleAddCat = () => {
     const trimmed = newCat.name.trim();
-    if (!trimmed || categories.find((c) => c.name === trimmed)) {
+    if (!isAvailableModuleName(categories, trimmed)) {
       showToast?.("Nom invalide ou existant.", "error");
       return;
     }
@@ -84,7 +88,7 @@ export default function CategoriesView({
       localStorage.setItem("mm_deleted_categories", JSON.stringify(next));
     } catch {}
     setCategories?.((prev) => [...prev, { ...newCat, name: trimmed }]);
-    setNewCat({ name: "", targetScore: 80, priority: "normale", color: "var(--mm-primary)" });
+    setNewCat({ name: "", targetScore: 80, color: "var(--mm-primary)" });
     showToast?.("Module créé !");
   };
 
@@ -99,10 +103,16 @@ export default function CategoriesView({
       showToast?.("Veuillez sélectionner deux modules distincts.", "error");
       return;
     }
-    setExpressions?.((prev) =>
-      prev.map((e) => (e.category === catsMergeSource ? { ...e, category: catsMergeTarget } : e))
-    );
-    setCategories?.((prev) => prev.filter((c) => c.name !== catsMergeSource));
+    let merged;
+    try { merged = mergeModuleData(categories, expressions, catsMergeSource, catsMergeTarget); }
+    catch (error) { showToast?.(error.message, "error"); return; }
+    if (!window.confirm(`Fusionner "${catsMergeSource}" dans "${catsMergeTarget}" ? Les fiches seront conservées, le module source sera supprimé.`)) return;
+    setExpressions?.(merged.expressions);
+    setCategories?.(merged.categories);
+    try {
+      const stored = JSON.parse(localStorage.getItem("mm_deleted_categories") || "[]");
+      localStorage.setItem("mm_deleted_categories", JSON.stringify([...new Set([...stored, catsMergeSource])]));
+    } catch {}
     showToast?.(`Module "${catsMergeSource}" fusionné dans "${catsMergeTarget}".`);
     setCatsMergeSource("");
     setCatsMergeTarget("");
@@ -191,7 +201,7 @@ export default function CategoriesView({
   };
 
   return (
-    <div style={{ animation: "fadeUp 0.4s ease" }}>
+    <div className="modules-view" style={{ animation: "fadeUp 0.4s ease" }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 24 }}>
         <div>
           <h1 style={{ fontSize: 28, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", marginBottom: 8 }}>◉ Gestion des Modules</h1>
@@ -280,7 +290,7 @@ export default function CategoriesView({
           {catsAlerts.map((alert, i) => (
             <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 6 }}>
               <span style={{ fontWeight: 700 }}>{alert.module}</span>
-              <span style={{ color: alert.type === "danger" ? "#EF4444" : "var(--mm-primary)" }}>{alert.message}</span>
+              <span style={{ color: alert.type === "danger" ? "var(--mm-danger)" : "var(--mm-primary)" }}>{alert.message}</span>
             </div>
           ))}
         </div>
@@ -296,37 +306,30 @@ export default function CategoriesView({
         </div>
       )}
 
-      {/* Ajout de module (compact) */}
-      <div style={{ background: theme?.cardBg, border: `1px solid ${theme?.border}`, borderRadius: 18, padding: "20px", marginBottom: 20 }}>
-        <h3 style={{ margin: "0 0 12px", color: theme?.text, fontWeight: 800 }}>➕ Ajouter un module</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
-          <input value={newCat.name} onChange={e => setNewCat(c => ({ ...c, name: e.target.value }))} style={{ padding: 10, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8, color: theme?.text }} placeholder="Nom" />
-          <input type="color" value={newCat.color} onChange={e => setNewCat(c => ({ ...c, color: e.target.value }))} style={{ height: 42, padding: 4, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8 }} />
-          <select value={newCat.priority} onChange={e => setNewCat(c => ({ ...c, priority: e.target.value }))} style={{ padding: 10, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8, color: theme?.text }}>
-            <option value="haute">Haute</option>
-            <option value="normale">Normale</option>
-            <option value="basse">Basse</option>
-          </select>
-          <button onClick={handleAddCat} disabled={!newCat.name.trim()} style={{ padding: "10px 18px", background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 8, fontWeight: 800, cursor: !newCat.name.trim() ? "not-allowed" : "pointer" }}>Créer</button>
-        </div>
+      <div style={{ marginBottom: 20 }}>
+        <ModuleButton variant="primary" aria-expanded={creationOpen} aria-controls="module-create-panel" onClick={() => setCreationOpen(open => !open)}>
+          {creationOpen ? "Fermer" : "Créer un module"}
+        </ModuleButton>
       </div>
-
-      {/* Fusion de modules */}
-      <div style={{ background: theme?.cardBg, borderRadius: 16, padding: 16, marginBottom: 20, border: `1px solid ${theme?.border}` }}>
-        <h4 style={{ margin: "0 0 8px", color: theme?.text }}>🔀 Fusionner des modules</h4>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <select value={catsMergeSource || ""} onChange={e => setCatsMergeSource(e.target.value)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme?.border}`, background: theme?.inputBg, color: theme?.text }}>
-            <option value="">Source...</option>
+      {creationOpen && <section id="module-create-panel" className="module-create-panel">
+        <h3>Ajouter un module</h3>
+        <form className="module-create-fields" onSubmit={event => { event.preventDefault(); handleAddCat(); }}>
+          <input aria-label="Nom du nouveau module" value={newCat.name} onChange={e => setNewCat(c => ({ ...c, name: e.target.value }))} placeholder="Nom du module" autoFocus />
+          <ModuleButton variant="primary" type="submit" disabled={!newCat.name.trim()}>Créer</ModuleButton>
+        </form>
+        <h3>Fusionner des modules</h3>
+        <div className="module-merge-fields">
+          <select aria-label="Module à fusionner" value={catsMergeSource} onChange={e => setCatsMergeSource(e.target.value)}>
+            <option value="">Module à fusionner</option>
             {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
           </select>
-          <span>→</span>
-          <select value={catsMergeTarget || ""} onChange={e => setCatsMergeTarget(e.target.value)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme?.border}`, background: theme?.inputBg, color: theme?.text }}>
-            <option value="">Cible...</option>
-            {categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+          <select aria-label="Module à conserver" value={catsMergeTarget} onChange={e => setCatsMergeTarget(e.target.value)}>
+            <option value="">Module à conserver</option>
+            {categories.filter(c => c.name !== catsMergeSource).map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
           </select>
-          <button onClick={mergeModules} disabled={!catsMergeSource || !catsMergeTarget} style={{ padding: "8px 16px", background: "var(--mm-primary)", color: "white", border: "none", borderRadius: 8, fontWeight: 700, cursor: (!catsMergeSource || !catsMergeTarget) ? "not-allowed" : "pointer" }}>Fusionner</button>
+          <ModuleButton onClick={mergeModules} disabled={!catsMergeSource || !catsMergeTarget || catsMergeSource === catsMergeTarget}>Fusionner</ModuleButton>
         </div>
-      </div>
+      </section>}
 
       {/* Vue cartes */}
       {catsViewMode === "cards" && (
@@ -369,7 +372,8 @@ export default function CategoriesView({
             filteredCategories.map(cat => {
             const isFav = catsFavorites.includes(cat.name);
             const catExps = expressions.filter(e => e.category === cat.name);
-            const dueCount = catExps.filter(e => isDue(e.nextReview, today()) && (e.level || 0) < 7 && !e.paused).length;
+            const selection = getModuleCards(expressions, cat.name, isDue, today());
+            const dueCount = selection.due.length;
             const mastered = catExps.filter(e => (e.level || 0) >= 7).length;
             const pausedCount = catExps.filter(e => e.paused).length;
             const newUnpausedCount = catExps.filter(e => !e.paused && (e.level || 0) === 0).length;
@@ -382,11 +386,7 @@ export default function CategoriesView({
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <span style={{ fontWeight: 900, fontSize: 18, color: theme?.text }}>{cat.name}</span>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => toggleFavorite(cat.name)} title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"} style={{ background: "none", border: "none", color: isFav ? "var(--mm-primary)" : theme?.textMuted, cursor: "pointer", fontSize: 18 }}>{isFav ? "★" : "☆"}</button>
-                    <button onClick={() => handleExportModule(cat.name)} title={`Exporter le module "${cat.name}"`} style={{ background: "none", border: "none", color: theme?.textMuted, cursor: "pointer" }}>📥</button>
-                    <button onClick={() => handleDeleteCat(cat.name)} title={`Supprimer le module "${cat.name}"`} style={{ background: "none", border: "none", color: "#EF4444", cursor: "pointer", fontSize: 16 }}>🗑️</button>
-                  </div>
+                  <ModuleButton aria-label={isFav ? "Retirer des favoris" : "Ajouter aux favoris"} title={isFav ? "Retirer des favoris" : "Ajouter aux favoris"} onClick={() => toggleFavorite(cat.name)}>{isFav ? "★" : "☆"}</ModuleButton>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
                   <div style={{ flex: 1, height: 8, background: theme?.inputBg, borderRadius: 4, overflow: "hidden" }}>
@@ -397,86 +397,31 @@ export default function CategoriesView({
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: theme?.textMuted, flexWrap: "wrap", gap: 4 }}>
                   <span>{catExps.length} fiches</span>
                   <span>{mastered} maîtrisées</span>
-                  <span style={{ color: dueCount > 0 ? "#EF4444" : theme?.textMuted }}>{dueCount} en retard</span>
-                  {pausedCount > 0 && <span style={{ color: "#F59E0B" }}>⏸ {pausedCount} en pause</span>}
+                  <span style={{ color: dueCount > 0 ? "var(--mm-danger)" : theme?.textMuted }}>{dueCount} en retard</span>
+                  {pausedCount > 0 && <span style={{ color: "var(--mm-warning)" }}>⏸ {pausedCount} en pause</span>}
                 </div>
-                <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                  {dueCount > 0 ? (
-                    <>
-                      <button
-                        onClick={() => {
-                          const dues = catExps.filter(e => isDue(e.nextReview, today()) && !e.paused);
-                          startReview?.(cat.name, "module", dues);
-                        }}
-                        className="hov"
-                        title="Réviser uniquement les fiches en retard de ce module"
-                        style={{ padding: "4px 10px", fontSize: 11, background: "var(--mm-primary)", color: "white", border: "none", borderRadius: 6, fontWeight: 700 }}
-                      >
-                        🎯 Réviser dues ({dueCount})
-                      </button>
-                      <button
-                        onClick={() => {
-                          const unpaused = catExps.filter(e => !e.paused);
-                          startReview?.(cat.name, "module", unpaused);
-                        }}
-                        className="hov"
-                        title="Réviser toutes les fiches de ce module (hors fiches en pause)"
-                        style={{ padding: "4px 8px", fontSize: 11, background: "transparent", color: theme?.text || "inherit", border: `1px solid ${theme?.border}`, borderRadius: 6, fontWeight: 600 }}
-                      >
-                        📚 Tout ({catExps.length})
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        const unpaused = catExps.filter(e => !e.paused);
-                        startReview?.(cat.name, "module", unpaused);
-                      }}
-                      className="hov"
-                      title="Réviser toutes les fiches de ce module (hors fiches en pause)"
-                      style={{ padding: "4px 10px", fontSize: 11, background: "var(--mm-primary)", color: "white", border: "none", borderRadius: 6, fontWeight: 700 }}
-                    >
-                      📚 Réviser tout ({catExps.length})
-                    </button>
-                  )}
-                  {pausedCount === 0 ? (
-                    <button
-                      onClick={() => handlePauseNewCards(cat.name)}
-                      disabled={newUnpausedCount === 0}
-                      className="hov"
-                      title="Met en pause les fiches pas encore apprises (level 0) pour ne pas les voir en retard"
-                      style={{ padding: "4px 8px", fontSize: 11, background: newUnpausedCount === 0 ? theme?.inputBg : "#F59E0B", color: newUnpausedCount === 0 ? theme?.textMuted : "white", border: "none", borderRadius: 6, fontWeight: 600, cursor: newUnpausedCount === 0 ? "default" : "pointer" }}
-                    >⏸ Pause nouvelles</button>
-                  ) : (
-                    <>
-                      <button onClick={() => handleReviewPausedCards(cat.name)} className="hov" title="Étudier les fiches en pause de ce module" style={{ padding: "4px 8px", fontSize: 11, background: "var(--mm-primary)", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>📖 Fiches en pause ({pausedCount})</button>
-                      <button onClick={() => handleReleaseAllPaused(cat.name)} className="hov" title="Libérer toutes les fiches en pause de ce module" style={{ padding: "4px 8px", fontSize: 11, background: "#10B981", color: "white", border: "none", borderRadius: 6, fontWeight: 600 }}>🔓 Libérer ({pausedCount})</button>
-                      <button
-                        onClick={() => {
-                          setPauseManagerModule?.(cat.name);
-                          setPauseManagerSelected?.(new Set());
-                          setFilterCat?.(cat.name);
-                          setFilterLevel?.("En pause");
-                          setSearchQuery?.("");
-                          setSelectionMode?.(true);
-                          setSelectedCards?.([]);
-                          setView?.("list");
-                        }}
-                        className="hov"
-                        title="Parcourir les fiches en pause et choisir celles à ajouter à la révision"
-                        style={{ padding: "4px 8px", fontSize: 11, background: "none", color: theme?.textMuted, border: `1px solid ${theme?.border}`, borderRadius: 6, fontWeight: 600 }}
-                      >Choisir...</button>
-                    </>
-                  )}
-                  <button onClick={() => { if (window.confirm(`Supprimer toutes les fiches de "${cat.name}" ? Cette action est irréversible.`)) { setExpressions?.(prev => prev.filter(e => e.category !== cat.name)); showToast?.(`Toutes les fiches de "${cat.name}" supprimées.`); } }} className="hov" title="Supprimer toutes les fiches de ce module" style={{ padding: "4px 8px", fontSize: 11, background: "none", color: "#EF4444", border: `1px solid #EF444455`, borderRadius: 6, fontWeight: 600 }}>🗑️ Supprimer tout</button>
-                </div>
-                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: theme?.textMuted }}>
-                  <span>🎯 Priorité :</span>
-                  <select value={cat.priority || "normale"} onChange={(e) => { const v = e.target.value; setCategories?.(prev => prev.map(c => c.name === cat.name ? { ...c, priority: v } : c)); showToast?.(`Priorité de ${cat.name} : ${v}`); }} style={{ padding: "4px 8px", background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8, color: theme?.text, fontSize: 12 }}>
-                    <option value="haute">Haute</option>
-                    <option value="normale">Normale</option>
-                    <option value="basse">Basse</option>
-                  </select>
+                <div className="module-actions">
+                  <ModuleButton variant="primary" disabled={dueCount === 0} onClick={() => startReview?.(cat.name, "module", selection.due)}>
+                    Réviser les fiches à revoir ({dueCount})
+                  </ModuleButton>
+                  <ModuleButton onClick={() => { setFilterCat?.(cat.name); setFilterLevel?.("Tous"); setSearchQuery?.(""); setSelectionMode?.(false); setSelectedCards?.([]); setView?.("list"); }}>Voir les fiches ({catExps.length})</ModuleButton>
+                  <details className="module-menu">
+                    <summary>Autres actions</summary>
+                    <div className="module-menu-list">
+                      <ModuleButton disabled={!selection.active.length} onClick={() => startReview?.(cat.name, "module", selection.active)}>Réviser toutes les fiches actives ({selection.active.length})</ModuleButton>
+                      <ModuleButton disabled={!selection.active.length} onClick={() => startReview?.(cat.name, "free", selection.active)} style={{ borderLeft: "3px solid #10B981" }}>
+                        🎮 Entraînement libre ({selection.active.length}) — sans impact SRS
+                      </ModuleButton>
+                      <ModuleButton disabled={newUnpausedCount === 0} onClick={() => handlePauseNewCards(cat.name)}>Mettre les nouvelles fiches en pause ({newUnpausedCount})</ModuleButton>
+                      {pausedCount > 0 && <>
+                        <ModuleButton onClick={() => handleReviewPausedCards(cat.name)}>Étudier les fiches en pause ({pausedCount})</ModuleButton>
+                        <ModuleButton onClick={() => handleReleaseAllPaused(cat.name)}>Reprendre toutes les fiches en pause</ModuleButton>
+                        <ModuleButton onClick={() => { setPauseManagerModule?.(cat.name); setPauseManagerSelected?.(new Set()); setFilterCat?.(cat.name); setFilterLevel?.("En pause"); setSearchQuery?.(""); setSelectionMode?.(true); setSelectedCards?.([]); setView?.("list"); }}>Choisir les fiches à reprendre</ModuleButton>
+                      </>}
+                      <ModuleButton onClick={() => handleExportModule(cat.name)}>Exporter les fiches</ModuleButton>
+                      <ModuleButton variant="danger" onClick={() => handleDeleteCat(cat.name)}>Supprimer le module</ModuleButton>
+                    </div>
+                  </details>
                 </div>
 
                 {/* Courbe mini */}
@@ -519,7 +464,7 @@ export default function CategoriesView({
                     <td style={{ textAlign: "center" }}>{s.total || 0}</td>
                     <td style={{ textAlign: "center" }}>{s.pct || 0}%</td>
                     <td style={{ textAlign: "center" }}>{s.avgDiff || "-"}</td>
-                    <td style={{ textAlign: "center", color: (s.due || 0) > 0 ? "#EF4444" : theme?.text }}>{s.due || 0}</td>
+                    <td style={{ textAlign: "center", color: (s.due || 0) > 0 ? "var(--mm-danger)" : theme?.text }}>{s.due || 0}</td>
                     <td style={{ textAlign: "center" }}>{s.lastReview || "-"}</td>
                   </tr>
                 );
@@ -607,18 +552,18 @@ export default function CategoriesView({
             const isReady = readiness >= 95;
 
             return (
-              <HoloCard key={cat.name} theme={theme} glowColor={isReady ? "#10B981" : "var(--mm-primary)"} style={{ background: theme?.cardBg, borderRadius: 24, padding: "28px", border: `2px solid ${isReady ? "#10B98150" : theme?.border}`, display: "flex", flexDirection: "column" }}>
-                <div style={{ fontSize: 11, fontWeight: 900, color: isReady ? "#10B981" : theme?.highlight, letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>PREP-MODE CERTIFICATION</div>
+              <HoloCard key={cat.name} theme={theme} glowColor={isReady ? "var(--mm-success)" : "var(--mm-primary)"} style={{ background: theme?.cardBg, borderRadius: 24, padding: "28px", border: `2px solid ${isReady ? "#10B98150" : theme?.border}`, display: "flex", flexDirection: "column" }}>
+                <div style={{ fontSize: 11, fontWeight: 900, color: isReady ? "var(--mm-success)" : theme?.highlight, letterSpacing: 2, textTransform: "uppercase", marginBottom: 8 }}>PREP-MODE CERTIFICATION</div>
                 <h3 style={{ margin: "0 0 16px", color: theme?.text, fontSize: 20, fontWeight: 900 }}>{cat.name}</h3>
 
                 <div style={{ display: "flex", justifyContent: "center", marginBottom: 24 }}>
                   <div style={{ position: "relative", width: 160, height: 160 }}>
                     <svg viewBox="0 0 36 36" style={{ width: 160, height: 160, transform: "rotate(-90deg)" }}>
                       <circle cx="18" cy="18" r="15.9" fill="none" stroke={theme?.inputBg} strokeWidth="3" />
-                      <circle cx="18" cy="18" r="15.9" fill="none" stroke={isReady ? "#10B981" : "var(--mm-primary)"} strokeWidth="4" strokeDasharray={`${readiness} 100`} strokeLinecap="round" style={{ transition: "stroke-dasharray 1.5s cubic-bezier(0.16, 1, 0.3, 1)", filter: isReady ? "drop-shadow(0 0 12px rgba(16,185,129,0.5))" : "drop-shadow(0 0 12px color-mix(in srgb, var(--mm-primary) 30.0%, transparent))" }} />
+                      <circle cx="18" cy="18" r="15.9" fill="none" stroke={isReady ? "var(--mm-success)" : "var(--mm-primary)"} strokeWidth="4" strokeDasharray={`${readiness} 100`} strokeLinecap="round" style={{ transition: "stroke-dasharray 1.5s cubic-bezier(0.16, 1, 0.3, 1)", filter: isReady ? "drop-shadow(0 0 12px rgba(16,185,129,0.5))" : "drop-shadow(0 0 12px color-mix(in srgb, var(--mm-primary) 30.0%, transparent))" }} />
                     </svg>
                     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                      <span style={{ fontSize: 36, fontWeight: 900, color: isReady ? "#10B981" : theme?.text, lineHeight: 1 }}>{readiness}%</span>
+                      <span style={{ fontSize: 36, fontWeight: 900, color: isReady ? "var(--mm-success)" : theme?.text, lineHeight: 1 }}>{readiness}%</span>
                       <span style={{ fontSize: 10, fontWeight: 800, color: theme?.textMuted, textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>Readiness</span>
                     </div>
                   </div>
@@ -637,7 +582,7 @@ export default function CategoriesView({
 
                 {isReady ? (
                   <div style={{ marginTop: "auto", textAlign: "center", animation: "fadeUp 0.5s ease" }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, color: "#10B981", marginBottom: 12 }}>🎉 Module maîtrisé — prêt pour la certification !</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: "var(--mm-success)", marginBottom: 12 }}>🎉 Module maîtrisé — prêt pour la certification !</div>
                     <button onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(cat.name + " certification officielle inscription")}`, "_blank")} className="btn-glow hov" style={{ width: "100%", padding: "14px", background: "linear-gradient(135deg, #10B981, #059669)", color: "white", border: "none", borderRadius: 14, fontWeight: 900, fontSize: 14, cursor: "pointer", boxShadow: "0 8px 20px rgba(16,185,129,0.4)" }}>
                       Voir la certification ↗
                     </button>
@@ -645,7 +590,10 @@ export default function CategoriesView({
                 ) : (
                   <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
                     <button onClick={() => { startReview?.(cat.name, "module"); }} className="hov" style={{ padding: "12px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
-                      🎯 Réviser ce module
+                      🎯 Réviser ce module (SRS)
+                    </button>
+                    <button onClick={() => { startReview?.(cat.name, "free"); }} className="hov" style={{ padding: "12px", background: "transparent", border: `1px solid ${theme?.border || "#CBD5E1"}`, color: theme?.text, borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>
+                      🎮 Entraînement libre (sans impact SRS)
                     </button>
                     <button onClick={async () => {
                       setPrepLoading(p => ({ ...p, [cat.name]: true }));

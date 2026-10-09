@@ -132,7 +132,7 @@ let currentUid = null
  * @returns {() => void} fonction d'arrêt.
  */
 export function startRealtimeExpressions(uid, { onApplied } = {}) {
-  if (!uid) return () => {}
+  if (!firestoreDb || !uid) return () => {}
   // Le disjoncteur quota ne coupe plus le temps réel : Firestore ne facture ici
   // que les fiches RÉELLEMENT modifiées (3 révisions = 3 lectures). Couper ce
   // canal était le pire des deux mondes : on économisait ~rien et l'appareil
@@ -223,7 +223,7 @@ function scheduleRealtimeRetry(uid, opts) {
  * qu'un PC réveillé après plusieurs heures récupère l'état à jour.
  */
 export function ensureRealtimeExpressions(uid, opts = {}) {
-  if (!uid) return
+  if (!firestoreDb || !uid) return
   if (unsubscribe && currentUid === uid) return
   if (retryTimer) {
     clearTimeout(retryTimer)

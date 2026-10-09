@@ -14,6 +14,7 @@ const mapRecordToCard = (r) => ({
   type: r.type,
   imageUrl: r.imageUrl,
   audioUrl: r.audioUrl,
+  audioId: r.audioId,
   layers: r.layers,
   level: r.level,
   nextReview: r.nextReview ? normalizeDate(r.nextReview) : null,
@@ -75,6 +76,7 @@ const mapCardToRecord = (card, exp) => {
   exp.type = card.type || 'qa'
   exp.imageUrl = card.imageUrl || null
   exp.audioUrl = card.audioUrl || null
+  exp.audioId = card.audioId || null
   exp.layers = card.layers || []
   exp.level = card.level || 0
   exp.nextReview = card.nextReview ? normalizeDate(card.nextReview) : today()
@@ -101,7 +103,7 @@ const mapCardToRecord = (card, exp) => {
 }
 
 const isCardDifferent = (oldCard, newCard) => {
-  const fields = ['front', 'back', 'example', 'category', 'type', 'imageUrl', 'audioUrl', 'level', 'nextReview', 'easeFactor', 'interval', 'repetitions', 'masteryStage', 'lastProductiveUseAt'];
+  const fields = ['front', 'back', 'example', 'category', 'type', 'imageUrl', 'audioUrl', 'audioId', 'level', 'nextReview', 'easeFactor', 'interval', 'repetitions', 'masteryStage', 'lastProductiveUseAt'];
   for (const f of fields) {
     if (oldCard[f] !== newCard[f]) return true;
   }

@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { today } from "../utils/dateUtils";
 import { safeParseJSON } from "../lib/jsonRepair";
+import { normalizeLabCard } from "../lib/lab/cardIntake";
 import { findSimilarCards } from "../lib/textUtils";
 
 export const ATOMIC_CARD_RULES = `Règles d'atomicité FSRS :
@@ -115,7 +116,7 @@ export default function useExpressionsManager({
   }, [setExpressions, showToast]);
 
   // ── Ajout de fiches depuis le Lab / OCR / Documents (Hermétique Anti-Doublons) ──
-  const addCardsFromLab = useCallback((cards) => {
+  const addCardsFromLab = useCallback((cards, options = {}) => {
     if (!cards || !cards.length) return { added: 0, skipped: 0 };
     const now = new Date().toISOString();
 
@@ -127,55 +128,40 @@ export default function useExpressionsManager({
         .replace(/[^\p{L}\p{N}\s]/gu, "")
         .trim();
 
-    const existingFronts = new Set(expressions.map((e) => norm(e?.front)).filter(Boolean));
+    const existingFronts = new Set(expressions.map((e) => `${e.category}:${norm(e?.front)}`).filter(Boolean));
 
     const newUnique = [];
     let skipped = 0;
+    let invalid = 0;
 
     for (const c of cards) {
-      const target = norm(c.front || c.question);
-      if (!target) continue;
+      const normalized = normalizeLabCard(c, { date: today(), now, createId: () => crypto.randomUUID() });
+      if (!normalized) { invalid++; continue; }
+      const target = norm(normalized.front);
 
       // Détection double : exacte ou sémantique (> 78% similarité)
-      if (existingFronts.has(target) || findSimilarCards(target, expressions, 0.78).length > 0) {
+      if (existingFronts.has(`${normalized.category}:${target}`) || expressions.some(e => e.category === normalized.category && norm(e.front) === target)) {
         skipped++;
         continue;
       }
 
-      existingFronts.add(target);
-      newUnique.push({
-        id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 7),
-        front: (c.front || c.question || "").trim(),
-        back: (c.back || c.answer || "").trim(),
-        example: (c.example || "").trim(),
-        category: c.category || "Général",
-        type: c.type || "qa",
-        bloomLevel: c.bloomLevel || "Understand",
-        keyword: (c.keyword || "").trim(),
-        level: 0,
-        nextReview: today(),
-        createdAt: now,
-        updatedAt: now,
-        easeFactor: 2.5,
-        interval: 1,
-        repetitions: 0,
-        reviewHistory: [],
-      });
+      existingFronts.add(`${normalized.category}:${target}`);
+      newUnique.push(normalized);
     }
 
     if (newUnique.length > 0) {
       setExpressions((prev) => [...newUnique, ...prev]);
     }
 
-    if (skipped > 0) {
+    if (!options.silent && skipped > 0) {
       showToast(`✨ ${newUnique.length} fiche(s) ajoutée(s) (${skipped} doublon(s) déjà présent(s) ignoré(s))`, "success");
-    } else if (newUnique.length > 0) {
+    } else if (!options.silent && newUnique.length > 0) {
       showToast(`✨ ${newUnique.length} fiche(s) ajoutée(s) depuis le Lab !`, "success");
-    } else {
+    } else if (!options.silent) {
       showToast(`ℹ️ Toutes les fiches sélectionnées (${skipped}) existent déjà dans ton deck.`, "info");
     }
 
-    return { added: newUnique.length, skipped };
+    return { added: newUnique.length, skipped, invalid };
   }, [expressions, setExpressions, showToast]);
 
   return {

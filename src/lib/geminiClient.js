@@ -19,7 +19,7 @@ const env = (key) =>
   resolveKey(key) || undefined;
 
 // ── Configuration ────────────────────────────────────────────────────────────
-const DEFAULT_MODEL       = env("VITE_GEMINI_MODEL") || "gemini-3.5-flash-lite";
+const DEFAULT_MODEL       = env("VITE_GEMINI_MODEL") || "gemini-flash-latest";
 const RPM_LIMIT           = Number(env("VITE_GEMINI_RPM_LIMIT")  || 4);        // free tier ≤ 4 RPM (conservatif)
 const MIN_INTERVAL_MS     = Math.ceil(60_000 / RPM_LIMIT);                     // ~15 000 ms
 const RETRY_BUFFER_MS     = 2_000;                                              // tampon après Retry-After

@@ -40,3 +40,20 @@ test('ReviewEngineView — provides Optimiser button with AI Coach in card actio
   assert.equal(content.includes('✨ Optimiser'), true, 'ReviewEngineView must render ✨ Optimiser button');
 });
 
+test('ReviewEngineView — renders modern end-of-session modal with module and card count selectors', () => {
+  const content = fs.readFileSync(reviewEngineViewPath, 'utf8');
+  assert.equal(content.includes('review-session-summary-title'), true, 'Must have modal header title');
+  assert.equal(content.includes('review-module-select'), true, 'Must have module selector');
+  assert.equal(content.includes('setContinueCount'), true, 'Must allow choosing continue card count');
+  assert.equal(content.includes('handleContinueSession'), true, 'Must have continue review session handler');
+  assert.equal(content.includes('categories = []'), true, 'Must accept categories prop');
+  assert.equal(content.includes('expressions = []'), true, 'Must accept expressions prop');
+});
+
+test('MemoMaster — passes categories and expressions to ReviewEngineView', () => {
+  const content = fs.readFileSync(memoMasterPath, 'utf8');
+  assert.equal(content.includes('categories={categories}'), true, 'MemoMaster must pass categories');
+  assert.equal(content.includes('expressions={expressions}'), true, 'MemoMaster must pass expressions');
+});
+
+

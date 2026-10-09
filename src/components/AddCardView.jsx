@@ -40,6 +40,7 @@ export default function AddCardView({
   const [aiBatchCount, setAiBatchCount] = useState(5);
   const [showBatchPreview, setShowBatchPreview] = useState(false);
   const [batchPreview, setBatchPreview] = useState([]);
+  const [isBatchSaving, setIsBatchSaving] = useState(false);
   const [batchCanvasTransform, setBatchCanvasTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [batchMousePos, setBatchMousePos] = useState({ x: 0, y: 0 });
   const [batchLinks, setBatchLinks] = useState([]);
@@ -66,6 +67,7 @@ export default function AddCardView({
   const [visionScanCards, setVisionScanCards] = useState([]);
   const [visionScanLoading, setVisionScanLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [ocrDragOver, setOcrDragOver] = useState(false);
 
   // Multimedia state
   const [addImageGallery, setAddImageGallery] = useState(false);
@@ -304,7 +306,8 @@ ${ATOMIC_CARD_RULES}`;
   };
 
   const confirmBatch = () => {
-    if (batchPreview.length === 0) return;
+    if (batchPreview.length === 0 || isBatchSaving) return;
+    setIsBatchSaving(true);
     const newExps = batchPreview.map(card => ({
       id: card.id || (Date.now().toString() + Math.random()),
       front: card.front || "Concept",
@@ -318,17 +321,168 @@ ${ATOMIC_CARD_RULES}`;
       interval: 1,
       repetitions: 0,
       reviewHistory: [],
-      imageUrl: null,
+      imageUrl: (addSubView === "file" && addForm.imageUrl) ? addForm.imageUrl : null,
     }));
     setExpressions(prev => [...newExps, ...prev]);
-    showToast?.(`✨ ${newExps.length} fiches forgées et sauvegardées !`);
+    showToast?.(`✨ ${newExps.length} fiches forgées et sauvegardées !`, "success");
+
+    // Disparition immédiate de tous les aperçus et fiches créées
     setBatchPreview([]);
     setShowBatchPreview(false);
     setBatchLinks([]);
+    setVisionScanCards([]);
+    setAiPrompt("");
+    if (addSubView === "file") {
+      setAddForm(f => ({ ...f, imageUrl: null }));
+    }
+    if (addSubView === "text") {
+      setAiFromText("");
+    }
+    setIsBatchSaving(false);
+  };
+
+  const saveBatchCard = (idx) => {
+    const card = batchPreview[idx];
+    if (!card) return;
+    const newExp = {
+      id: card.id || (Date.now().toString() + Math.random()),
+      front: card.front || "Concept",
+      back: card.back || "",
+      example: card.example || "",
+      category: addForm.category || categories[0]?.name || "Général",
+      level: 0,
+      nextReview: today(),
+      createdAt: today(),
+      easeFactor: 2.5,
+      interval: 1,
+      repetitions: 0,
+      reviewHistory: [],
+      imageUrl: (addSubView === "file" && addForm.imageUrl) ? addForm.imageUrl : null,
+    };
+    setExpressions(prev => [newExp, ...prev]);
+    showToast?.(`💾 Fiche "${card.front}" sauvegardée !`, "success");
+    const nextPreview = batchPreview.filter((_, i) => i !== idx);
+    setBatchPreview(nextPreview);
+    if (nextPreview.length === 0) {
+      setShowBatchPreview(false);
+      setBatchLinks([]);
+      setVisionScanCards([]);
+      if (addSubView === "file") {
+        setAddForm(f => ({ ...f, imageUrl: null }));
+      }
+      if (addSubView === "text") {
+        setAiFromText("");
+      }
+    }
   };
 
   const removeBatchCard = (idx) => {
-    setBatchPreview(prev => prev.filter((_, i) => i !== idx));
+    const nextPreview = batchPreview.filter((_, i) => i !== idx);
+    setBatchPreview(nextPreview);
+    if (nextPreview.length === 0) {
+      setShowBatchPreview(false);
+      setBatchLinks([]);
+      setVisionScanCards([]);
+    }
+  };
+
+  const renderBatchPreview = () => {
+    if (!showBatchPreview || batchPreview.length === 0) return null;
+    return (
+      <div style={{ marginTop: 24, padding: 22, background: isDarkMode ? "#0A0F24" : "var(--mm-bg-elev)", borderRadius: 20, border: `1px solid ${theme?.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.12)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontWeight: 900, color: theme?.text, fontSize: 16 }}>✨ Fiches générées prêtes à être sauvegardées ({batchPreview.length})</div>
+            <div style={{ color: theme?.textMuted, fontSize: 12, marginTop: 2 }}>Sauvegarde tout d'un coup ou chaque fiche individuellement. Dès la sauvegarde, ces fiches disparaîtront.</div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              onClick={() => {
+                setBatchPreview([]);
+                setShowBatchPreview(false);
+                setVisionScanCards([]);
+                if (addSubView === "file") setAddForm(f => ({ ...f, imageUrl: null }));
+              }}
+              className="hov"
+              style={{ padding: "9px 16px", background: "transparent", border: `1px solid ${theme?.border}`, borderRadius: 12, color: theme?.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+            >
+              Annuler
+            </button>
+            <button
+              onClick={confirmBatch}
+              disabled={isBatchSaving}
+              className="btn-glow hov"
+              style={{
+                padding: "10px 22px",
+                background: "linear-gradient(135deg, #22C55E, #16A34A)",
+                color: "white",
+                border: "none",
+                borderRadius: 12,
+                fontWeight: 900,
+                cursor: "pointer",
+                fontSize: 14,
+                boxShadow: "0 4px 14px rgba(34, 197, 94, 0.35)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6
+              }}
+            >
+              {isBatchSaving ? "⏳ Sauvegarde..." : `💾 Tout Forger (${batchPreview.length})`}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+          {batchPreview.map((card, idx) => (
+            <div key={card.id || idx} style={{ background: theme?.cardBg, padding: 16, borderRadius: 16, border: `1px solid ${theme?.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontWeight: 900, color: theme?.highlight }}>FICHE #{idx + 1}</span>
+                <button
+                  onClick={() => removeBatchCard(idx)}
+                  title="Supprimer cette fiche"
+                  style={{ background: "transparent", border: "none", color: "#EF4444", cursor: "pointer", fontWeight: 800, fontSize: 14, padding: "2px 6px" }}
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                value={card.front}
+                onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, front: e.target.value } : c))}
+                style={{ width: "100%", fontWeight: 700, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 10, padding: 10, fontSize: 14 }}
+                placeholder="Recto (concept)..."
+              />
+              <textarea
+                value={card.back}
+                onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, back: e.target.value } : c))}
+                style={{ width: "100%", fontSize: 13, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 10, padding: 10, minHeight: 70, resize: "vertical" }}
+                placeholder="Verso (explication)..."
+              />
+              <button
+                type="button"
+                onClick={() => saveBatchCard(idx)}
+                className="hov"
+                style={{
+                  alignSelf: "flex-end",
+                  padding: "6px 14px",
+                  background: theme?.inputBg,
+                  color: theme?.highlight,
+                  border: `1px solid ${colorMix(theme?.highlight, 25)}`,
+                  borderRadius: 8,
+                  fontWeight: 800,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4
+                }}
+              >
+                💾 Sauver cette fiche
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   const addToBatchQueue = (concept) => {
@@ -398,7 +552,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
     setChatToCardLoading(false);
   };
 
-  const saveChatCard = (card) => {
+  const saveChatCard = (card, msgIdx, cardIdx) => {
     const newExp = {
       id: Date.now().toString() + Math.random(),
       front: card.front,
@@ -414,13 +568,46 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       reviewHistory: [],
     };
     setExpressions(prev => [newExp, ...prev]);
-    showToast?.(`💾 Fiche "${card.front}" sauvegardée !`);
+    showToast?.(`💾 Fiche "${card.front}" sauvegardée !`, "success");
+
+    // Faire disparaître la fiche sauvegardée pour empêcher tout clic multiple par mégarde
+    if (typeof msgIdx === "number" && typeof cardIdx === "number") {
+      setChatToCardMessages(prev => prev.map((m, i) => {
+        if (i !== msgIdx) return m;
+        return {
+          ...m,
+          cards: (m.cards || []).filter((_, ci) => ci !== cardIdx)
+        };
+      }));
+    }
   };
 
-  const saveAllChatCards = (cards) => {
+  const saveAllChatCards = (cards, msgIdx) => {
     if (!cards?.length) return;
-    cards.forEach(c => saveChatCard(c));
-    showToast?.(`💾 ${cards.length} fiches sauvegardées !`);
+    const newExps = cards.map(c => ({
+      id: Date.now().toString() + Math.random(),
+      front: c.front,
+      back: c.back,
+      example: c.example || "",
+      category: addForm.category || categories[0]?.name || "Général",
+      level: 0,
+      nextReview: today(),
+      createdAt: today(),
+      easeFactor: 2.5,
+      interval: 1,
+      repetitions: 0,
+      reviewHistory: [],
+    }));
+    setExpressions(prev => [...newExps, ...prev]);
+    showToast?.(`💾 ${newExps.length} fiches sauvegardées !`, "success");
+
+    // Faire disparaître toutes les fiches de ce message pour empêcher tout ré-appui accidentel
+    if (typeof msgIdx === "number") {
+      setChatToCardMessages(prev => prev.map((m, i) => {
+        if (i !== msgIdx) return m;
+        return { ...m, cards: [] };
+      }));
+    }
   };
 
   // ── Analyze Text & Drop to Forge ───────────────────────────────────────────
@@ -434,8 +621,10 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       );
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
-      setBatchPreview(parsed.cards || []);
-      showToast?.(`✨ ${parsed.cards?.length || 0} fiches extraites !`);
+      const cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
+      setBatchPreview(cards);
+      setShowBatchPreview(true);
+      showToast?.(`✨ ${cards.length} fiches extraites !`);
     } catch {
       showToast?.("Erreur analyse texte", "error");
     }
@@ -456,6 +645,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       const clean = raw.replace(/```json|```/g, "").trim();
       const parsed = safeParseJSON(clean);
       setBatchPreview(p => [...p, { id: `drop_${Date.now()}`, front: parsed.front, back: parsed.back, example: parsed.example || "" }]);
+      setShowBatchPreview(true);
       showToast?.(`✨ Concept "${parsed.front}" forgé !`);
     } catch {
       showToast?.("Erreur forgeage", "error");
@@ -463,33 +653,163 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
     setDropForgeLoading(false);
   };
 
-  // ── Vision / OCR Scan ──────────────────────────────────────────────────────
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // ── Vision / OCR Scan & Image Paste ───────────────────────────────────────
+  const processOcrImage = useCallback((fileOrBlob, source = "upload") => {
+    if (!fileOrBlob) return;
+    if (fileOrBlob.type && !fileOrBlob.type.startsWith("image/")) {
+      showToast?.("Format non supporté : veuillez choisir ou coller une image.", "warning");
+      return;
+    }
     setUploadLoading(true);
     const reader = new FileReader();
     reader.onload = () => {
       setAddForm(f => ({ ...f, imageUrl: reader.result }));
       setUploadLoading(false);
+      if (source === "paste") {
+        showToast?.("📋 Image collée avec succès !", "success");
+      } else if (source === "drop") {
+        showToast?.("📥 Image déposée avec succès !", "success");
+      } else {
+        showToast?.("📸 Image chargée avec succès !", "success");
+      }
     };
-    reader.readAsDataURL(file);
+    reader.onerror = () => {
+      setUploadLoading(false);
+      showToast?.("Impossible de lire l'image.", "error");
+    };
+    reader.readAsDataURL(fileOrBlob);
+  }, [setAddForm, showToast]);
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (file) processOcrImage(file, "upload");
+    if (e.target) e.target.value = "";
   };
+
+  const handleOcrDrop = (e) => {
+    e.preventDefault();
+    setOcrDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.type?.startsWith("image/")) {
+      processOcrImage(file, "drop");
+      return;
+    }
+    const items = e.dataTransfer?.items;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type?.startsWith("image/")) {
+          const f = items[i].getAsFile();
+          if (f) {
+            processOcrImage(f, "drop");
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  const handlePasteClipboard = async () => {
+    try {
+      if (navigator.clipboard?.read) {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          const imageType = item.types.find(t => t.startsWith("image/"));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            processOcrImage(blob, "paste");
+            return;
+          }
+        }
+      }
+      showToast?.("Aucune image trouvée dans le presse-papier. Utilisez Ctrl+V ou faites une capture d'écran.", "info");
+    } catch {
+      showToast?.("Presse-papier restreint par le navigateur : appuyez directement sur Ctrl + V.", "info");
+    }
+  };
+
+  useEffect(() => {
+    if (addSubView !== "file" || editingId) return;
+
+    const handleWindowPaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items || items.length === 0) return;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type?.startsWith("image/")) {
+          e.preventDefault();
+          const file = items[i].getAsFile();
+          if (file) {
+            processOcrImage(file, "paste");
+          }
+          return;
+        }
+      }
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => window.removeEventListener("paste", handleWindowPaste);
+  }, [addSubView, editingId, processOcrImage]);
 
   const handleVisionAI = async () => {
     if (!addForm.imageUrl) return;
     setVisionScanLoading(true);
     try {
-      const raw = await callClaude(
-        `Tu es un OCR intelligent. Analyse l'image fournie et extrais le contenu sous forme de fiches JSON: {"cards":[{"front":"...","back":"..."}]}`,
-        `Image data: ${addForm.imageUrl.slice(0, 100)}...`
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      setVisionScanCards(parsed.cards || []);
-      showToast?.(`📸 ${parsed.cards?.length || 0} fiches détectées !`);
-    } catch {
-      showToast?.("Erreur analyse OCR", "error");
+      const prompt = `Tu es un OCR intelligent et un concepteur pédagogique de flashcards.
+Analyse l'image fournie et extrais le contenu textuel sous forme de fiches JSON:
+[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":"Exemple d'application optionnel"}]
+RÈGLE ABSOLUE : Recopie fidèlement le texte lisible de l'image. Si le contenu n'est pas déjà en question/réponse, découpe-le logiquement en cartes claires.
+Renvoie UNIQUEMENT le tableau JSON.`;
+
+      let cards = [];
+      try {
+        const raw = await callClaude(
+          prompt,
+          "Extrais le texte et les concepts de cette image pour générer des fiches de révision.",
+          true,
+          addForm.imageUrl
+        );
+        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
+        const parsed = safeParseJSON(clean);
+        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
+      } catch (visionErr) {
+        console.warn("[OCR] Vision IA distante indisponible, bascule sur OCR Tesseract local:", visionErr?.message);
+        showToast?.("Extraction locale via OCR Tesseract en cours...", "info");
+        const Tesseract = (await import("tesseract.js")).default || (await import("tesseract.js"));
+        const ocrResult = await Tesseract.recognize(addForm.imageUrl, "fra+eng");
+        const ocrText = (ocrResult?.data?.text || "").trim();
+        if (!ocrText) throw new Error("Aucun texte lisible détecté par l'OCR.");
+
+        const textPrompt = `Transforme ce texte extrait d'un cours/document en fiches de révision claires en JSON:
+[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":""}]
+Texte extrait :
+${ocrText.slice(0, 3500)}`;
+
+        const raw = await callClaude(
+          "Tu es un créateur de fiches de révision. Réponds UNIQUEMENT avec un tableau JSON valide.",
+          textPrompt
+        );
+        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
+        const parsed = safeParseJSON(clean);
+        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
+      }
+
+      if (cards.length > 0) {
+        const formatted = cards.map((c, idx) => ({
+          id: `scan_${Date.now()}_${idx}`,
+          front: c.front || "",
+          back: c.back || "",
+          example: c.example || "",
+        }));
+        setBatchPreview(formatted);
+        setShowBatchPreview(true);
+        setVisionScanCards(formatted);
+        showToast?.(`📸 ${formatted.length} fiche(s) extraite(s) avec succès !`, "success");
+      } else {
+        showToast?.("Aucune fiche détectée dans l'image.", "warning");
+      }
+    } catch (err) {
+      console.error("[OCR] Erreur globale extraction:", err);
+      showToast?.(err?.message || "Erreur analyse OCR", "error");
     }
     setVisionScanLoading(false);
   };
@@ -500,7 +820,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       id: Date.now().toString() + Math.random(),
       front: c.front,
       back: c.back,
-      example: "",
+      example: c.example || "",
       category: addForm.category || categories[0]?.name || "Général",
       level: 0,
       nextReview: today(),
@@ -512,7 +832,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       imageUrl: addForm.imageUrl,
     }));
     setExpressions(prev => [...newExps, ...prev]);
-    showToast?.(`💾 ${newExps.length} fiches scan sauvegardées !`);
+    showToast?.(`💾 ${newExps.length} fiches scan sauvegardées !`, "success");
     setVisionScanCards([]);
     setAddForm(f => ({ ...f, imageUrl: null }));
   };
@@ -611,6 +931,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
       showToast?.("⚡ Fiche forgée avec succès !");
       onCardCreated?.(newCard);
       setAddForm(f => ({ ...f, front: "", back: "", example: "", imageUrl: null }));
+      setAiPrompt("");
     }
   };
 
@@ -689,7 +1010,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 { id: "file", icon: "📸", label: "Scan OCR" },
                 { id: "quickadd", icon: "⚡", label: "Quick Add" },
               ].map(t => (
-                <button key={t.id} onClick={() => { setAddSubView?.(t.id); setShowBatchPreview(false); }} className="hov" style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "var(--mm-primary)" : theme?.textMuted }}>
+                <button key={t.id} onClick={() => { setAddSubView?.(t.id); }} className="hov" style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "var(--mm-primary)" : theme?.textMuted }}>
                   {t.icon} {t.label}
                 </button>
               ))}
@@ -747,11 +1068,11 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                                 <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
                               </div>
                               {card.example && <div style={{ padding: "8px 12px", background: theme?.inputBg, borderRadius: 8, fontSize: 12, color: theme?.text, fontStyle: "italic", borderLeft: `3px solid ${theme?.highlight}`, marginTop: 12 }}>{card.example}</div>}
-                              <button onClick={() => saveChatCard(card)} className="hov" style={{ marginTop: 12, width: "100%", padding: "8px", background: theme?.inputBg, color: theme?.highlight, border: `1px solid ${colorMix(theme?.highlight, 25)}`, borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>💾 Sauver</button>
+                              <button onClick={() => saveChatCard(card, idx, cidx)} className="hov" style={{ marginTop: 12, width: "100%", padding: "8px", background: theme?.inputBg, color: theme?.highlight, border: `1px solid ${colorMix(theme?.highlight, 25)}`, borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>💾 Sauver</button>
                             </div>
                           ))}
                         </div>
-                        <button onClick={() => saveAllChatCards(msg.cards)} className="hov btn-glow" style={{ alignSelf: "flex-start", padding: "10px 20px", background: "linear-gradient(135deg, #22C55E, #16A34A)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>💾 Sauver cette génération ({msg.cards.length})</button>
+                        <button onClick={() => saveAllChatCards(msg.cards, idx)} className="hov btn-glow" style={{ alignSelf: "flex-start", padding: "10px 20px", background: "linear-gradient(135deg, #22C55E, #16A34A)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>💾 Sauver cette génération ({msg.cards.length})</button>
                       </div>
                     )}
                   </div>
@@ -780,49 +1101,33 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "var(--mm-primary)", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
               </div>
 
-              {showBatchPreview && batchPreview.length > 0 && (
-                <div style={{ marginTop: 24, padding: 20, background: isDarkMode ? "#0A0F24" : "var(--mm-bg-elev)", borderRadius: 20, border: `1px solid ${theme?.border}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                    <div style={{ fontWeight: 800, color: theme?.text }}>Constellation générée ({batchPreview.length} fiches)</div>
-                    <button onClick={confirmBatch} style={{ padding: "10px 20px", background: "linear-gradient(135deg,#22C55E,#16A34A)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>💾 Tout Forger</button>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
-                    {batchPreview.map((card, idx) => (
-                      <div key={idx} style={{ background: theme?.cardBg, padding: 16, borderRadius: 14, border: `1px solid ${theme?.border}` }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                          <span style={{ fontSize: 11, fontWeight: 800, color: theme?.highlight }}>#{idx + 1}</span>
-                          <button onClick={() => removeBatchCard(idx)} style={{ background: "none", border: "none", color: "#EF4444", cursor: "pointer" }}>✕</button>
-                        </div>
-                        <input value={card.front} onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, front: e.target.value } : c))} style={{ width: "100%", fontWeight: 700, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8, padding: 8, marginBottom: 8 }} />
-                        <textarea value={card.back} onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, back: e.target.value } : c))} style={{ width: "100%", fontSize: 13, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 8, padding: 8, minHeight: 60 }} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+              {renderBatchPreview()}
             </div>
           )}
 
           {/* ========= FROM TEXT ========= */}
           {addSubView === "text" && !editingId && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 20, marginBottom: 32 }}>
-              <div style={{ background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column" }}>
-                <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
-                  <span style={{ fontSize: 32 }}>📄</span>
-                  <div>
-                    <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Source & Forge</div>
-                    <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Colle un texte ou cours complet</div>
+            <div style={{ marginBottom: 32 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 20 }}>
+                <div style={{ background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column" }}>
+                  <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
+                    <span style={{ fontSize: 32 }}>📄</span>
+                    <div>
+                      <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Source & Forge</div>
+                      <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Colle un texte ou cours complet</div>
+                    </div>
                   </div>
+                  <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 200, resize: "vertical" }} placeholder="Colle ton cours complet ici..." />
+                  <button onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ marginTop: 12, padding: "12px 20px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "Tout analyser"}</button>
                 </div>
-                <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 200, resize: "vertical" }} placeholder="Colle ton cours complet ici..." />
-                <button onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ marginTop: 12, padding: "12px 20px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "Tout analyser"}</button>
-              </div>
 
-              <div onDragOver={(e) => { e.preventDefault(); setDragOverForge(true); }} onDragLeave={() => setDragOverForge(false)} onDrop={handleDropToForge} style={{ background: dragOverForge ? `${colorMix(theme?.highlight, 13)}` : theme?.cardBg, border: `2px dashed ${theme?.border}`, borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column", minHeight: 280 }}>
-                <div style={{ fontWeight: 900, color: theme?.text, fontSize: 18, marginBottom: 8 }}>⚒️ La Forge</div>
-                <p style={{ color: theme?.textMuted, fontSize: 13 }}>Glisse un extrait de texte ici pour créer une fiche instantanément.</p>
-                {dropForgeLoading && <div style={{ color: theme?.highlight, fontWeight: 700 }}>⏳ Forgeage en cours...</div>}
+                <div onDragOver={(e) => { e.preventDefault(); setDragOverForge(true); }} onDragLeave={() => setDragOverForge(false)} onDrop={handleDropToForge} style={{ background: dragOverForge ? `${colorMix(theme?.highlight, 13)}` : theme?.cardBg, border: `2px dashed ${theme?.border}`, borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column", minHeight: 280 }}>
+                  <div style={{ fontWeight: 900, color: theme?.text, fontSize: 18, marginBottom: 8 }}>⚒️ La Forge</div>
+                  <p style={{ color: theme?.textMuted, fontSize: 13 }}>Glisse un extrait de texte ici pour créer une fiche instantanément.</p>
+                  {dropForgeLoading && <div style={{ color: theme?.highlight, fontWeight: 700 }}>⏳ Forgeage en cours...</div>}
+                </div>
               </div>
+              {renderBatchPreview()}
             </div>
           )}
 
@@ -837,19 +1142,173 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                 </div>
               </div>
               {!addForm.imageUrl ? (
-                <div style={{ border: "2px dashed rgba(255,255,255,0.4)", borderRadius: 16, padding: "40px 20px", textAlign: "center" }}>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setOcrDragOver(true); }}
+                  onDragLeave={() => setOcrDragOver(false)}
+                  onDrop={handleOcrDrop}
+                  style={{
+                    border: ocrDragOver ? "2px solid #ffffff" : "2px dashed rgba(255,255,255,0.45)",
+                    background: ocrDragOver ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.06)",
+                    borderRadius: 18,
+                    padding: "36px 20px",
+                    textAlign: "center",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 14,
+                    transition: "all 0.2s ease"
+                  }}
+                >
                   <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} id="file-upload-ocr" />
-                  <label htmlFor="file-upload-ocr" style={{ cursor: "pointer", color: "white", fontWeight: 800, fontSize: 16 }}>📤 Choisir une photo</label>
+                  
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center", alignItems: "center" }}>
+                    <label
+                      htmlFor="file-upload-ocr"
+                      style={{
+                        cursor: "pointer",
+                        color: "var(--mm-primary-deep)",
+                        background: "white",
+                        padding: "11px 22px",
+                        borderRadius: 12,
+                        fontWeight: 800,
+                        fontSize: 14,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        boxShadow: "0 4px 14px rgba(0,0,0,0.18)"
+                      }}
+                    >
+                      📤 Choisir une photo
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={handlePasteClipboard}
+                      style={{
+                        cursor: "pointer",
+                        color: "white",
+                        background: "rgba(255,255,255,0.18)",
+                        border: "1px solid rgba(255,255,255,0.35)",
+                        padding: "11px 22px",
+                        borderRadius: 12,
+                        fontWeight: 800,
+                        fontSize: 14,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      📋 Coller une image
+                    </button>
+                  </div>
+
+                  <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: 600, marginTop: 4 }}>
+                    {uploadLoading ? (
+                      <span>⏳ Chargement de l'image...</span>
+                    ) : (
+                      <span>ou faites un <kbd style={{ background: "rgba(255,255,255,0.25)", padding: "3px 8px", borderRadius: 6, fontWeight: 800, color: "white" }}>Ctrl + V</kbd> n'importe où, ou glissez-déposez une image ici</span>
+                    )}
+                  </div>
                 </div>
               ) : (
-                <div>
-                  <img src={addForm.imageUrl} alt="aperçu" style={{ maxHeight: 200, borderRadius: 12, marginBottom: 12 }} />
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button onClick={handleVisionAI} disabled={visionScanLoading} style={{ padding: "12px 24px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 900, cursor: "pointer" }}>{visionScanLoading ? "⏳ Extraction..." : "📸 Extraire les fiches"}</button>
-                    <button onClick={() => setAddForm(f => ({ ...f, imageUrl: null }))} style={{ padding: "12px 20px", background: "rgba(255,255,255,0.2)", color: "white", border: "none", borderRadius: 12 }}>Changer</button>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  <div style={{ position: "relative", display: "inline-block", alignSelf: "flex-start" }}>
+                    <img
+                      src={addForm.imageUrl}
+                      alt="aperçu scan"
+                      style={{
+                        maxHeight: 260,
+                        maxWidth: "100%",
+                        borderRadius: 14,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+                        border: "2px solid rgba(255,255,255,0.3)",
+                        objectFit: "contain",
+                        background: "#000"
+                      }}
+                    />
+                    <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", padding: "4px 10px", borderRadius: 8, color: "white", fontSize: 11, fontWeight: 700 }}>
+                      📸 Image prête
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                    <button
+                      onClick={handleVisionAI}
+                      disabled={visionScanLoading}
+                      style={{
+                        padding: "12px 24px",
+                        background: "white",
+                        color: "var(--mm-primary-deep)",
+                        border: "none",
+                        borderRadius: 12,
+                        fontWeight: 900,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 8,
+                        boxShadow: "0 4px 14px rgba(0,0,0,0.18)"
+                      }}
+                    >
+                      {visionScanLoading ? "⏳ Extraction en cours..." : "📸 Extraire les fiches"}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handlePasteClipboard}
+                      style={{
+                        padding: "12px 18px",
+                        background: "rgba(255,255,255,0.2)",
+                        color: "white",
+                        border: "1px solid rgba(255,255,255,0.3)",
+                        borderRadius: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6
+                      }}
+                    >
+                      📋 Coller une autre image
+                    </button>
+
+                    <label
+                      htmlFor="file-upload-ocr-replace"
+                      style={{
+                        padding: "12px 18px",
+                        background: "rgba(255,255,255,0.2)",
+                        color: "white",
+                        border: "1px solid rgba(255,255,255,0.3)",
+                        borderRadius: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6
+                      }}
+                    >
+                      📤 Choisir une autre photo
+                    </label>
+                    <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} id="file-upload-ocr-replace" />
+
+                    <button
+                      onClick={() => setAddForm(f => ({ ...f, imageUrl: null }))}
+                      style={{
+                        padding: "12px 16px",
+                        background: "rgba(239,68,68,0.25)",
+                        border: "1px solid rgba(239,68,68,0.4)",
+                        color: "#FCA5A5",
+                        borderRadius: 12,
+                        fontWeight: 700,
+                        cursor: "pointer"
+                      }}
+                    >
+                      ✕ Retirer
+                    </button>
                   </div>
                 </div>
               )}
+              {renderBatchPreview()}
             </div>
           )}
 
@@ -871,6 +1330,7 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
                   showToast?.(`✨ ${cards.length} fiches générées`, "success");
                 }}
               />
+              {renderBatchPreview()}
             </div>
           )}
 

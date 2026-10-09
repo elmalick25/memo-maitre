@@ -66,6 +66,7 @@ function deviceId() {
 }
 
 export async function pushExpressionsToFirebase() {
+  if (!firestoreDb) return
   const uid = getFbUser()
   if (!uid) return
 
@@ -92,7 +93,7 @@ export async function pushExpressionsToFirebase() {
 }
 
 export function listenToSyncSignal(uid, onSignal) {
-  if (!uid) return () => {};
+  if (!firestoreDb || !uid) return () => {};
   // Le disjoncteur ne désactive PLUS cette écoute : elle coûte 1 document par
   // changement. La couper laissait l'appareil aveugle aux modifications de
   // l'autre appareil pendant des heures — exactement le symptôme signalé.
@@ -182,6 +183,7 @@ if (typeof window !== 'undefined') {
 
 // Compte les fiches actives côté serveur (agrégat → ~1 lecture, pas N).
 async function getRemoteActiveCount(uid) {
+  if (!firestoreDb || !uid) return null
   try {
     const snap = await getCountFromServer(
       query(collection(firestoreDb, expressionsPath(uid)), where('_deleted', '==', false))
@@ -194,6 +196,7 @@ async function getRemoteActiveCount(uid) {
 }
 
 async function bumpSyncSignal(uid) {
+  if (!firestoreDb || !uid) return
   try {
     // On publie la signature DANS le document sentinelle déjà écouté :
     // 1 écriture au lieu de 2, 0 lecture supplémentaire côté récepteurs.
@@ -211,6 +214,7 @@ async function bumpSyncSignal(uid) {
 }
 
 export async function syncWithFirebase(forceReconcile = false) {
+  if (!firestoreDb) return false
   const uid = getFbUser()
   if (!uid) return false
   if (!forceReconcile && isCircuitOpen()) return false
@@ -418,6 +422,7 @@ export async function syncWithFirebase(forceReconcile = false) {
 }
 
 async function reconcileAllExpressions(uid, { authoritative = false } = {}) {
+  if (!firestoreDb || !uid) return false
   const expressions = database.collections.get('expressions')
   const [localRecords, remoteSnap] = await Promise.all([
     expressions.query().fetch(),
@@ -523,6 +528,7 @@ async function reconcileAllExpressions(uid, { authoritative = false } = {}) {
 }
 
 async function commitExpressionWrites(uid, writes) {
+  if (!firestoreDb || !uid) return
   const clean = writes.filter(w => w?.id && w.data)
   for (let i = 0; i < clean.length; i += 450) {
     const batch = writeBatch(firestoreDb)

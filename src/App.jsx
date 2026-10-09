@@ -283,8 +283,8 @@ function App() {
     // toute la nuit gardait une écoute morte et restait figé sur son ancien
     // compteur jusqu'au rechargement complet de la page.
     const reviveRealtime = () => {
-      const uid = auth.currentUser?.uid
-      if (uid && isAuthorizedUser(auth.currentUser)) ensureRealtimeExpressions(uid)
+      const uid = auth?.currentUser?.uid
+      if (uid && isAuthorizedUser(auth?.currentUser)) ensureRealtimeExpressions(uid)
     }
 
     const handleSync = () => forceSync('storage-update')

@@ -1,6 +1,10 @@
 // Lab.jsx – Laboratoire IA v2 (PDF→Fiches · Résumé Complet · Audio Fiche · Photo Fiche)
 // Communique avec MemoMaster via onAddCards callback
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { saveAudioBlob, getAudioBlob, deleteAudioBlob } from "./lib/lab/audioStorage";
+import { DOCUMENT_CARD_RULES, DOCUMENT_CARD_FORMAT, selectDocumentCards, saveLabCards, documentCardSignature, buildSourceContext, validateDocumentCard } from "./lib/lab/cardIntake";
+import { createSummaryEngine } from "./lib/lab/summaryEngine";
+import "./styles/experience-refit.css";
 import GodTierContent from "./components/GodTierContent";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { callGeminiGenerateContent, getGeminiKeyCount, isGeminiLikelyUnavailable } from "./lib/geminiClient";
@@ -17,72 +21,6 @@ import {
 } from "./lib/conceptMiningEngine";
 
 // ── IndexedDB Helper pour la persistance des Blobs audio ─────────────────────
-const DB_NAME = "lab_audio_db";
-const STORE_NAME = "audio_blobs";
-
-function initAudioDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
-    };
-    req.onsuccess = (e) => resolve(e.target.result);
-    req.onerror = (e) => reject(e.target.error);
-  });
-}
-
-async function saveAudioBlob(id, blob) {
-  try {
-    const db = await initAudioDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(blob, id);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  } catch (err) {
-    console.error("Failed to save audio blob to IndexedDB:", err);
-  }
-}
-
-async function getAudioBlob(id) {
-  try {
-    const db = await initAudioDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(id);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  } catch (err) {
-    console.error("Failed to get audio blob from IndexedDB:", err);
-    return null;
-  }
-}
-
-async function deleteAudioBlob(id) {
-  try {
-    const db = await initAudioDb();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.delete(id);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  } catch (err) {
-    console.error("Failed to delete audio blob from IndexedDB:", err);
-  }
-}
-
-
-
-
 // ── 🔮 GOD MODE : HoloCard (Bento 3D & Glassmorphism) ─────────────────────────
 const HoloCard = ({ children, className, style, theme, glowColor, onClick, onDragOver, onDragLeave, onDrop }) => {
   const cardRef = useRef(null);
@@ -159,8 +97,8 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
         position: "relative",
         background: isDragging
           ? colorMix(color, 14)
-          : (isDark ? "rgba(15, 23, 42, 0.65)" : "rgba(255, 255, 255, 0.95)"),
-        border: `2px ${isDragging ? 'solid' : 'dashed'} ${isDragging ? color : (isDark ? "rgba(59, 130, 246, 0.35)" : "rgba(37, 99, 235, 0.22)")}`,
+          : (isDark ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 95%, transparent)"),
+        border: `2px ${isDragging ? 'solid' : 'dashed'} ${isDragging ? color : (isDark ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, transparent)")}`,
         borderRadius: 24,
         padding: "36px 20px",
         textAlign: "center",
@@ -170,7 +108,7 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
         transform: isDragging ? "scale(1.02)" : "scale(1)",
         boxShadow: isDragging
           ? `0 0 50px ${colorMix(color, 35)}, inset 0 0 25px ${colorMix(color, 20)}`
-          : (isDark ? "0 10px 30px rgba(0,0,0,0.3)" : "0 8px 24px rgba(37, 99, 235, 0.06)"),
+          : (isDark ? "0 10px 30px color-mix(in srgb, var(--mm-fg) 30%, transparent)" : "0 8px 24px color-mix(in srgb, var(--mm-primary) 6%, transparent)"),
         minHeight: 220,
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         backdropFilter: "blur(20px)",
@@ -223,8 +161,8 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
           width: 64, height: 64, borderRadius: "50%",
           background: isDragging
             ? colorMix(color, 25)
-            : (isDark ? "rgba(37, 99, 235, 0.16)" : "rgba(37, 99, 235, 0.08)"),
-          border: `1px solid ${isDragging ? color : (isDark ? "rgba(59, 130, 246, 0.35)" : "rgba(37, 99, 235, 0.2)")}`,
+            : (isDark ? "color-mix(in srgb, var(--mm-primary) 16%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, transparent)"),
+          border: `1px solid ${isDragging ? color : (isDark ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)")}`,
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 30, margin: "0 auto 12px",
           boxShadow: `0 4px 18px ${colorMix(color, 20)}`,
@@ -233,10 +171,10 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
         }}>
           {icon}
         </div>
-        <div style={{ fontWeight: 900, color: theme?.text || (isDark ? "#F8FAFC" : "#0F172A"), fontSize: 17, marginBottom: 6, letterSpacing: "-0.2px" }}>
+        <div style={{ fontWeight: 900, color: theme?.text || (isDark ? "var(--mm-bg-elev)" : "var(--mm-bg-card)"), fontSize: 17, marginBottom: 6, letterSpacing: "-0.2px" }}>
           {isDragging ? "Lâchez pour aspirer le cours..." : title}
         </div>
-        <div style={{ color: theme?.textMuted || "#64748b", fontSize: 12.5, lineHeight: 1.5, margin: "0 auto 12px" }}>
+        <div style={{ color: theme?.textMuted || "var(--mm-fg-muted)", fontSize: 12.5, lineHeight: 1.5, margin: "0 auto 12px" }}>
           {subtitle}
         </div>
 
@@ -247,7 +185,7 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
             padding: "8px 18px", borderRadius: 12,
             background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))",
             color: "white", fontWeight: 800, fontSize: 12.5,
-            boxShadow: "0 4px 12px rgba(37, 99, 235, 0.25)",
+            boxShadow: "0 4px 12px color-mix(in srgb, var(--mm-primary) 25%, transparent)",
             margin: "4px auto 10px",
             cursor: "pointer"
           }}>
@@ -260,9 +198,9 @@ const VortexDropZone = ({ isDragging, onDragOver, onDragLeave, onDrop, onClick, 
           {["📄 PDF", "💻 Code", "📊 Tableaux CSV", "📝 Textes & Notes"].map(fmt => (
             <span key={fmt} style={{
               fontSize: 10.5, fontWeight: 700, padding: "2px 7px", borderRadius: 6,
-              background: isDark ? "rgba(255,255,255,0.06)" : "rgba(37,99,235,0.05)",
-              color: isDark ? "#93C5FD" : "#2563EB",
-              border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(37,99,235,0.12)"}`
+              background: isDark ? "color-mix(in srgb, var(--mm-bg-elev) 6%, transparent)" : "color-mix(in srgb, var(--mm-primary) 5%, transparent)",
+              color: isDark ? "var(--mm-primary-glow)" : "var(--mm-primary)",
+              border: `1px solid ${isDark ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`
             }}>
               {fmt}
             </span>
@@ -316,7 +254,7 @@ const NeuromorphicLoader = ({ text, color, theme, isDone }) => {
       border: `1px solid ${colorMix(color, 25)}`,
       display: "flex", flexDirection: "column", alignItems: "center", gap: 16,
       position: "relative", overflow: "hidden",
-      boxShadow: `inset 0 0 30px ${colorMix(color, 13)}, 0 8px 30px rgba(0,0,0,0.3)`,
+      boxShadow: `inset 0 0 30px ${colorMix(color, 13)}, 0 8px 30px color-mix(in srgb, var(--mm-fg) 30%, transparent)`,
       backdropFilter: "blur(20px)",
       "--glow-color": color
     }}>
@@ -699,75 +637,7 @@ const RICH_CONTENT_RULE = `RÈGLE DE CONTENU RICHE — le champ "back" accepte d
 - Champ "type" obligatoire : "qa" | "code" | "table" | "definition" | "concept" | "mixed".
 `;
 
-export const GOD_TIER_PROFILES = {
-  EXAM: {
-    id: "EXAM",
-    label: "🎓 Examen & Pièges",
-    desc: "Focus sur les évaluations de code, pièges d'examen, comparatifs et cas limites",
-    promptDirective: `PROFIL EXAMEN & CONCOURS UNIVERSITAIRE (PRIORITÉ BLOOM 3-4-5) :
-- 40% Évaluation concrète & Application : demande de prédire la sortie exacte d'un code, de tracer l'exécution ou de convertir une structure.
-- 30% Pièges d'examen & Subtilités : pose des questions sur les cas limites (NIL, division par zéro, effets de bord masqués, différences subtiles entre opérateurs).
-- 30% Synthèses comparatives : compare 2 approches concurrentes (ex: impératif vs fonctionnel, récursion naïve vs récursion terminale).`,
-  },
-  FLASH: {
-    id: "FLASH",
-    label: "⚡ Flash Atomique",
-    desc: "Mémorisation rapide, principes fondamentaux et définitions chirurgicales (Wozniak #4)",
-    promptDirective: `PROFIL FLASH ATOMIQUE (MINIMUM INFORMATION PRINCIPLE - WOZNIAK #4) :
-- Chaque fiche teste UN SEUL fait, règle ou terme précis.
-- Formulation ultra-concise : la question va droit au but, la réponse en 1 phrase ou 2 points d'ancrage.
-- Zéro surcharge cognitive : pas de pavés, pas de listes de plus de 3 éléments.`,
-  },
-  MASTERY: {
-    id: "MASTERY",
-    label: "🧠 Maîtrise & Trous",
-    desc: "Mix complet incluant textes à trous contextuels (Cloze Deletions) et concepts fondamentaux",
-    promptDirective: `PROFIL MAÎTRISE COMPLÈTE & CLOZE DELETIONS :
-- Intègre des fiches CLOZE DELETION (textes à trous) : le recto présente une phrase clé ou un bloc de code avec un mot-clé essentiel masqué par [...] (ex: "Complète le mot-clé : (defun fib (n) (if [...] n ...))").
-- Le verso donne le mot ou l'expression masquée en gras immédiat, suivi de la justification.
-- Alterne définitions fondamentales, mécanismes sous le capot et textes à trous contextuels.`,
-  },
-};
-
-const GOD_TIER_PEDAGOGY_RULE = `RÈGLES D'EXCELLENCE PÉDAGOGIQUE (GOD TIER - NIVEAU 10) :
-Fondées sur les 20 Règles de Formulation de Connaissances du Dr Piotr Wozniak (SuperMemo) et la Taxonomie Cognitive de Bloom.
-Objectif : créer des flashcards stimulantes, hyper-efficaces, rapides à auto-évaluer (en < 3 secondes) et garantissant la réussite aux examens universitaires et concours.
-
-1. PRINCIPE D'INFORMATION MINIMALE & ATOMICITÉ STRICTE (Wozniak Règle #4) :
-   - 1 FICHE = 1 SEULE QUESTION = 1 SEUL RETRAIT COGNITIF.
-   - BANNISSEMENT FORMEL DES QUESTIONS DOUBLES : Ne JAMAIS poser une question contenant "ET" qui combine deux interrogations (ex: BANNIR ABSOLUMENT "Quelle est la syntaxe de X ET que renvoie-t-il si Y ?").
-     → Scinde OBLIGATOIREMENT en DEUX fiches séparées : Fiche 1 sur la structure/syntaxe, Fiche 2 sur le cas limite / valeur par défaut.
-   - BANNISSEMENT ABSOLU des questions tautologiques ou miroirs ("Quelle approche procédurale... ? → procédurale").
-   - Zéro répétition : chaque notion apparaît une seule fois dans tout le deck.
-
-2. TAXONOMIE COGNITIVE DE BLOOM & VARIÉTÉ DES DÉFIS :
-   Attribue à chaque fiche un "bloomLevel" adéquat :
-   - "Remember" : Règle, définition chirurgicale, rôle d'une commande.
-   - "Understand" : Pourquoi ce mécanisme ? Qu'est-ce qui se passe sous le capot ?
-   - "Apply" : Prédire le résultat d'un code ("Que retourne l'évaluation de... ?"), tracer l'exécution.
-   - "Analyze" : Différence fondamentale entre A et B ("Compare setq et setf", "Pourquoi cette fonction est impure ?").
-   - "Evaluate" : Trouver le piège d'examen, le bug dissimulé ou le cas limite.
-
-3. MISE EN PAGE DU CODE PROPRE, INDENTÉE & AÉRÉE :
-   - DÈS QU'UNE SYNTAXE OU UN EXEMPLE COMPORTE PLUSIEURS LIGNES OU EXPRESSIONS (LISP, JS, Python...) : utilise OBLIGATOIREMENT un bloc Markdown fenced indenté propre avec le langage :
-     \`\`\`lisp
-     (cond (test1 expr1)
-           (test2 expr2)
-           (t expr-default))
-     \`\`\`
-   - INTERDICTION STRICTE d'écraser une expression ou fonction Lisp longue sur une seule ligne en code inline au milieu d'un paragraphe. Le code doit être clair et indenté.
-
-4. STRUCTURE DU VERSO POUR UNE AUTO-NOTATION INSTANTANÉE (FSRS-Friendly) :
-   - Ligne 1 : La réponse brute directe en GRAS (**réponse directe immédiate**). L'étudiant sait en 2s s'il a bon ou faux.
-   - Lignes 2-4 : Explication courte, déroulé d'arbre ou bloc de code propre indenté.
-   - Ligne finale : Puce mnémotechnique "💡 Retiens : ..." ou alerte "⚠️ Piège d'examen : ...".
-   - CODE STRICTEMENT PROPRE : syntaxe mono-espace sans espaces insérés au milieu des mots (ex: \`print\`, \`format\`, \`setq\`, \`car\`, \`cdr\`, \`nth\`).
-5. ÉVALUATION DE CODE DANS LE RECTO (CHAMP 'front') :
-   - Pour toute question demandant de prédire la sortie, de tracer une fonction ou d'analyser un comportement :
-     Inclus TOUJOURS le code dans un bloc Markdown fenced séparé de la question par un saut de ligne :
-     "front": "Dans l'exemple suivant, quelle sera la sortie affichée ?\\n\`\`\`lisp\\n(setq x 10)\\n(+ x 5)\\n\`\`\`"
-   - INTERDICTION FORMELLE de coller le code à la suite du texte sur la même ligne sans bloc Markdown fenced.
-`;
+const GOD_TIER_PEDAGOGY_RULE = DOCUMENT_CARD_RULES;
 
 function renderInlineCodeChips(text, isDarkMode) {
   const parts = text.split(/(`[^`]+`)/g);
@@ -777,14 +647,14 @@ function renderInlineCodeChips(text, isDarkMode) {
         <code
           key={idx}
           style={{
-            background: isDarkMode ? "rgba(59, 130, 246, 0.2)" : "#EFF6FF",
-            color: isDarkMode ? "#93C5FD" : "#1D4ED8",
+            background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "var(--mm-bg-elev)",
+            color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)",
             padding: "2px 7px",
             borderRadius: 6,
             fontFamily: "'JetBrains Mono','Fira Code',monospace",
             fontSize: "0.92em",
             fontWeight: 700,
-            border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.35)" : "rgba(59, 130, 246, 0.2)"}`,
+            border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
             verticalAlign: "baseline",
             margin: "0 2px",
           }}
@@ -842,304 +712,7 @@ function renderFormattedQuestion(text, isDarkMode, theme) {
 
 // Découpe respectueuse des paragraphes / headings, avec overlap pour ne pas
 // couper un concept à cheval entre deux chunks.
-function smartChunkForSummary(text, maxChars = 12000, overlap = 600) {
-  const out = [];
-  if (!text) return out;
-  if (text.length <= maxChars) return [text];
-  let pos = 0;
-  while (pos < text.length) {
-    let end = Math.min(pos + maxChars, text.length);
-    if (end < text.length) {
-      const slice = text.slice(pos, end);
-      const candidates = [
-        slice.lastIndexOf("\n# "),
-        slice.lastIndexOf("\n## "),
-        slice.lastIndexOf("\n### "),
-        slice.lastIndexOf("\n\n"),
-        slice.lastIndexOf(". "),
-      ].filter(i => i > maxChars * 0.55);
-      const cut = candidates.length ? Math.max(...candidates) : -1;
-      if (cut > 0) end = pos + cut;
-    }
-    const piece = text.slice(pos, end).trim();
-    if (piece.length > 80) out.push(piece);
-    if (end >= text.length) break;
-    pos = Math.max(end - overlap, pos + 1);
-  }
-  return out;
-}
-
-// Limiteur de concurrence — évite de saturer les rate-limits providers.
-async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (true) {
-      const idx = cursor++;
-      if (idx >= items.length) break;
-      try { results[idx] = await fn(items[idx], idx, items.length); }
-      catch { results[idx] = null; }
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-// Extraction forensique d'un chunk → digest JSON structuré (zéro perte).
-async function extractChunkDigest(chunk, idx, total) {
-  const sys = `Tu es un EXTRACTEUR FORENSIQUE de niveau God-Tier. Mission : extraire TOUT ce qui a la moindre valeur informative dans le passage, sans RIEN inventer.
-
-RÈGLES NON NÉGOCIABLES :
-- Aucune invention, aucune connaissance extérieure : tu n'extrais que ce qui est dans le PASSAGE.
-- Conserve les termes EXACTS : vocabulaire, noms propres, formules, chiffres, dates, citations.
-- Sois EXHAUSTIF : si le passage contient 30 concepts, liste-les tous. Mieux vaut 50 items courts qu'en oublier 3.
-- Réponds UNIQUEMENT en JSON valide, sans markdown autour, sans texte avant/après.
-
-SCHÉMA JSON (champs obligatoires, tableau vide si rien) :
-{
- "sectionTitle": "titre court synthétisant ce passage",
- "tldr": "1 à 3 phrases résumant l'essentiel du passage",
- "keyConcepts": ["concept 1 (avec qualificatifs précis)", "concept 2", "..."],
- "definitions": [{"term":"X","def":"définition telle qu'elle apparaît dans le passage"}],
- "formulas":    [{"name":"optionnel","expr":"formule ou équation telle quelle"}],
- "numbers":     ["chiffres importants AVEC contexte (ex: '42% des cas en 2023')"],
- "dates":       ["dates ou périodes clés AVEC contexte"],
- "entities":    ["personnes, organisations, lieux, produits, technos cités"],
- "procedures":  [{"name":"...","steps":["étape 1","étape 2","..."]}],
- "examples":    ["exemples ou cas concrets cités tels quels"],
- "quotes":      ["phrases verbatim importantes du passage"],
- "warnings":    ["pièges, exceptions, contre-indications, erreurs courantes"],
- "openQuestions": ["questions ouvertes / points à creuser soulevés par le texte"]
-}`;
-  const user = `PASSAGE ${idx + 1}/${total} :\n\n${chunk}`;
-  const raw = await callGroq(sys, user, 4000, true);
-  try { return safeJsonParse(raw); } catch { return null; }
-}
-
-// Fusion + déduplication des digests en un seul digest global.
-function mergeDigests(digests) {
-  const out = {
-    sections: [],
-    keyConcepts: [], definitions: [], formulas: [], numbers: [],
-    dates: [], entities: [], procedures: [], examples: [],
-    quotes: [], warnings: [], openQuestions: [],
-  };
-  const seen = Object.fromEntries(Object.keys(out).map(k => [k, new Set()]));
-  const norm = s => (typeof s === "string" ? s : "").trim().toLowerCase();
-  const pushUniq = (bucket, value, keyFn) => {
-    const k = norm(keyFn(value));
-    if (!k || seen[bucket].has(k)) return;
-    seen[bucket].add(k);
-    out[bucket].push(value);
-  };
-  digests.forEach((d, i) => {
-    if (!d || typeof d !== "object") return;
-    out.sections.push({
-      title: d.sectionTitle || `Section ${i + 1}`,
-      tldr: d.tldr || "",
-      keyConcepts: Array.isArray(d.keyConcepts) ? d.keyConcepts : [],
-    });
-    (d.keyConcepts || []).forEach(v => pushUniq("keyConcepts", v, x => x));
-    (d.definitions || []).forEach(v => pushUniq("definitions", v, x => x?.term || ""));
-    (d.formulas || []).forEach(v => pushUniq("formulas", v, x => x?.expr || x?.name || ""));
-    (d.numbers || []).forEach(v => pushUniq("numbers", v, x => x));
-    (d.dates || []).forEach(v => pushUniq("dates", v, x => x));
-    (d.entities || []).forEach(v => pushUniq("entities", v, x => x));
-    (d.procedures || []).forEach(v => pushUniq("procedures", v, x => x?.name || JSON.stringify(x?.steps || [])));
-    (d.examples || []).forEach(v => pushUniq("examples", v, x => x));
-    (d.quotes || []).forEach(v => pushUniq("quotes", v, x => x));
-    (d.warnings || []).forEach(v => pushUniq("warnings", v, x => x));
-    (d.openQuestions || []).forEach(v => pushUniq("openQuestions", v, x => x));
-  });
-  return out;
-}
-
-// Synthèse finale Markdown selon le mode (DEEP / TLDR / ACTION / ELI5 / STUDY).
-async function synthesizeFinalSummary(merged, mode, sourceText) {
-  const digestJson = JSON.stringify(merged).slice(0, 28000);
-  const sourceTaste = sourceText.slice(0, 6000);
-
-  const briefs = {
-    DEEP: `MODE EXHAUSTIF — produis le résumé LE PLUS COMPLET possible. Si le digest contient 40 définitions, le résumé doit toutes les mentionner. Le rendu peut (doit !) être très long.
-
-Structure OBLIGATOIRE en markdown :
-# 📌 Synthèse complète du document
-## ⚡ TL;DR
-3 à 5 phrases de synthèse globale.
-## 🎯 Idées-forces
-5 à 12 puces. Mets en **gras** les mots-clés EXACTS du document.
-## 📚 Plan détaillé
-Liste numérotée reprenant les titres exacts des sections du digest.
-## 🧠 Résumé exhaustif structuré
-Pour CHAQUE section du digest, un sous-titre \`### N. Titre\` puis 1 paragraphe dense + sous-listes couvrant TOUS ses keyConcepts/définitions/exemples. Aucune notion oubliée.
-## 🔑 Glossaire
-Tableau \`| Terme | Définition |\` listant TOUTES les définitions du digest.
-## 📊 Données chiffrées
-Toutes les entrées de "numbers" en puces avec contexte.
-## 📐 Formules & équations
-Bloc code ou table reprenant les formulas (omettre la rubrique seulement si tableau vide).
-## 📅 Chronologie
-Liste \`AAAA — événement\` triée chronologiquement.
-## 💬 Citations notables
-Bloc \`>\` pour chaque quote du digest, telle quelle.
-## ⚠️ Pièges & exceptions
-Toutes les warnings.
-## ❓ FAQ générée
-6 à 10 paires Q/R utiles à la révision (réponses tirées EXCLUSIVEMENT du document).
-## ✅ Takeaways actionnables
-6 à 12 puces : ce qu'il faut RETENIR ou FAIRE.
-## 🗺️ Mind-map
-Arborescence en listes imbriquées (thèmes → sous-thèmes → détails).`,
-    TLDR: `MODE TL;DR — synthèse exécutive (300-450 mots) :
-## ⚡ TL;DR
-3 à 5 phrases.
-## 🎯 Idées-forces
-5-7 puces, **gras** sur les mots-clés exacts.
-## ✅ À retenir
-3-5 puces actionnables.`,
-    ACTION: `MODE ACTIONS — orienté pratique :
-## 🚀 Mission
-1 phrase de contexte.
-## ✅ Plan d'action
-Liste numérotée de verbes à l'infinitif, regroupés par thème.
-## ⚠️ Pièges à éviter
-Toutes les warnings.
-## 🧰 Boîte à outils
-Outils, méthodes, formules, ressources nommés.
-## 📊 Métriques à suivre
-Chiffres-clés, KPIs, dates butoirs.`,
-    ELI5: `MODE ELI5 — vulgarise comme à un enfant de 10 ans (analogies OK, faits hors digest INTERDITS) :
-## 🤓 L'idée en 1 phrase
-## 🌍 Imagine que…
-Une analogie filée.
-## 🧱 Les briques principales
-Concepts clés réécrits simplement, en gardant le terme exact entre parenthèses.
-## 🪄 Pourquoi c'est cool
-2-3 phrases.
-## 🧪 Petit récap
-3-5 puces.`,
-    STUDY: `MODE RÉVISION — orienté étudiant qui prépare un examen :
-## 🎯 Objectifs d'apprentissage
-5-8 puces "À la fin tu sauras…"
-## 🧠 Concepts clés
-Tableau \`| Concept | Définition courte | Pourquoi c'est important |\`.
-## 🔁 Cartes mentales (Q/R)
-8-15 paires Q/R prêtes à devenir des flashcards.
-## 🧪 Exemples & cas
-Tous les "examples" du digest, expliqués brièvement.
-## ⚠️ Pièges classiques
-Toutes les warnings.
-## 🏁 Mini quiz auto-correctif
-5 questions + réponses (cachées sous \`<details>\`).`,
-  };
-
-  const sys = `Tu es un rédacteur scientifique GOD-TIER, fidèle à la source.
-
-RÈGLES NON NÉGOCIABLES :
-1. Tu utilises EXCLUSIVEMENT les informations du DIGEST_JSON ci-dessous (et l'EXTRAIT_SOURCE pour le ton/le vocabulaire). Aucune invention, aucune connaissance extérieure.
-2. Conserve termes, noms propres, chiffres, formules, dates EXACTEMENT comme dans le digest.
-3. Markdown propre : hiérarchie de titres respectée, listes à puces, tableaux, blocs code quand pertinent.
-4. Mets en **gras** les mots-clés exacts (l'app utilise un mode "Rayon-X" sur les **gras**).
-5. Si une rubrique demandée est vide dans le digest, conserve la rubrique mais écris _(non couvert dans le document)_.
-6. JAMAIS de "Voici le résumé :" ni de blabla d'intro/outro hors structure.
-
-${briefs[mode] || briefs.DEEP}`;
-
-  const user = `EXTRAIT_SOURCE (échantillon, pour préserver ton et vocabulaire) :
-"""
-${sourceTaste}
-"""
-
-DIGEST_JSON (structure exhaustive de référence — utilise TOUT) :
-${digestJson}`;
-
-  // DEEP / STUDY : on privilégie un modèle "pedagogy" (mistral-large) avec gros budget tokens.
-  if (mode === "DEEP" || mode === "STUDY") {
-    try {
-      const { text } = await aiCall({
-        task: "pedagogy",
-        system: sys,
-        user,
-        maxTokens: 8192,
-        temperature: 0.2,
-      });
-      if (text && text.trim().length > 200) return text.trim();
-    } catch { /* fallback */ }
-  }
-  const raw = await callGroq(sys, user, mode === "DEEP" || mode === "STUDY" ? 8000 : 3500);
-  return raw.trim();
-}
-
-// Audit de couverture : repère les éléments du digest qui n'apparaissent pas
-// dans le résumé final (utile pour le mode DEEP / STUDY).
-function buildCoverageReport(merged, summary) {
-  const lower = (summary || "").toLowerCase();
-  const missing = [];
-  const probe = (term) => {
-    if (!term) return null;
-    const words = String(term).split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4);
-    return words.slice(0, 2).join(" ").toLowerCase() || null;
-  };
-  const check = (kind, items, pick) => {
-    (items || []).forEach(it => {
-      const term = pick(it);
-      const p = probe(term);
-      if (p && !lower.includes(p)) missing.push({ kind, item: term, raw: it });
-    });
-  };
-  check("définition", merged.definitions, x => x?.term);
-  check("formule", merged.formulas, x => x?.expr || x?.name);
-  check("chiffre", merged.numbers, x => x);
-  check("date", merged.dates, x => x);
-  check("entité", merged.entities, x => x);
-  check("procédure", merged.procedures, x => x?.name);
-  check("citation", merged.quotes, x => x);
-  return missing.slice(0, 50);
-}
-
-async function appendCoverageRescue(summary, missing) {
-  if (!missing.length) return summary;
-  const sys = `Tu es un complétiste forensique. On te donne un résumé Markdown et une liste d'éléments du digest source ABSENTS de ce résumé.
-
-Mission : produire UNIQUEMENT une section additionnelle "## 🛟 Compléments — à ne pas oublier" qui :
-- liste TOUS les éléments manquants ci-dessous,
-- regroupés par type (Définitions / Formules / Chiffres / Dates / Entités / Procédures / Citations),
-- en utilisant les termes EXACTS, sans inventer,
-- formatage : tableau pour Définitions, blocs code pour Formules, listes à puces pour le reste.
-
-Réponds en markdown brut, en commençant directement par "## 🛟 Compléments — à ne pas oublier".`;
-  const user = `RÉSUMÉ ACTUEL (extrait de fin) :
-"""
-${summary.slice(-10000)}
-"""
-
-ÉLÉMENTS MANQUANTS (JSON) :
-${JSON.stringify(missing).slice(0, 12000)}`;
-
-  try {
-    const raw = await callGroq(sys, user, 3500);
-    if (raw && raw.trim()) return summary + "\n\n" + raw.trim();
-  } catch { /* fallback déterministe ci-dessous */ }
-
-  const groups = missing.reduce((acc, m) => { (acc[m.kind] ||= []).push(m); return acc; }, {});
-  const md = ["## 🛟 Compléments — à ne pas oublier"];
-  for (const [kind, list] of Object.entries(groups)) {
-    md.push(`\n### ${kind.charAt(0).toUpperCase() + kind.slice(1)}s`);
-    list.forEach(m => {
-      const r = m.raw;
-      if (typeof r === "string") md.push(`- ${r}`);
-      else if (r?.term && r?.def) md.push(`- **${r.term}** — ${r.def}`);
-      else if (r?.expr) md.push("- `" + r.expr + "`");
-      else if (r?.name && Array.isArray(r?.steps)) md.push(`- **${r.name}** : ${r.steps.join(" → ")}`);
-      else md.push(`- ${JSON.stringify(r)}`);
-    });
-  }
-  return summary + "\n\n" + md.join("\n");
-}
-
-
-
-
+const { smartChunkForSummary, mapWithConcurrency, extractChunkDigest, mergeDigests, synthesizeFinalSummary, buildCoverageReport, appendCoverageRescue } = createSummaryEngine({ callGroq, safeJsonParse, aiCall });
 
 // ══════════════════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
@@ -1195,7 +768,6 @@ export default function Lab({ theme, isDarkMode, categories = [], expressions = 
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfParsing, setPdfParsing] = useState(false);
   const [pdfModule, setPdfModule] = useState("");
-  const [pdfProfile, setPdfProfile] = useState("EXAM"); // "EXAM" | "FLASH" | "MASTERY"
   const [pdfCards, setPdfCards] = useState([]);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfProgress, setPdfProgress] = useState("");
@@ -1389,6 +961,7 @@ export default function Lab({ theme, isDarkMode, categories = [], expressions = 
               trapOrDetail: c.trapOrDetail || "",
               bloomLevel: c.bloomLevel || "Understand",
               type: c.type || "qa",
+              sourceText: chunks[ci],
             });
           }
         }
@@ -1407,7 +980,7 @@ export default function Lab({ theme, isDarkMode, categories = [], expressions = 
       ? `\n\nCONCEPTS DÉJÀ PRÉSENTS DANS CE MODULE (INTERDIT ABSOLU DE RE-GÉNÉRER DES DOUBLONS SUR CES SUJETS) :\n${existingInModule.slice(0, 35).map(e => `- ${e.front || ""}`).join("\n")}`
       : "";
 
-    const activeProfile = GOD_TIER_PROFILES[pdfProfile] || GOD_TIER_PROFILES.EXAM;
+    const activeProfile = { ...DOCUMENT_CARD_FORMAT, promptDirective: DOCUMENT_CARD_RULES };
     const allCards = [];
 
     // ── PASSE 2 : Génération Ciblée 1:1 par grappes de concepts ──
@@ -1426,7 +999,7 @@ export default function Lab({ theme, isDarkMode, categories = [], expressions = 
           const targetedPrompt = buildTargetedGenerationPrompt(batch, activeProfile.promptDirective, GOD_TIER_PEDAGOGY_RULE);
           const rawCards = await callGroq(
             targetedPrompt,
-            `MODULE CIBLE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${normalizedDoc.slice(0, 16000)}`,
+            `MODULE CIBLE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${buildSourceContext(batch)}`,
             6000,
             true
           );
@@ -1452,12 +1025,13 @@ export default function Lab({ theme, isDarkMode, categories = [], expressions = 
         if (ci > 0) await new Promise(r => setTimeout(r, 1500));
         try {
           const prompt = `Tu es le meilleur concepteur mondial de flashcards universitaires d'élite (FSRS & Active Recall Niveau 10).
+${FIDELITY_RULE}
 ${GOD_TIER_PEDAGOGY_RULE}
 ${RICH_CONTENT_RULE}
 ${activeProfile.promptDirective}
 Génère entre 6 et 14 fiches MAÎTRESSES couvrant TOUS les aspects de ce passage.
 Réponds UNIQUEMENT en JSON valide :
-{"cards":[{"front":"Question précise","back":"**Réponse directe en gras**\\nExplication","type":"qa|code|trap|cloze","bloomLevel":"Remember|Understand|Apply|Analyze|Evaluate","keyword":"mot-clé","hint":""}]}`;
+{"cards":[{"front":"Question précise","back":"**Réponse directe en gras**\\nExplication","type":"qa|code|trap|cloze","bloomLevel":"Remember|Understand|Apply|Analyze|Evaluate","keyword":"mot-clé","hint":"","source_excerpt":"Citation exacte du passage"}]}`;
           const raw = await callGroq(prompt, `MODULE : ${pdfModule}\n\n${chunks[ci]}`, 8000, true);
           const parsed = safeJsonParse(raw);
           const cards = (Array.isArray(parsed?.cards) ? parsed.cards : []).map(c => ({
@@ -1486,7 +1060,7 @@ Réponds UNIQUEMENT en JSON valide :
           const recoveryPrompt = buildTargetedGenerationPrompt(coverage.missed, activeProfile.promptDirective, GOD_TIER_PEDAGOGY_RULE);
           const recoveryRaw = await callGroq(
             recoveryPrompt,
-            `MODULE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${normalizedDoc.slice(0, 16000)}`,
+            `MODULE : ${pdfModule}${existingQuestionsSnippet}\n\nDOCUMENT DE RÉFÉRENCE :\n${buildSourceContext(coverage.missed)}`,
             5000,
             true
           );
@@ -1509,30 +1083,21 @@ Réponds UNIQUEMENT en JSON valide :
       }
     }
 
-    // 🧹 Déduplication sémantique post-génération :
-    // Élimine les doublons stricts ou les questions quasi-identiques
+    // Keep distinct questions even when their first words are identical.
     const uniqueCards = [];
     const seenSignatures = new Set();
     for (const card of allCards) {
-      const sig = (card.front || "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]/g, "")
-        .slice(0, 35);
-      if (!sig || seenSignatures.has(sig)) continue;
-
-      let isDuplicate = false;
-      for (const existing of seenSignatures) {
-        if (existing.includes(sig) || sig.includes(existing)) {
-          if (Math.min(existing.length, sig.length) > 12) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      }
-      if (!isDuplicate) {
-        seenSignatures.add(sig);
-        uniqueCards.push(card);
-      }
+      const sig = documentCardSignature(card.front);
+      if (!validateDocumentCard(card, normalizedDoc) || seenSignatures.has(sig)) continue;
+      seenSignatures.add(sig);
+      uniqueCards.push({ ...card, sourceDoc: pdfFile?.name || "Document", source: "pdf" });
+    }
+    if (allMinedConcepts.length) setPdfCoverage(auditDocumentCoverage(allMinedConcepts, uniqueCards));
+    if (!uniqueCards.length) {
+      setPdfProgress("Aucune fiche vérifiable générée. Réessaie ou vérifie le texte extrait.");
+      setPdfLoading(false);
+      toast("Aucune fiche vérifiable générée. Aucun ajout effectué.", "error");
+      return;
     }
 
     // 🛡️ Détection & marquage des doublons avec les fiches déjà existantes dans le deck
@@ -1568,29 +1133,23 @@ Réponds UNIQUEMENT en JSON valide :
       : `📄 ${finalCards.length} fiches prêtes — vérifie avant d'ajouter !`);
   };
 
-  const addPdfCardsToDeck = (indexesToAdd = null) => {
-    if (!pdfCards.length) return;
-    const cardsToAdd = indexesToAdd !== null
-      ? pdfCards.filter((_, i) => indexesToAdd.has(i))
-      : (selectedCardIndexes.size > 0
-          ? pdfCards.filter((_, i) => selectedCardIndexes.has(i))
-          : pdfCards);
+  const [pdfSaving, setPdfSaving] = useState(false);
+  const addPdfCardsToDeck = async (indexesToAdd = null) => {
+    if (pdfSaving) return;
+    const cardsToAdd = selectDocumentCards(pdfCards, indexesToAdd ?? selectedCardIndexes);
     if (!cardsToAdd.length) { toast("Aucune fiche sélectionnée.", "error"); return; }
-    const result = onAddCards ? onAddCards(cardsToAdd.map(c => ({
-      front: c.front, back: c.back, example: c.hint || "",
-      category: c.category, type: c.type || "qa",
-      bloomLevel: c.bloomLevel || "Understand", keyword: c.keyword || "",
-    })), { source: 'pdf', silent: true }) : null;
-    const added = result?.added ?? cardsToAdd.length;
-    const skipped = result?.skipped ?? 0;
-    toast(skipped > 0
-      ? `🚀 ${added} fiches ajoutées au module "${pdfModule}" (${skipped} doublon(s) ignoré(s))`
-      : `🚀 ${added} fiches ajoutées au module "${pdfModule}" !`);
-    // Retirer les ajoutées de pdfCards
-    const addedSet = new Set(cardsToAdd.map(c => c.front));
-    setPdfCards(prev => prev.filter(c => !addedSet.has(c.front)));
-    setSelectedCardIndexes(new Set());
-    if (pdfCards.length - cardsToAdd.length === 0) { setPdfPreview(false); setPdfProgress(""); }
+    setPdfSaving(true);
+    try {
+      const result = await saveLabCards(onAddCards, cardsToAdd.map(c => ({ ...c, example: c.hint || "" })), { source: "pdf", silent: true });
+      toast(`${result.added} fiches ajoutées${result.skipped ? ` · ${result.skipped} doublons ignorés` : ""}.`);
+      if (result.invalid) return;
+      const processed = new Set(cardsToAdd);
+      const remaining = pdfCards.filter(c => !processed.has(c));
+      setPdfCards(remaining);
+      setSelectedCardIndexes(new Set());
+      if (!remaining.length) { setPdfPreview(false); setPdfProgress(""); }
+    } catch (error) { toast(error.message || "Enregistrement échoué. Les fiches restent disponibles.", "error"); }
+    finally { setPdfSaving(false); }
   };
 
   const toggleCardSelection = (i) => {
@@ -1905,7 +1464,7 @@ ${history}`;
   // ══════════════════════════════════════════════════════════════════════════
   // AUDIO → FICHE : chaque audio devient une fiche audio, organisée par module
   // ══════════════════════════════════════════════════════════════════════════
-  const handleAudioFiles = (files) => {
+  const handleAudioFiles = async (files) => {
     const arr = Array.from(files).filter(f => f.type.startsWith("audio/") || f.name.match(/\.(mp3|m4a|ogg|wav|webm|aac)$/i));
     if (!arr.length) { toast("Aucun fichier audio valide.", "error"); return; }
     if (!audioModule) { toast("Sélectionne d'abord un module.", "error"); return; }
@@ -1928,45 +1487,21 @@ ${history}`;
       reviewHistory: [],
     }));
 
-    // Sauvegarde les Blobs dans IndexedDB
-    newCards.forEach((card, idx) => {
-      saveAudioBlob(card.id, arr[idx]);
-    });
-
-    setAudioCards(prev => {
-      const updated = [...prev, ...newCards];
-      saveAudioCards(updated);
-      return updated;
-    });
-
-    // ── Ajout dans MemoMaster (vue review unifiée) ──────────────────────────
-    // On crée une fiche de type "audio" pour chaque enregistrement.
-    // Le champ "audioId" pointe vers la clé IndexedDB du blob audio.
-    // MemoMaster récupère le blob via getAudioBlob(audioId) à l'affichage.
-    let audioResult = null;
-    if (onAddCards) {
-      audioResult = onAddCards(
-        newCards.map(c => ({
-          front: c.label,        // Nom du fichier = face recto de la fiche
-          back: c.label,         // Idem (le contenu sera l'audio)
-          example: c.fileName,   // Nom du fichier complet
-          category: audioModule,
-          type: "audio",
-          audioId: c.id,         // Clé IndexedDB pour retrouver le blob
-        })),
-        { source: "audio", silent: true }
-      );
+    try {
+      await Promise.all(newCards.map((card, index) => saveAudioBlob(card.id, arr[index])));
+      const result = await saveLabCards(onAddCards, newCards.map(c => ({ front: c.label, back: c.label, example: c.fileName, category: audioModule, type: "audio", audioId: c.id })), { source: "audio", silent: true });
+      setAudioCards(prev => { const updated = [...prev, ...newCards]; saveAudioCards(updated); return updated; });
+      toast(`${result.added} fiches audio ajoutées${result.skipped ? ` · ${result.skipped} doublons ignorés` : ""}.`);
+    } catch (error) {
+      newCards.forEach(c => URL.revokeObjectURL(c.audioUrl));
+      await Promise.allSettled(newCards.map(c => deleteAudioBlob(c.id)));
+      toast(error.message || "Enregistrement audio échoué.", "error");
     }
-    const audioAdded = audioResult?.added ?? newCards.length;
-    const audioSkipped = audioResult?.skipped ?? 0;
-    toast(audioSkipped > 0
-      ? `🎵 ${audioAdded} fiche(s) audio ajoutée(s) au module "${audioModule}" (${audioSkipped} doublon(s) ignoré(s))`
-      : `🎵 ${audioAdded} fiche(s) audio ajoutée(s) au module "${audioModule}" ! Tu pourras les réviser dès aujourd'hui.`);
   };
 
 
   const deleteAudioCard = (id) => {
-    deleteAudioBlob(id);
+    deleteAudioBlob(id).catch(error => toast(error.message || "Suppression audio échouée.", "error"));
     setAudioCards(prev => {
       const card = prev.find(c => c.id === id);
       if (card?.audioUrl) URL.revokeObjectURL(card.audioUrl);
@@ -2138,50 +1673,15 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
     }
   };
 
-  const addPhotocardsToDeck = (photo) => {
-    if (!photo.cards?.length) return;
-    const result = onAddCards ? onAddCards(photo.cards.map(c => ({
-      front: c.front, back: c.back, example: c.hint || "",
-      category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-    })), { silent: true }) : null;
-    const added = result?.added ?? photo.cards.length;
-    const skipped = result?.skipped ?? 0;
-    toast(skipped > 0
-      ? `🚀 ${added} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" (${skipped} doublon(s) ignoré(s))`
-      : `🚀 ${added} fiches de "${photo.name}" ajoutées au module "${photo.module || photoModule}" !`);
+  const savePhotoCards = async (cards) => {
+    try {
+      const result = await saveLabCards(onAddCards, cards.map(c => ({ ...c, example: c.hint || c.example || "", imageUrl: c.imageUrl || c.image || null })), { source: "photo", silent: true });
+      toast(`${result.added} fiches photo ajoutées${result.skipped ? ` · ${result.skipped} doublons ignorés` : ""}.`);
+    } catch (error) { toast(error.message || "Enregistrement photo échoué.", "error"); }
   };
-
-  const addAllPhotoCards = () => {
-    const all = photoItems.filter(p => p.status === "done" && p.cards.length > 0).flatMap(p => p.cards);
-    if (!all.length) { toast("Aucune fiche à envoyer.", "error"); return; }
-    const result = onAddCards ? onAddCards(all.map(c => ({
-      front: c.front, back: c.back, example: c.hint || "",
-      category: c.category, imageUrl: c.image || null, type: c.type || "qa",
-    })), { silent: true }) : null;
-    const added = result?.added ?? all.length;
-    const skipped = result?.skipped ?? 0;
-    toast(skipped > 0
-      ? `🚀 ${added} fiches photos ajoutées (${skipped} doublon(s) ignoré(s))`
-      : `🚀 ${added} fiches photos ajoutées !`);
-  };
-
-  const addPhotoTelQuel = (photo) => {
-    const category = photo.module || photoModule;
-    if (onAddCards) {
-      const result = onAddCards([{
-        front: photo.subject || photo.name.replace(/\.[^.]+$/, ""),
-        back: photo.extractedText || "Image",
-        category,
-        imageUrl: photo.dataUrl,
-        type: "concept",
-      }], { silent: true });
-      if ((result?.added ?? 1) > 0) {
-        toast(`🚀 Fiche "${photo.name}" ajoutée telle quelle au module "${category}" !`);
-      } else {
-        toast(`⚠️ Fiche "${photo.name}" jugée doublon d'une fiche existante, non ajoutée.`, "error");
-      }
-    }
-  };
+  const addPhotocardsToDeck = photo => savePhotoCards(photo.cards || []);
+  const addAllPhotoCards = () => savePhotoCards(photoItems.filter(p => p.status === "done").flatMap(p => p.cards || []));
+  const addPhotoTelQuel = photo => savePhotoCards([{ front: photo.subject || photo.name.replace(/\.[^.]+$/, ""), back: photo.extractedText || "Image", category: photo.module || photoModule, imageUrl: photo.dataUrl, type: "concept" }]);
 
   const removePhoto = (id) => setPhotoItems(prev => prev.filter(p => p.id !== id));
 
@@ -2196,7 +1696,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       badge: audioCards.length > 0 ? audioCards.length : null
     },
     {
-      id: "photo", icon: "📸", label: "Photo → Fiche", color: "#059669",
+      id: "photo", icon: "📸", label: "Photo → Fiche", color: "var(--mm-accent)",
       badge: photoItems.filter(p => p.status === "done").length > 0
         ? photoItems.filter(p => p.status === "done").length : null
     },
@@ -2211,12 +1711,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
     pdf: "var(--mm-primary)",    // Bleu
     resume: "var(--mm-primary)", // Violet
     audio: "var(--mm-primary-deep)",  // Orange
-    photo: "#059669",  // Émeraude
+    photo: "var(--mm-success)",  // Émeraude
   };
   const activeColor = tabColors[tab] || "var(--mm-primary)";
 
   return (
-    <div style={{
+    <div className="lab-experience" style={{
       animation: "fadeUp 0.4s ease",
       background: isDarkMode
         ? `radial-gradient(circle at 50% -20%, ${colorMix(activeColor, 15)} 0%, transparent 80%), radial-gradient(circle at -20% 50%, color-mix(in srgb, var(--mm-primary) 15.0%, transparent) 0%, transparent 60%), radial-gradient(circle at 120% 50%, color-mix(in srgb, var(--mm-primary) 15.0%, transparent) 0%, transparent 60%)`
@@ -2250,19 +1750,19 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
       {/* ── En-tête Héro Studio IA ── */}
       <div className="lab-hero-card" style={{
-        background: isDarkMode ? "rgba(15, 23, 42, 0.75)" : "#FFFFFF",
+        background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 75%, transparent)" : "var(--mm-on-primary)",
         borderRadius: 20, padding: "16px 22px", marginBottom: 16,
-        border: `1px solid ${isDarkMode ? "rgba(59, 130, 246, 0.25)" : "rgba(0,0,0,0.08)"}`,
-        boxShadow: isDarkMode ? "0 10px 24px rgba(0,0,0,0.3)" : "0 4px 16px rgba(37,99,235,0.06)",
+        border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`,
+        boxShadow: isDarkMode ? "0 10px 24px color-mix(in srgb, var(--mm-fg) 30%, transparent)" : "0 4px 16px color-mix(in srgb, var(--mm-primary) 6%, transparent)",
         position: "relative", overflow: "hidden"
       }}>
         {isDarkMode && (
-          <div style={{ position: "absolute", top: -80, right: -80, width: 220, height: 220, background: "radial-gradient(circle, rgba(37, 99, 235, 0.2) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
+          <div style={{ position: "absolute", top: -80, right: -80, width: 220, height: 220, background: "radial-gradient(circle, color-mix(in srgb, var(--mm-primary) 20%, transparent) 0%, transparent 70%)", borderRadius: "50%", pointerEvents: "none" }} />
         )}
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 8, background: isDarkMode ? "rgba(37, 99, 235, 0.2)" : "rgba(37, 99, 235, 0.08)", color: isDarkMode ? "#93C5FD" : "#2563EB", fontSize: 10.5, fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase" }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 8, background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, transparent)", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", fontSize: 10.5, fontWeight: 900, letterSpacing: 0.8, textTransform: "uppercase" }}>
           <span>🧪</span> Studio IA d'Extraction
         </div>
-        <h1 style={{ fontSize: 21, fontWeight: 900, color: isDarkMode ? "#F8FAFC" : "#0F172A", margin: "6px 0 3px", letterSpacing: "-0.3px" }}>
+        <h1 style={{ fontSize: 21, fontWeight: 900, color: isDarkMode ? "var(--mm-bg-elev)" : "var(--mm-bg-card)", margin: "6px 0 3px", letterSpacing: "-0.3px" }}>
           Laboratoire de Cours
         </h1>
         <p style={{ color: theme.textMuted, fontSize: 12.5, margin: 0, lineHeight: 1.4 }}>
@@ -2273,9 +1773,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
       {/* ── Segmented Control Liquid Glass (1 ligne fluide) ── */}
       <div className="lab-segmented-bar" style={{
         display: "flex", gap: 6, padding: 5, borderRadius: 16,
-        background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(241, 245, 249, 0.9)",
+        background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)",
         backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)",
-        border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)"}`,
+        border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`,
         overflowX: "auto", marginBottom: 20
       }}>
         {TABS.map(t => {
@@ -2291,7 +1791,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 border: "none", fontWeight: 800, fontSize: 12.5,
                 cursor: "pointer", transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
                 whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-                boxShadow: isActive ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none"
+                boxShadow: isActive ? "0 4px 14px color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "none"
               }}
             >
               <span style={{ fontSize: 14 }}>{t.icon}</span>
@@ -2299,11 +1799,11 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               {t.badge && (
                 <span style={{
                   position: "absolute", top: -4, right: -4,
-                  background: "#EF4444", color: "white",
+                  background: "var(--mm-danger)", color: "white",
                   borderRadius: "50%", width: 18, height: 18,
                   fontSize: 10, fontWeight: 900,
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: "0 2px 6px rgba(239, 68, 68, 0.4)"
+                  boxShadow: "0 2px 6px color-mix(in srgb, var(--mm-danger) 40%, transparent)"
                 }}>
                   {t.badge}
                 </span>
@@ -2345,44 +1845,6 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
             <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 22, padding: 24, border: `1px solid ${theme.border}` }}>
               <ModuleSelect value={pdfModule} onChange={setPdfModule} label="Module cible pour les fiches" categories={categories} theme={theme} isDarkMode={isDarkMode} />
 
-              {/* 🎯 Sélecteur de Profil Pédagogique Niveau 10 */}
-              <div style={{ marginTop: 16, marginBottom: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <label style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: 0.8, color: theme.textMuted }}>
-                    🎯 Style d'Extraction Pédagogique (Niveau 10)
-                  </label>
-                  <span style={{ fontSize: 10, fontWeight: 800, padding: "2px 7px", borderRadius: 6, background: `${colorMix(activeColor, 12)}`, color: activeColor }}>
-                    Taxonomie de Bloom & Wozniak
-                  </span>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
-                  {Object.values(GOD_TIER_PROFILES).map(p => {
-                    const isSel = pdfProfile === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => setPdfProfile(p.id)}
-                        style={{
-                          padding: "10px 12px",
-                          borderRadius: 14,
-                          border: `1.5px solid ${isSel ? activeColor : theme.border}`,
-                          background: isSel ? `${colorMix(activeColor, 12)}` : theme.inputBg,
-                          color: isSel ? activeColor : theme.text,
-                          cursor: "pointer",
-                          textAlign: "left",
-                          transition: "all 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
-                          boxShadow: isSel ? `0 4px 14px ${colorMix(activeColor, 20)}` : "none",
-                        }}
-                      >
-                        <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 2 }}>{p.label}</div>
-                        <div style={{ fontSize: 10.5, color: isSel ? theme.text : theme.textMuted, lineHeight: 1.3 }}>{p.desc}</div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
               <button
                 onClick={generatePdfCards}
                 disabled={pdfLoading || !pdfModule}
@@ -2403,11 +1865,11 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
               <div style={{
                 marginTop: 14, padding: "12px 16px",
-                background: "#FFFBEB", borderRadius: 12,
-                border: "1px solid #FDE68A", fontSize: 12, color: "#92400E"
+                background: theme.inputBg, borderRadius: 12,
+                border: `1px solid ${theme.border}`, fontSize: 12, color: theme.textMuted
               }}>
-                💡 <strong>Fidélité garantie</strong> — Si ton cours dit "envoyer de l'argent",
-                la fiche dira exactement "envoyer de l'argent". Aucun terme n'est modifié.
+                💡 <strong>Vérification avant ajout</strong> — Si ton cours dit "envoyer de l'argent",
+                vérifie la réponse et son passage source avant de l’enregistrer.
               </div>
             </HoloCard>
           )}
@@ -2454,20 +1916,20 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                     {pdfCoverage && (
                       <div style={{
                         margin: "8px 0 10px", padding: "8px 10px", borderRadius: 10,
-                        background: isDarkMode ? "rgba(16, 185, 129, 0.15)" : "#ECFDF5",
-                        border: "1px solid rgba(16, 185, 129, 0.3)", color: isDarkMode ? "#6EE7B7" : "#065F46",
+                        background: isDarkMode ? "color-mix(in srgb, var(--mm-success) 15%, transparent)" : "var(--mm-bg-elev)",
+                        border: "1px solid color-mix(in srgb, var(--mm-success) 30%, transparent)", color: isDarkMode ? "var(--mm-success)" : "var(--mm-success)",
                         fontSize: 12, fontWeight: 700, lineHeight: 1.4,
                         display: "flex", alignItems: "center", justifyContent: "space-between"
                       }}>
                         <span>🎯 Couverture Zero-Drop :</span>
-                        <span style={{ fontWeight: 900, color: "#10B981" }}>{pdfCoverage.coveredCount}/{pdfCoverage.total} notions ({pdfCoverage.coveragePercent}%)</span>
+                        <span style={{ fontWeight: 900, color: "var(--mm-success)" }}>{pdfCoverage.coveredCount}/{pdfCoverage.total} notions ({pdfCoverage.coveragePercent}%)</span>
                       </div>
                     )}
                     {pdfCards.some(c => c.isExistingDuplicate) && (
                       <div style={{
                         margin: "8px 0 10px", padding: "8px 10px", borderRadius: 10,
-                        background: isDarkMode ? "rgba(239, 68, 68, 0.15)" : "#FEF2F2",
-                        border: "1px solid rgba(239, 68, 68, 0.3)", color: isDarkMode ? "#FCA5A5" : "#DC2626",
+                        background: isDarkMode ? "color-mix(in srgb, var(--mm-danger) 15%, transparent)" : "var(--mm-bg-elev)",
+                        border: "1px solid color-mix(in srgb, var(--mm-danger) 30%, transparent)", color: isDarkMode ? "var(--mm-danger)" : "var(--mm-danger)",
                         fontSize: 12, fontWeight: 700, lineHeight: 1.4,
                       }}>
                         ⚡ {pdfCards.filter(c => c.isExistingDuplicate).length} doublon(s) déjà dans ton deck (désélectionnés par défaut).
@@ -2492,25 +1954,26 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
                     {/* Bouton Ajouter */}
                     <button
+                      disabled={pdfSaving || selectedCardIndexes.size === 0}
                       onClick={() => addPdfCardsToDeck()}
                       style={{
-                        width: "100%", padding: "13px 20px", background: "linear-gradient(135deg,#059669,#10B981)",
+                        width: "100%", padding: "13px 20px", background: "linear-gradient(135deg,var(--mm-success),var(--mm-success))",
                         color: "white", border: "none", borderRadius: 14,
                         fontWeight: 800, fontSize: 14, cursor: "pointer",
-                        boxShadow: "0 8px 20px rgba(16,185,129,0.3)", transition: "all 0.2s",
+                        boxShadow: "0 8px 20px color-mix(in srgb, var(--mm-success) 30%, transparent)", transition: "all 0.2s",
                         marginBottom: 10,
                       }}
                     >
                       {selectedCardIndexes.size > 0
                         ? `🚀 Ajouter ${selectedCardIndexes.size} fiche${selectedCardIndexes.size > 1 ? "s" : ""} sélectionnée${selectedCardIndexes.size > 1 ? "s" : ""}`
-                        : `🚀 Ajouter toutes (${pdfCards.length})`}
+                        : "Sélectionner des fiches"}
                     </button>
                   </div>
                 </HoloCard>
               </div>
 
               {/* Panneau droit : Cascade de fiches */}
-              <div style={{ flex: "1 1 60%", minWidth: 320, display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ flex: "1 1 60%", minWidth: "min(320px, 100%)", display: "flex", flexDirection: "column", gap: 14 }}>
                 {pdfCards.map((card, i) => (
                   <ErrorBoundary key={i} silent>
                   <div
@@ -2553,15 +2016,15 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       {/* Badges Cognitifs Bloom & Formats */}
                       {(() => {
                         const bloomMeta = {
-                          Remember: { label: "🧠 Mémoriser", color: "#3B82F6", bg: "rgba(59, 130, 246, 0.12)" },
-                          Understand: { label: "💡 Comprendre", color: "#06B6D4", bg: "rgba(6, 182, 212, 0.12)" },
-                          Apply: { label: "⚙️ Appliquer / Tracé", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)" },
-                          Analyze: { label: "🔬 Analyser / Comparer", color: "#8B5CF6", bg: "rgba(139, 92, 246, 0.12)" },
-                          Evaluate: { label: "⚠️ Piège / Évaluer", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)" },
-                        }[card.bloomLevel] || (card.type === "trap" ? { label: "⚠️ Piège", color: "#F59E0B", bg: "rgba(245, 158, 11, 0.12)" } : null);
+                          Remember: { label: "🧠 Mémoriser", color: "var(--mm-primary)", bg: "color-mix(in srgb, var(--mm-primary) 12%, transparent)" },
+                          Understand: { label: "💡 Comprendre", color: "var(--mm-primary)", bg: "color-mix(in srgb, var(--mm-primary) 12%, transparent)" },
+                          Apply: { label: "⚙️ Appliquer / Tracé", color: "var(--mm-success)", bg: "color-mix(in srgb, var(--mm-success) 12%, transparent)" },
+                          Analyze: { label: "🔬 Analyser / Comparer", color: "var(--mm-primary-glow)", bg: "color-mix(in srgb, var(--mm-primary) 12%, transparent)" },
+                          Evaluate: { label: "⚠️ Piège / Évaluer", color: "var(--mm-warning)", bg: "color-mix(in srgb, var(--mm-warning) 12%, transparent)" },
+                        }[card.bloomLevel] || (card.type === "trap" ? { label: "⚠️ Piège", color: "var(--mm-warning)", bg: "color-mix(in srgb, var(--mm-warning) 12%, transparent)" } : null);
 
-                        const typeMeta = card.type === "cloze" ? { label: "✏️ Texte à trous", color: "#EC4899", bg: "rgba(236, 72, 153, 0.12)" }
-                          : card.type === "code" ? { label: "💻 Code Tracé", color: "#10B981", bg: "rgba(16, 185, 129, 0.12)" }
+                        const typeMeta = card.type === "cloze" ? { label: "✏️ Texte à trous", color: "var(--mm-primary)", bg: "color-mix(in srgb, var(--mm-primary) 12%, transparent)" }
+                          : card.type === "code" ? { label: "💻 Code Tracé", color: "var(--mm-success)", bg: "color-mix(in srgb, var(--mm-success) 12%, transparent)" }
                           : null;
 
                         return (
@@ -2602,9 +2065,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                           <div style={{
                             display: "inline-flex", alignItems: "center", gap: 5,
                             marginTop: 6, padding: "3px 8px", borderRadius: 8,
-                            background: isDarkMode ? "rgba(239, 68, 68, 0.2)" : "#FEE2E2",
-                            color: isDarkMode ? "#FCA5A5" : "#DC2626",
-                            border: "1px solid rgba(239, 68, 68, 0.4)",
+                            background: isDarkMode ? "color-mix(in srgb, var(--mm-danger) 20%, transparent)" : "var(--mm-bg-elev)",
+                            color: isDarkMode ? "var(--mm-danger)" : "var(--mm-danger)",
+                            border: "1px solid color-mix(in srgb, var(--mm-danger) 40%, transparent)",
                             fontSize: 11, fontWeight: 700,
                           }}>
                             ⚡ Déjà dans ton deck : &laquo; {toText(card.duplicateOf).slice(0, 45)}... &raquo; ({card.similarityScore}%)
@@ -2613,14 +2076,18 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       </div>
                     </div>
                     <div style={{ padding: "14px 18px" }}>
-                      <div style={{ fontSize: 10, fontWeight: 800, color: "#059669", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "var(--mm-accent)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>
                         VERSO — Réponse
                       </div>
                       <div style={{ marginTop: 10 }}>
                         <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
                       </div>
+                      {card.source_excerpt && <details style={{ marginTop: 14, color: theme.textMuted, fontSize: 12 }}>
+                        <summary>Passage source — {card.sourceDoc}</summary>
+                        <blockquote style={{ margin: "10px 0", whiteSpace: "pre-wrap" }}>{card.source_excerpt}</blockquote>
+                      </details>}
                       {card.hint && (
-                        <div style={{ marginTop: 10, fontSize: 12, color: "#B45309", background: "#FFFBEB", borderRadius: 8, padding: "8px 12px", border: "1px solid #FDE68A" }}>
+                        <div style={{ marginTop: 10, fontSize: 12, color: "var(--mm-warning)", background: theme.inputBg, borderRadius: 8, padding: "8px 12px", border: "1px solid var(--mm-warning)" }}>
                           💡 {toText(card.hint)}
                         </div>
                       )}
@@ -2693,7 +2160,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
               </h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
                 {resHistory.map(entry => (
-                  <div key={entry.id} onClick={() => loadFromHistory(entry)} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 16, cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", gap: 8, boxShadow: "0 4px 15px rgba(0,0,0,0.05)" }}>
+                  <div key={entry.id} onClick={() => loadFromHistory(entry)} style={{ background: theme.cardBg, border: `1px solid ${theme.border}`, borderRadius: 16, padding: 16, cursor: "pointer", transition: "all 0.2s", display: "flex", flexDirection: "column", gap: 8, boxShadow: "0 4px 15px color-mix(in srgb, var(--mm-fg) 5%, transparent)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                       <strong style={{ fontSize: 14, color: theme.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "85%" }}>{entry.fileName}</strong>
                       <button onClick={(e) => deleteFromHistory(entry.id, e)} style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, opacity: 0.6 }}>❌</button>
@@ -2773,7 +2240,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
                   {/* Actions export & audio */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
-                    <button onClick={toggleAudioSummary} style={{ padding: "10px", background: isAudioPlaying ? "#EF4444" : theme.inputBg, color: isAudioPlaying ? "white" : theme.text, border: `1px solid ${isAudioPlaying ? "#EF4444" : theme.border}`, borderRadius: 12, fontWeight: 800, fontSize: 12, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, transition: "all 0.2s" }}>
+                    <button onClick={toggleAudioSummary} style={{ padding: "10px", background: isAudioPlaying ? "var(--mm-danger)" : theme.inputBg, color: isAudioPlaying ? "white" : theme.text, border: `1px solid ${isAudioPlaying ? "var(--mm-danger)" : theme.border}`, borderRadius: 12, fontWeight: 800, fontSize: 12, cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, transition: "all 0.2s" }}>
                       <span style={{ fontSize: 16 }}>{isAudioPlaying ? "⏹️" : "🎧"}</span>
                       {isAudioPlaying ? "Stop" : "Podcast"}
                     </button>
@@ -2782,7 +2249,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       Copier
                     </button>
                   </div>
-                  <button onClick={handleGenerateCardsFromSummary} disabled={resLoading} style={{ marginTop: 8, width: "100%", padding: "12px", background: "linear-gradient(135deg, #059669, #10B981)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13, cursor: resLoading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(16,185,129,0.3)" }}>
+                  <button onClick={handleGenerateCardsFromSummary} disabled={resLoading} style={{ marginTop: 8, width: "100%", padding: "12px", background: "linear-gradient(135deg, var(--mm-success), var(--mm-success))", color: "white", border: "none", borderRadius: 12, fontWeight: 800, fontSize: 13, cursor: resLoading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px color-mix(in srgb, var(--mm-success) 30%, transparent)" }}>
                     <span style={{ fontSize: 16 }}>✨</span>
                     Créer des fiches
                   </button>
@@ -2838,7 +2305,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
               {/* PANNEAU DROIT : Contenu du Résumé */}
               <div style={{ flex: "1 1 60%", minWidth: 320 }}>
-                <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 24, padding: "36px 40px", border: `1px solid ${theme.border}`, boxShadow: `0 20px 40px rgba(0,0,0,0.1)` }}>
+                <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} style={{ background: theme.cardBg, borderRadius: 24, padding: "36px 40px", border: `1px solid ${theme.border}`, boxShadow: `0 20px 40px color-mix(in srgb, var(--mm-fg) 10%, transparent)` }}>
                   {/* Effet visuel Premium */}
                   <div style={{ position: "absolute", top: 0, right: 0, width: 200, height: 200, background: `radial-gradient(circle at top right, ${colorMix(activeColor, 8)}, transparent 70%)`, pointerEvents: "none" }} />
 
@@ -2916,8 +2383,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
 
             <div style={{
               marginTop: 14, padding: "12px 16px",
-              background: "#FFF7ED", borderRadius: 12,
-              border: "1px solid #FED7AA", fontSize: 12, color: "#92400E"
+              background: "var(--mm-bg-elev)", borderRadius: 12,
+              border: "1px solid var(--mm-warning)", fontSize: 12, color: "var(--mm-warning)"
             }}>
               🎵 <strong>Fiche audio pure</strong> — Aucune transcription. L'audio EST la fiche. Tu écoutes, tu mémorises.
             </div>
@@ -2962,7 +2429,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                         <div style={{
                           width: 46, height: 46, borderRadius: 14, background: isExpanded ? activeColor : theme.inputBg,
-                          color: isExpanded ? "#FFF" : activeColor, display: "flex", alignItems: "center", justifyContent: "center",
+                          color: isExpanded ? "var(--mm-on-primary)" : activeColor, display: "flex", alignItems: "center", justifyContent: "center",
                           fontSize: 22, transition: "all 0.3s", boxShadow: isExpanded ? `0 6px 16px ${colorMix(activeColor, 25)}` : "none",
                           border: isExpanded ? "none" : `1px solid ${theme.border}`
                         }}>
@@ -2988,7 +2455,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                     <div style={{
                       maxHeight: isExpanded ? 2000 : 0, opacity: isExpanded ? 1 : 0,
                       transition: "all 0.4s cubic-bezier(0.16, 1, 0.3, 1)",
-                      background: isDarkMode ? "rgba(0,0,0,0.15)" : "#F8FAFF",
+                      background: isDarkMode ? "color-mix(in srgb, var(--mm-fg) 15%, transparent)" : "var(--mm-on-primary)",
                       borderTop: isExpanded ? `1px solid ${theme.border}` : "none",
                     }}>
                       <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2997,17 +2464,17 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             background: theme.cardBg, borderRadius: 16,
                             padding: "16px", border: `1px solid ${theme.border}`,
                             display: "flex", alignItems: "center", gap: 16,
-                            boxShadow: "0 2px 8px rgba(0,0,0,0.02)",
+                            boxShadow: "0 2px 8px color-mix(in srgb, var(--mm-fg) 2%, transparent)",
                             transition: "transform 0.2s",
                             transform: audioPlaying === card.id ? "scale(1.01)" : "scale(1)"
                           }}>
                             {/* Indicateur audio */}
                             <div style={{
                               width: 44, height: 44, borderRadius: "50%", flexShrink: 0,
-                              background: audioPlaying === card.id ? "#FFF7ED" : "color-mix(in srgb, var(--mm-primary) 4%, white)",
+                              background: audioPlaying === card.id ? "var(--mm-bg-elev)" : "color-mix(in srgb, var(--mm-primary) 4%, white)",
                               border: `2px solid ${audioPlaying === card.id ? "var(--mm-primary-deep)" : "var(--mm-primary)"}`,
                               display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 20, boxShadow: audioPlaying === card.id ? "0 4px 12px rgba(234,88,12,0.3)" : "none"
+                              fontSize: 20, boxShadow: audioPlaying === card.id ? "0 4px 12px color-mix(in srgb, var(--mm-warning) 30%, transparent)" : "none"
                             }}>
                               {audioPlaying === card.id ? "🔊" : "🎵"}
                             </div>
@@ -3039,9 +2506,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                               </div>
                             ) : (
                               <div style={{
-                                padding: "6px 12px", background: "#FFFBEB",
-                                border: "1px solid #FDE68A", borderRadius: 8,
-                                fontSize: 11, color: "#D97706", fontWeight: 700
+                                padding: "6px 12px", background: theme.inputBg,
+                                border: "1px solid var(--mm-warning)", borderRadius: 8,
+                                fontSize: 11, color: "var(--mm-warning)", fontWeight: 700
                               }}>
                                 ⚠️ Rechargement requis
                               </div>
@@ -3053,9 +2520,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                               className="hov"
                               title="Supprimer cet audio"
                               style={{
-                                width: 36, height: 36, background: "#FEF2F2",
-                                border: "1px solid #FECACA", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
-                                color: "#EF4444", cursor: "pointer", fontSize: 16, flexShrink: 0
+                                width: 36, height: 36, background: "var(--mm-bg-elev)",
+                                border: "1px solid var(--mm-danger)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
+                                color: "var(--mm-danger)", cursor: "pointer", fontSize: 16, flexShrink: 0
                               }}
                             >✕</button>
                           </div>
@@ -3084,9 +2551,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
               {[
                 { icon: "📸", label: "Photos", value: photoItems.length, color: activeColor },
-                { icon: "✅", label: "Analysées", value: photoItems.filter(p => p.status === "done").length, color: "#059669" },
+                { icon: "✅", label: "Analysées", value: photoItems.filter(p => p.status === "done").length, color: "var(--mm-accent)" },
                 { icon: "🃏", label: "Fiches", value: photoItems.reduce((a, p) => a + (p.cards?.length || 0), 0), color: "var(--mm-primary)" },
-                { icon: "⏳", label: "En cours", value: photoItems.filter(p => p.status === "loading").length, color: "#D97706" },
+                { icon: "⏳", label: "En cours", value: photoItems.filter(p => p.status === "loading").length, color: "var(--mm-warning)" },
               ].map(s => (
                 <HoloCard theme={theme} glowColor={s.color} key={s.label} style={{
                   background: theme.cardBg, borderRadius: 16, padding: "14px 16px",
@@ -3123,7 +2590,7 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 onClick={addAllPhotoCards}
                 style={{
                   width: "100%", marginTop: 14, padding: "12px 20px",
-                  background: "linear-gradient(135deg,#059669,#10B981)",
+                  background: "linear-gradient(135deg,var(--mm-success),var(--mm-success))",
                   color: "white", border: "none", borderRadius: 12,
                   fontWeight: 800, fontSize: 14, cursor: "pointer"
                 }}
@@ -3141,9 +2608,9 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                 return (
                   <HoloCard className="lab-card-mobile" theme={theme} glowColor={activeColor} key={photo.id} style={{
                     background: theme.cardBg, borderRadius: 20,
-                    border: `2px solid ${photo.status === "done" ? "#10B98133" :
+                    border: `2px solid ${photo.status === "done" ? "color-mix(in srgb, var(--mm-success) 20%, transparent)" :
                       photo.status === "loading" ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" :
-                        photo.status === "error" ? "#EF444433" : theme.border
+                        photo.status === "error" ? "color-mix(in srgb, var(--mm-danger) 20%, transparent)" : theme.border
                       }`
                     // HoloCard gère le overflow: hidden pour nous
                   }}>
@@ -3170,14 +2637,14 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             </span>
                           )}
                           {photo.subject && (
-                            <span style={{ background: "#F0FDF4", color: "#059669", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
+                            <span style={{ background: "var(--mm-bg-elev)", color: "var(--mm-accent)", borderRadius: 8, padding: "2px 8px", fontWeight: 700 }}>
                               {photo.subject}
                             </span>
                           )}
                           <span style={{
-                            color: photo.status === "done" ? "#059669" :
+                            color: photo.status === "done" ? "var(--mm-success)" :
                               photo.status === "loading" ? "var(--mm-primary)" :
-                                photo.status === "error" ? "#EF4444" : theme.textMuted,
+                                photo.status === "error" ? "var(--mm-danger)" : theme.textMuted,
                             fontWeight: 700,
                             display: "flex", alignItems: "center", gap: 4
                           }}>
@@ -3210,16 +2677,16 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                               onClick={() => addPhotoTelQuel(photo)}
                               style={{
                                 padding: "7px 12px", borderRadius: 10,
-                                background: "#FFFBEB", border: "1px solid #FDE68A",
-                                color: "#D97706", fontWeight: 700, fontSize: 12, cursor: "pointer"
+                                background: theme.inputBg, border: "1px solid var(--mm-warning)",
+                                color: "var(--mm-warning)", fontWeight: 700, fontSize: 12, cursor: "pointer"
                               }}
                             >📝 Ajouter tel quel</button>
                             <button
                               onClick={() => addPhotocardsToDeck(photo)}
                               style={{
                                 padding: "7px 12px", borderRadius: 10,
-                                background: "#ECFDF5", border: "1px solid #059669",
-                                color: "#059669", fontWeight: 700, fontSize: 12, cursor: "pointer"
+                                background: "var(--mm-bg-elev)", border: "1px solid var(--mm-success)",
+                                color: "var(--mm-accent)", fontWeight: 700, fontSize: 12, cursor: "pointer"
                               }}
                             >🚀 Ajouter fiches générées</button>
                           </>
@@ -3229,8 +2696,8 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             onClick={() => analyzePhoto(photo, photoModule || photo.module)}
                             style={{
                               padding: "7px 12px", borderRadius: 10,
-                              background: "#FEF2F2", border: "1px solid #EF4444",
-                              color: "#EF4444", fontWeight: 700, fontSize: 12, cursor: "pointer"
+                              background: "var(--mm-bg-elev)", border: "1px solid var(--mm-danger)",
+                              color: "var(--mm-danger)", fontWeight: 700, fontSize: 12, cursor: "pointer"
                             }}
                           >🔄 Réessayer</button>
                         )}
@@ -3285,34 +2752,34 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                             {/* Fiche "Tel quel" (Aperçu) */}
                             <div
                               style={{
-                                background: "#FFFBEB", borderRadius: 16,
-                                border: `2px dashed #FDE68A`, overflow: "hidden",
+                                background: theme.inputBg, borderRadius: 16,
+                                border: `2px dashed var(--mm-warning)`, overflow: "hidden",
                                 animation: `fadeUp 0.5s ease forwards`,
                                 opacity: 0,
-                                boxShadow: "0 4px 15px rgba(217,119,6,0.1)",
+                                boxShadow: "0 4px 15px color-mix(in srgb, var(--mm-warning) 10%, transparent)",
                                 display: "flex", flexDirection: "column"
                               }}>
-                              <div style={{ padding: "14px 16px", borderBottom: `1px solid #FDE68A` }}>
+                              <div style={{ padding: "14px 16px", borderBottom: `1px solid var(--mm-warning)` }}>
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                                  <div style={{ fontSize: 10, fontWeight: 900, color: "#D97706", textTransform: "uppercase", letterSpacing: 1 }}>RECTO (Tel quel)</div>
-                                  <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: "#FEF3C7", color: "#B45309", fontWeight: 800 }}>APERÇU</span>
+                                  <div style={{ fontSize: 10, fontWeight: 900, color: "var(--mm-warning)", textTransform: "uppercase", letterSpacing: 1 }}>RECTO (Tel quel)</div>
+                                  <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 6, background: "var(--mm-warning)", color: "var(--mm-warning)", fontWeight: 800 }}>APERÇU</span>
                                 </div>
                                 <div style={{ fontSize: 14, fontWeight: 800, color: theme.text, lineHeight: 1.4 }}>
                                   {photo.subject || photo.name.replace(/\.[^.]+$/, "")}
                                 </div>
                               </div>
                               <div style={{ padding: "14px 16px", background: theme.inputBg, flex: 1 }}>
-                                <div style={{ fontSize: 10, fontWeight: 900, color: "#D97706", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>VERSO (Tel quel)</div>
+                                <div style={{ fontSize: 10, fontWeight: 900, color: "var(--mm-warning)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>VERSO (Tel quel)</div>
                                 <div style={{ marginTop: 10 }}>
                                   <GodTierContent text={photo.extractedText || "Image"} theme={theme} isDarkMode={isDarkMode} />
                                 </div>
                               </div>
-                              <div style={{ padding: "10px 16px", background: "#FFFBEB", borderTop: "1px solid #FDE68A" }}>
+                              <div style={{ padding: "10px 16px", background: theme.inputBg, borderTop: "1px solid var(--mm-warning)" }}>
                                 <button
                                   onClick={() => addPhotoTelQuel(photo)}
                                   style={{
                                     width: "100%", padding: "8px", borderRadius: 8,
-                                    background: "#D97706", border: "none",
+                                    background: "var(--mm-warning)", border: "none",
                                     color: "white", fontWeight: 700, fontSize: 12, cursor: "pointer"
                                   }}
                                 >📝 Ajouter cette fiche</button>
@@ -3345,12 +2812,12 @@ Réponds UNIQUEMENT en JSON valide (sans markdown autour) :
                                   </div>
                                 </div>
                                 <div style={{ padding: "14px 16px", background: theme.inputBg }}>
-                                  <div style={{ fontSize: 10, fontWeight: 900, color: "#059669", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>VERSO</div>
+                                  <div style={{ fontSize: 10, fontWeight: 900, color: "var(--mm-accent)", textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>VERSO</div>
                                   <div style={{ marginTop: 10 }}>
                                     <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
                                   </div>
                                   {card.hint && (
-                                    <div style={{ marginTop: 8, fontSize: 11, color: "#B45309", background: "#FFFBEB", borderRadius: 8, padding: "6px 10px", border: "1px solid #FDE68A" }}>
+                                    <div style={{ marginTop: 8, fontSize: 11, color: "var(--mm-warning)", background: theme.inputBg, borderRadius: 8, padding: "6px 10px", border: "1px solid var(--mm-warning)" }}>
                                       💡 {toText(card.hint)}
                                     </div>
                                   )}

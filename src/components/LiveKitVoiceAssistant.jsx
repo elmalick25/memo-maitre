@@ -153,7 +153,7 @@ async function generateTokenInternal({
       goal: sessionGoal,
       targets: targetExpressions,
       continuity: continuityMemory,
-      openingHookMode: (sessionGoal && sessionGoal.toLowerCase().includes("free conversation")) ? "free" : "daily_targets",
+      openingHookMode: (sessionGoal && sessionGoal.toLowerCase().includes("daily targets")) ? "daily_targets" : "real_life_natural",
     })
   );
 
@@ -290,9 +290,9 @@ export default function LiveKitVoiceAssistant({
     continuity: continuityMemory,
   }), [systemPrompt, studentName, level, sessionGoal, targetExpressionsKey, continuityMemory]);
 
-  // Initialisation instantanée depuis le cache de prewarm si disponible
+  // Initialisation instantanée depuis le cache de prewarm si disponible (< 5 min)
   const [token, setToken] = useState(() => {
-    if (_prewarmedTokenCache.jwt && _prewarmedTokenCache.key === currentParamsKey && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
+    if (_prewarmedTokenCache.jwt && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
       return _prewarmedTokenCache.jwt;
     }
     return "";
@@ -316,12 +316,19 @@ export default function LiveKitVoiceAssistant({
   useEffect(() => {
     let active = true;
 
+    // Si on a déjà un token chaud valide en cache, on s'assure qu'il est appliqué immédiatement
+    if (!token && _prewarmedTokenCache.jwt && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
+      setToken(_prewarmedTokenCache.jwt);
+      lastFetchParamsRef.current = _prewarmedTokenCache.key;
+      return;
+    }
+
     // Guard anti-boucle : si le token est déjà prêt pour ces mêmes paramètres, on ne relance pas
     if (token && lastFetchParamsRef.current === currentParamsKey) {
       return;
     }
 
-    // Si on a déjà un token chaud valide en cache pour cette clé, l'adopter immédiatement
+    // Si le token en cache correspond exactement aux paramètres actuels, l'adopter
     if (_prewarmedTokenCache.jwt && _prewarmedTokenCache.key === currentParamsKey && (Date.now() - _prewarmedTokenCache.timestamp < 300000)) {
       setToken(_prewarmedTokenCache.jwt);
       lastFetchParamsRef.current = currentParamsKey;
@@ -462,7 +469,6 @@ export default function LiveKitVoiceAssistant({
           onMicErrorReason={setMicErrorReason}
         />
         <StartAudio
-          label="🔊 Appuie ici pour activer le son de NOVA"
           style={startAudioStyle}
         />
         {agentMissing && !micBlocked && (
@@ -523,22 +529,7 @@ const errorCardStyle = {
 };
 
 const startAudioStyle = {
-  position: "fixed",
-  left: "50%",
-  bottom: "max(24px, env(safe-area-inset-bottom))",
-  transform: "translateX(-50%)",
-  zIndex: 9999,
-  pointerEvents: "auto",
-  border: "none",
-  borderRadius: 12,
-  padding: "12px 16px",
-  fontSize: 14,
-  fontWeight: 700,
-  cursor: "pointer",
-  background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
-  color: "white",
-  fontFamily: "system-ui, sans-serif",
-  boxShadow: "0 12px 32px rgba(0,0,0,0.35)",
+  display: "none",
 };
 
 // ── LiveKitMicRefresh ────────────────────────────────────────────────────
@@ -572,6 +563,9 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
 
   useEffect(() => {
     if (!room) return;
+    if (typeof room.startAudio === "function") {
+      room.startAudio().catch(() => {});
+    }
     const onMediaError = (error) => {
       const failure = MediaDeviceFailure.getFailure(error);
       const reason =
@@ -799,6 +793,75 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
   const { state, audioTrack, agentTranscriptions } = useVoiceAssistant();
   const { localParticipant } = useLocalParticipant();
   const userTranscriptions = useTranscriptions();
+  const [directTranscriptions, setDirectTranscriptions] = useState([]);
+
+  // Écoute directe des événements RoomEvent de LiveKit (évite toute perte de transcription)
+  useEffect(() => {
+    if (!room) return;
+
+    const handleTranscription = (segments, participant) => {
+      if (!segments || !Array.isArray(segments)) return;
+      const localId = localParticipant?.identity;
+      const isAgent = participant ? participant.identity !== localId : true;
+      const newItems = segments
+        .filter(s => s && s.text && s.text.trim())
+        .map((s, idx) => ({
+          id: s.id || `direct-${participant?.identity || (isAgent ? "agent" : "user")}-${s.firstReceivedTime || Date.now()}-${idx}`,
+          role: isAgent ? "agent" : "user",
+          identity: participant?.identity || (isAgent ? LIVEKIT_AGENT_NAME : "user"),
+          text: s.text.trim(),
+          isFinal: s.final ?? true,
+          ts: s.firstReceivedTime || Date.now(),
+        }));
+
+      if (newItems.length > 0) {
+        setDirectTranscriptions(prev => {
+          const next = [...prev];
+          for (const item of newItems) {
+            const idx = next.findIndex(n => n.id === item.id);
+            if (idx >= 0) {
+              next[idx] = item;
+            } else {
+              next.push(item);
+            }
+          }
+          return next.slice(-60);
+        });
+      }
+    };
+
+    const handleData = (payload, participant, _kind, _topic) => {
+      try {
+        const str = new TextDecoder().decode(payload);
+        const data = JSON.parse(str);
+        if (data && (data.text || data.transcription || data.transcript)) {
+          const text = (data.text || data.transcription || data.transcript).trim();
+          if (!text) return;
+          const localId = localParticipant?.identity;
+          const isAgent = participant ? participant.identity !== localId : true;
+          setDirectTranscriptions(prev => [
+            ...prev,
+            {
+              id: data.id || `data-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              role: data.role || (isAgent ? "agent" : "user"),
+              identity: participant?.identity || (isAgent ? LIVEKIT_AGENT_NAME : "user"),
+              text,
+              isFinal: data.isFinal ?? true,
+              ts: Date.now(),
+            }
+          ].slice(-60));
+        }
+      } catch {}
+    };
+
+    room.on(RoomEvent.TranscriptionReceived, handleTranscription);
+    room.on(RoomEvent.DataReceived, handleData);
+
+    return () => {
+      room.off(RoomEvent.TranscriptionReceived, handleTranscription);
+      room.off(RoomEvent.DataReceived, handleData);
+    };
+  }, [room, localParticipant]);
 
   // Enregistrer le pont avec le bus global pour toutes les vues
   useEffect(() => {
@@ -863,6 +926,7 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
   useEffect(() => {
     if (!onTranscriptionsUpdate) return;
 
+    // 1. Segments de l'assistant via useVoiceAssistant
     const agentSegs = (agentTranscriptions || []).map(seg => ({
       id: seg.id || ("agent-seg-" + seg.firstReceivedTime),
       role: "agent",
@@ -894,12 +958,51 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
         ts: m.streamInfo?.timestamp || 0,
       }));
 
-    const combined = [...agentSegs, ...userSegs].sort((a, b) => a.ts - b.ts);
+    // 2. Segments de l'agent distants via useTranscriptions
+    const remoteAgentSegs = (userTranscriptions || [])
+      .filter(m => {
+        const id = m.participantInfo?.identity;
+        return id && (localId ? id !== localId : (id === LIVEKIT_AGENT_NAME || id.startsWith("agent-")));
+      })
+      .map(m => ({
+        id: m.streamInfo?.id || ("agent-remote-" + m.participantInfo?.identity + "-" + (m.streamInfo?.timestamp || Date.now())),
+        role: "agent",
+        identity: m.participantInfo?.identity || LIVEKIT_AGENT_NAME,
+        text: m.text || "",
+        isFinal: true,
+        ts: m.streamInfo?.timestamp || Date.now(),
+      }));
+
+    // 3. Fusionner toutes les sources d'agent
+    const allAgent = [...agentSegs, ...remoteAgentSegs, ...directTranscriptions.filter(d => d.role === "agent")];
+    const deduplicatedAgent = [];
+    const seenAgentKeys = new Set();
+    for (const seg of allAgent) {
+      const key = `${seg.id || ""}:${seg.text.trim().toLowerCase()}`;
+      if (!seenAgentKeys.has(key)) {
+        seenAgentKeys.add(key);
+        deduplicatedAgent.push(seg);
+      }
+    }
+
+    // 4. Fusionner toutes les sources de l'utilisateur
+    const allUser = [...userSegs, ...directTranscriptions.filter(d => d.role === "user")];
+    const deduplicatedUser = [];
+    const seenUserKeys = new Set();
+    for (const seg of allUser) {
+      const key = `${seg.id || ""}:${seg.text.trim().toLowerCase()}`;
+      if (!seenUserKeys.has(key)) {
+        seenUserKeys.add(key);
+        deduplicatedUser.push(seg);
+      }
+    }
+
+    const combined = [...deduplicatedAgent, ...deduplicatedUser].sort((a, b) => (a.ts || 0) - (b.ts || 0));
     const key = combined.map(c => `${c.id}:${c.text}:${c.isFinal}`).join("|");
     if (key === lastTranscriptionsKeyRef.current) return;
     lastTranscriptionsKeyRef.current = key;
     onTranscriptionsUpdate(combined);
-  }, [agentTranscriptions, userTranscriptions, localParticipant, onTranscriptionsUpdate]);
+  }, [agentTranscriptions, userTranscriptions, directTranscriptions, localParticipant, onTranscriptionsUpdate]);
 
   return null;
 }

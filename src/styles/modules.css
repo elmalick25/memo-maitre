@@ -1,0 +1,20 @@
+.modules-view { min-width: 0; color: var(--mm-fg); }
+.module-button { min-height: 44px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--mm-border-strong); background: var(--mm-bg-elev); color: var(--mm-fg); font: inherit; font-size: 13px; font-weight: 650; line-height: 1.4; cursor: pointer; overflow-wrap: anywhere; }
+.module-button--primary { background: var(--mm-primary); border-color: var(--mm-primary); color: var(--mm-on-primary, #fff); }
+.module-button--danger { color: var(--mm-danger); }
+.module-button:hover:not(:disabled) { border-color: var(--mm-primary); }
+.module-button:focus-visible, .module-menu summary:focus-visible { outline: 3px solid var(--mm-primary-glow); outline-offset: 3px; }
+.module-button:disabled { opacity: .5; cursor: not-allowed; }
+.module-actions { display: grid; gap: 8px; margin-top: 18px; }
+.module-menu { position: relative; }
+.module-menu summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; justify-content: center; color: var(--mm-fg-muted); border-radius: 8px; border: 1px solid var(--mm-border); font-size: 13px; }
+.module-menu[open] summary { color: var(--mm-primary); }
+.module-menu-list { display: grid; gap: 6px; padding-top: 8px; }
+.module-menu-list .module-button { text-align: left; width: 100%; }
+.module-create-panel { border-block: 1px solid var(--mm-border); padding-block: 20px; margin-bottom: 24px; }
+.module-create-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.module-create-fields input, .module-merge-fields select { min-width: 0; width: 100%; min-height: 44px; border: 1px solid var(--mm-border); border-radius: 8px; padding: 10px; background: var(--mm-bg-elev); color: var(--mm-fg); font: inherit; }
+.module-merge-fields { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr) auto; gap: 10px; }
+.modules-view h3 { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .module-create-fields, .module-merge-fields { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .modules-view, .modules-view * { animation: none !important; transition: none !important; } }

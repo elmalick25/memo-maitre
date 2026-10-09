@@ -27,7 +27,7 @@ import { mergeDayState, normalizeDayState } from '../dayStateMerge'
 
 const DEBOUNCE_MS = 800
 
-const dayDocRef = (uid, dateISO) => doc(firestoreDb, 'users', uid, 'day_state', dateISO)
+const dayDocRef = (uid, dateISO) => (firestoreDb ? doc(firestoreDb, 'users', uid, 'day_state', dateISO) : null)
 
 /** Identifiant d'appareil stable (débogage multi-appareils). */
 function deviceId() {
@@ -56,10 +56,12 @@ function deviceId() {
  * @returns {() => void} fonction d'arrêt.
  */
 export function subscribeDayState(uid, dateISO, onRemote) {
-  if (!uid || !dateISO || typeof onRemote !== 'function') return () => {}
+  if (!firestoreDb || !uid || !dateISO || typeof onRemote !== 'function') return () => {}
+  const ref = dayDocRef(uid, dateISO)
+  if (!ref) return () => {}
 
   return onSnapshot(
-    dayDocRef(uid, dateISO),
+    ref,
     { includeMetadataChanges: false },
     (snap) => {
       if (!snap.exists()) return
@@ -71,9 +73,11 @@ export function subscribeDayState(uid, dateISO, onRemote) {
 
 /** Lecture ponctuelle (au démarrage, avant que l'écoute ne soit établie). */
 export async function fetchDayState(uid, dateISO) {
-  if (!uid || !dateISO) return null
+  if (!firestoreDb || !uid || !dateISO) return null
   try {
-    const snap = await getDoc(dayDocRef(uid, dateISO))
+    const ref = dayDocRef(uid, dateISO)
+    if (!ref) return null
+    const snap = await getDoc(ref)
     if (!snap.exists()) return null
     return normalizeDayState({ ...snap.data(), date: dateISO }, dateISO)
   } catch (err) {
@@ -93,16 +97,19 @@ async function flushDayState() {
   const key = pendingKey
   pendingState = null
   pendingKey = null
-  if (!state || !key) return
+  if (!firestoreDb || !state || !key) return
 
   const [uid, dateISO] = key.split('|')
+  const ref = dayDocRef(uid, dateISO)
+  if (!ref) return
+
   // ⚠️ `arrayUnion()` sans argument lève une exception Firestore : un tableau
   // vide doit être écrit tel quel (c'est le cas au tout premier scellement,
   // quand aucune fiche n'a encore été révisée).
   const union = (list) => (list.length > 0 ? arrayUnion(...list) : [])
   try {
     await setDoc(
-      dayDocRef(uid, dateISO),
+      ref,
       {
         date: dateISO,
         sealedAt: state.sealedAt ?? Date.now(),
@@ -127,7 +134,7 @@ async function flushDayState() {
  * eux avant l'envoi, donc 10 révisions en 5 secondes = 1 seule écriture.
  */
 export function publishDayState(uid, dateISO, state) {
-  if (!uid || !dateISO || !state) return
+  if (!firestoreDb || !uid || !dateISO || !state) return
   const key = `${uid}|${dateISO}`
   if (pendingKey && pendingKey !== key) {
     // Changement de jour en cours de route : on envoie l'état précédent d'abord.

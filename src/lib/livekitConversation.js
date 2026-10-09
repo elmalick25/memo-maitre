@@ -13,7 +13,7 @@
 // ============================================================================
 
 /** Fenêtre (ms) sous laquelle deux fragments du même locuteur = un seul tour. */
-export const TURN_MERGE_WINDOW_MS = 3500;
+export const TURN_MERGE_WINDOW_MS = 15000;
 
 const norm = (t) => String(t || "").trim().replace(/\s+/g, " ");
 const key = (t) => norm(t).toLowerCase().replace(/[.,!?;:]/g, "");
@@ -71,6 +71,52 @@ export function aggregateTurns(segments = [], { windowMs = TURN_MERGE_WINDOW_MS 
       endTs: seg.ts || Date.now(),
       isFinal: Boolean(seg.isFinal),
     });
+  }
+  return turns;
+}
+
+/**
+ * Regroupe les transcriptions streaming LiveKit en tours de parole complets.
+ * Gère à la fois les mises à jour progressives (interim -> final)
+ * et les fragments additifs successifs pour afficher les phrases AU COMPLET.
+ */
+export function groupSpeechTurns(messages = []) {
+  if (!Array.isArray(messages) || messages.length === 0) return [];
+  const turns = [];
+  for (const msg of messages) {
+    const rawText = norm(msg?.text);
+    if (!rawText) continue;
+    const role = msg.role === "agent" ? "agent" : "user";
+    const prev = turns[turns.length - 1];
+
+    if (prev && prev.role === role) {
+      const prevNorm = key(prev.text);
+      const currNorm = key(rawText);
+
+      // 1) Si le texte courant étend ou remplace le précédent (mise à jour progressive STT)
+      if (currNorm.startsWith(prevNorm) || rawText.toLowerCase().startsWith(prev.text.toLowerCase())) {
+        prev.text = rawText;
+        prev.id = msg.id || prev.id;
+        prev.isFinal = msg.isFinal ?? prev.isFinal;
+        continue;
+      }
+      // 2) Si le texte précédent contient déjà le texte courant (doublon ou fragment déjà inclus)
+      if (prevNorm === currNorm || prevNorm.endsWith(currNorm) || prev.text.toLowerCase().includes(rawText.toLowerCase())) {
+        continue;
+      }
+      // 3) Fragment additif consécutif du même locuteur : concaténation pour phrase complète
+      prev.text = `${prev.text} ${rawText}`.replace(/\s+/g, " ").trim();
+      prev.id = msg.id || prev.id;
+      prev.isFinal = msg.isFinal ?? prev.isFinal;
+    } else {
+      turns.push({
+        id: msg.id || `${role}-${turns.length}`,
+        role,
+        text: rawText,
+        isFinal: msg.isFinal ?? true,
+        ts: msg.ts || Date.now(),
+      });
+    }
   }
   return turns;
 }

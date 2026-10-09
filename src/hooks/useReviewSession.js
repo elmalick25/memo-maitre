@@ -207,7 +207,7 @@ export default function useReviewSession({
 
     if (fixedQueue && fixedQueue.length > 0) {
       queue = getSmartQueue([...fixedQueue]);
-    } else if (mode === "module" && catFilter) {
+    } else if ((mode === "module" || mode === "free") && catFilter) {
       queue = getSmartQueue(expressions.filter((e) => e.category === catFilter && !e.paused));
     } else if (bonus) {
       const planIds = new Set(dailyPlanResult?.plan?.ids || []);
@@ -275,6 +275,8 @@ export default function useReviewSession({
     if (queue.length === 0) {
       if (!fixedQueue && !bonus && dailyPlanCompleted && duePileSize > 0) {
         showToast(`✅ Objectif du jour atteint (${sessionDoneToday} fiches). ${duePileSize} fiches reviendront demain — repose ta mémoire !`, "success");
+      } else if (mode === "free") {
+        showToast("Aucune fiche active dans ce module pour s'entraîner !", "info");
       } else {
         showToast("Aucune fiche à réviser !", "info");
       }

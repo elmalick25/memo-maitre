@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import GodTierContent from "./GodTierContent";
 import ComboBar from "./ComboBar";
 import SessionEndHook from "./SessionEndHook";
@@ -79,6 +79,8 @@ export default function ReviewEngineView({
   handleOptimizeOneCard,
   reviewMode = "standard",
   reviewCategory = null,
+  categories = [],
+  expressions = [],
 }) {
   const [optimizingCard, setOptimizingCard] = useState(false);
   // Swipe gestuel local state
@@ -87,230 +89,402 @@ export default function ReviewEngineView({
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
 
-  // ── Fin de session intégrée nativement dans la vue de révision (Maître-Design) ──
+  // Configuration pour poursuivre la révision (module + nombre de fiches)
+  const [selectedModule, setSelectedModule] = useState(reviewCategory || "all");
+  const [continueCount, setContinueCount] = useState(10);
+
+  useEffect(() => {
+    if (reviewCategory) {
+      setSelectedModule(reviewCategory);
+    }
+  }, [reviewCategory]);
+
+  // Nombre de fiches actives par module
+  const moduleCardCounts = useMemo(() => {
+    const counts = {};
+    (expressions || []).forEach((c) => {
+      if (!c.paused && c.category) {
+        counts[c.category] = (counts[c.category] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [expressions]);
+
+  const totalActiveCards = useMemo(() => {
+    return (expressions || []).filter((c) => !c.paused).length;
+  }, [expressions]);
+
+  // Liste des catégories existantes triées
+  const availableCategories = useMemo(() => {
+    const names = new Set();
+    (categories || []).forEach((cat) => {
+      if (typeof cat === "string") names.add(cat);
+      else if (cat && cat.name) names.add(cat.name);
+    });
+    (expressions || []).forEach((c) => {
+      if (c.category) names.add(c.category);
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [categories, expressions]);
+
+  const handleCloseSummary = () => {
+    if (sessionTimerRef?.current) clearInterval(sessionTimerRef.current);
+    setShowSessionSummary?.(false);
+    setView?.((reviewMode === "module" || reviewMode === "free") ? "categories" : "dashboard");
+  };
+
+  const handleContinueSession = () => {
+    let pool = (expressions || []).filter((e) => !e.paused);
+    if (selectedModule && selectedModule !== "all") {
+      pool = pool.filter((e) => e.category === selectedModule);
+    }
+
+    if (pool.length === 0) {
+      showToast?.("Aucune fiche disponible dans ce module", "info");
+      return;
+    }
+
+    // Priorisation intelligente :
+    // 1. Fiches déjà préparées dans dailySessionPreview (si non encore révisées)
+    // 2. Fiches échues / dues
+    // 3. Fiches avec le plus faible niveau
+    const previewIds = new Set((dailySessionPreview || []).map((c) => c.id));
+    const fromPreview = pool.filter((c) => previewIds.has(c.id));
+    const others = pool.filter((c) => !previewIds.has(c.id));
+
+    const now = Date.now();
+    others.sort((a, b) => {
+      const aDue = a.nextReview ? new Date(a.nextReview).getTime() : 0;
+      const bDue = b.nextReview ? new Date(b.nextReview).getTime() : 0;
+      const aIsDue = aDue <= now;
+      const bIsDue = bDue <= now;
+      if (aIsDue && !bIsDue) return -1;
+      if (!aIsDue && bIsDue) return 1;
+      if (aDue !== bDue) return aDue - bDue;
+      return (a.level || 0) - (b.level || 0);
+    });
+
+    const candidatePool = [...fromPreview, ...others];
+    const pickedCards = candidatePool.slice(0, continueCount);
+
+    if (pickedCards.length === 0) {
+      showToast?.("Aucune fiche disponible", "info");
+      return;
+    }
+
+    if (sessionTimerRef?.current) clearInterval(sessionTimerRef.current);
+    setShowSessionSummary?.(false);
+
+    startReview?.(
+      selectedModule === "all" ? null : selectedModule,
+      selectedModule === "all" ? "standard" : "module",
+      pickedCards,
+      { restart: true, bonus: true }
+    );
+  };
+
+  // ── Fin de session en popup modal épuré & harmonieux ──
   if (showSessionSummary) {
     const totalCards = sessionSummary?.totalCards || reviewSessionDone || reviewQueue.length || 0;
     const avgSec = sessionSummary?.avgTime || (totalCards > 0 ? Math.round(sessionTimer / totalCards) : 0);
-    const hasRemaining = sessionRemainingCount > 0;
-    const continueCount = Math.min(5, hasRemaining ? sessionRemainingCount : 5);
 
     return (
-      <div style={{ animation: "flowCardEnter 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both", maxWidth: 700, margin: "0 auto" }}>
-        {/* En-tête de session préservé */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <button
-            onClick={() => {
-              if (sessionTimerRef?.current) clearInterval(sessionTimerRef.current);
-              setShowSessionSummary?.(false);
-              setView?.(reviewMode === "module" ? "categories" : "dashboard");
-            }}
-            style={{
-              background: theme?.cardBg || "#FFFFFF",
-              border: `1px solid ${theme?.border || "#E2E8F0"}`,
-              borderRadius: 10,
-              padding: "8px 16px",
-              color: theme?.highlight || "var(--mm-primary)",
-              cursor: "pointer",
-              fontSize: 13,
-              fontWeight: 600,
-            }}
-          >
-            ← {reviewMode === "module" ? "Modules" : "Tableau de bord"}
-          </button>
-          <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 13, color: "#10B981", fontWeight: 800, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>✅</span> Session complétée
-          </div>
-          <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: theme?.cardBg || "#FFFFFF", color: "var(--mm-primary)", padding: "4px 12px", borderRadius: 8, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-            ⏱ {Math.floor(sessionTimer / 60)}:{(sessionTimer % 60).toString().padStart(2, '0')}
-          </div>
-        </div>
-
-        {/* Barre de progression pleine 100% */}
-        <div style={{ height: 8, background: theme?.inputBg || "#F8FAFC", borderRadius: 4, marginBottom: 24, overflow: "hidden" }}>
-          <div style={{ height: "100%", background: "linear-gradient(90deg, #10B981, var(--mm-primary))", borderRadius: 4, width: "100%" }} />
-        </div>
-
-        {/* Carte bilan reprenant exactement le gabarit de la carte de révision */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="review-session-summary-title"
+        onClick={handleCloseSummary}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 99999,
+          background: isDarkMode ? "rgba(0, 0, 0, 0.78)" : "rgba(15, 23, 42, 0.52)",
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 16,
+          animation: "zenFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+        }}
+      >
         <div
-          className="card-hov review-session-card"
+          onClick={(e) => e.stopPropagation()}
           style={{
-            position: "relative",
-            background: theme?.cardBg || "#FFFFFF",
-            border: `1px solid ${theme?.border || "#E2E8F0"}`,
-            borderRadius: 26,
-            padding: isMobile ? "24px 20px" : "36px 32px",
-            boxShadow: "0 10px 40px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
-            textAlign: "center",
+            width: "100%",
+            maxWidth: "min(460px, 94vw)",
+            background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-card, #111827) 96%, transparent)" : "#ffffff",
+            color: isDarkMode ? "var(--mm-fg, #f8fafc)" : "#0f172a",
+            borderRadius: 24,
+            border: `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 32%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20%, transparent)"}`,
+            boxShadow: isDarkMode
+              ? "0 24px 60px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.15)"
+              : "0 20px 48px color-mix(in srgb, var(--mm-primary) 14%, transparent), 0 4px 16px rgba(0,0,0,0.06)",
+            padding: "24px 22px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 16,
+            maxHeight: "88vh",
+            overflowY: "auto",
           }}
         >
-          {/* Badges haut de carte */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-            <span style={{ background: "rgba(16, 185, 129, 0.12)", color: "#10B981", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 800 }}>
-              🎉 Objectif atteint
-            </span>
-            <span style={{ background: "color-mix(in srgb, var(--mm-primary) 12%, transparent)", color: "var(--mm-primary)", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>
-              ⚡ Combo max : {sessionBestCombo || 0}
-            </span>
+          {/* Entête du modal */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div
+                style={{
+                  width: 42,
+                  height: 42,
+                  borderRadius: 14,
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 22,
+                  border: `1.5px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)`,
+                  boxShadow: "0 2px 10px color-mix(in srgb, var(--mm-primary) 20%, transparent)",
+                }}
+              >
+                🏆
+              </div>
+              <div>
+                <h3 id="review-session-summary-title" style={{ margin: 0, fontSize: 17, fontWeight: 900, color: isDarkMode ? "#f8fafc" : "#0f172a", letterSpacing: "-0.01em" }}>
+                  Session terminée !
+                </h3>
+                <p style={{ margin: "2px 0 0", fontSize: 12.5, color: isDarkMode ? "#94a3b8" : "#64748b", fontWeight: 500 }}>
+                  {totalCards} fiche{totalCards > 1 ? "s révisées" : " révisée"} avec succès
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleCloseSummary}
+              title="Fermer"
+              aria-label="Fermer"
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                border: "none",
+                background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev, #334155) 60%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)",
+                color: isDarkMode ? "#f8fafc" : "#0f172a",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 15,
+                fontWeight: 700,
+                transition: "all 0.15s ease",
+              }}
+            >
+              ✕
+            </button>
           </div>
 
-          <div style={{ fontSize: 44, marginBottom: 8 }}>🏆</div>
-          <h2 style={{ fontSize: isMobile ? 22 : 26, fontWeight: 900, color: theme?.text || "#0F172A", margin: "0 0 6px" }}>
-            Session terminée !
-          </h2>
-          <p style={{ fontSize: 14, color: theme?.textMuted || "#64748B", margin: "0 0 24px" }}>
-            {totalCards} fiche{totalCards > 1 ? "s" : ""} révisée{totalCards > 1 ? "s" : ""} avec succès.
-          </p>
-
-          {/* Grille des KPIs en pill-boxes harmonieuses */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 28 }}>
-            <div style={{ background: theme?.inputBg || "#F8FAFC", padding: "14px 10px", borderRadius: 16, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "var(--mm-primary)", fontFamily: "'JetBrains Mono'" }}>
+          {/* Grille des KPIs en pill-boxes compactes */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            <div style={{
+              background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-card, #1e293b) 60%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, #f8fafc)",
+              padding: "10px 8px",
+              borderRadius: 14,
+              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "var(--mm-primary)", fontFamily: "'JetBrains Mono', monospace" }}>
                 {avgSec}s
               </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: theme?.textMuted || "#64748B", marginTop: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: isDarkMode ? "#94a3b8" : "#64748b", marginTop: 2 }}>
                 Moyenne / carte
               </div>
             </div>
 
-            <div style={{ background: theme?.inputBg || "#F8FAFC", padding: "14px 10px", borderRadius: 16, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#10B981", fontFamily: "'JetBrains Mono'" }}>
+            <div style={{
+              background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-card, #1e293b) 60%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, #f8fafc)",
+              padding: "10px 8px",
+              borderRadius: 14,
+              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "#10b981", fontFamily: "'JetBrains Mono', monospace" }}>
                 N{sessionSummary?.avgLevelBefore || 0} → N{sessionSummary?.avgLevelAfter || 0}
               </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: theme?.textMuted || "#64748B", marginTop: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: isDarkMode ? "#94a3b8" : "#64748b", marginTop: 2 }}>
                 Niveau mémoire
               </div>
             </div>
 
-            <div style={{ background: theme?.inputBg || "#F8FAFC", padding: "14px 10px", borderRadius: 16, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#F59E0B", fontFamily: "'JetBrains Mono'" }}>
+            <div style={{
+              background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-card, #1e293b) 60%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, #f8fafc)",
+              padding: "10px 8px",
+              borderRadius: 14,
+              border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
+              textAlign: "center",
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "#f59e0b", fontFamily: "'JetBrains Mono', monospace" }}>
                 +{totalCards * 10} XP
               </div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: theme?.textMuted || "#64748B", marginTop: 2 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: isDarkMode ? "#94a3b8" : "#64748b", marginTop: 2 }}>
                 Gain estimé
               </div>
             </div>
           </div>
 
-          {/* Encart Continuer / Action principale */}
+          {/* Configuration pour Continuer la révision */}
           <div
             style={{
-              background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 12%, rgba(15,23,42,0.6))" : "color-mix(in srgb, var(--mm-primary) 6%, white)",
-              border: "1px solid color-mix(in srgb, var(--mm-primary) 22%, transparent)",
+              background: isDarkMode ? "rgba(255, 255, 255, 0.03)" : "rgba(15, 23, 42, 0.02)",
               borderRadius: 18,
-              padding: "18px 20px",
-              marginBottom: 24,
-              textAlign: "left",
+              padding: "16px",
+              border: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.08)" : "color-mix(in srgb, var(--mm-primary) 14%, transparent)"}`,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 15, color: theme?.text || "#0F172A", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span>{hasRemaining ? "⚡ Continuer l'apprentissage" : "✨ Programme du jour terminé"}</span>
-                </div>
-                <div style={{ fontSize: 12.5, color: theme?.textMuted || "#64748B", marginTop: 4 }}>
-                  {hasRemaining
-                    ? `Il te reste ${sessionRemainingCount} fiche${sessionRemainingCount > 1 ? "s" : ""} disponible${sessionRemainingCount > 1 ? "s" : ""} aujourd'hui (incluant les fiches à consolider).`
-                    : "Toutes les fiches prévues sont maîtrisées ! Tu peux poursuivre en session bonus."}
-                </div>
-              </div>
-
-              <button
-                onClick={() => {
-                  setShowSessionSummary?.(false);
-                  startReview?.(
-                    null,
-                    "standard",
-                    dailySessionPreview.length > 0 ? dailySessionPreview.slice(0, continueCount) : null,
-                    { bonus: dailySessionPreview.length === 0 }
-                  );
-                }}
-                className="btn-glow hov"
+            {/* Choix du module */}
+            <div>
+              <label
+                htmlFor="review-module-select"
                 style={{
-                  padding: "12px 24px",
-                  background: "linear-gradient(135deg, var(--mm-primary), color-mix(in srgb, var(--mm-primary) 80%, black))",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 12,
+                  display: "block",
+                  fontSize: 11.5,
                   fontWeight: 800,
-                  fontSize: 14,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  boxShadow: "0 4px 16px color-mix(in srgb, var(--mm-primary) 35%, transparent)",
+                  color: isDarkMode ? "#cbd5e1" : "#475569",
+                  marginBottom: 6,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
                 }}
               >
-                ▶ {hasRemaining ? `Continuer (${continueCount} fiche${continueCount > 1 ? "s" : ""})` : "Session bonus (+5)"}
-              </button>
+                Module concerné
+              </label>
+              <select
+                id="review-module-select"
+                value={selectedModule}
+                onChange={(e) => setSelectedModule(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  border: `1.5px solid ${isDarkMode ? "rgba(255, 255, 255, 0.14)" : "color-mix(in srgb, var(--mm-primary) 22%, transparent)"}`,
+                  background: isDarkMode ? "#1e293b" : "#f8fafc",
+                  color: isDarkMode ? "#f8fafc" : "#0f172a",
+                  fontSize: 13.5,
+                  fontWeight: 600,
+                  outline: "none",
+                  cursor: "pointer",
+                }}
+              >
+                <option value="all">
+                  🌟 Tous les modules ({totalActiveCards} fiches)
+                </option>
+                {availableCategories.map((catName) => {
+                  const count = moduleCardCounts[catName] || 0;
+                  return (
+                    <option key={catName} value={catName}>
+                      📂 {catName} ({count} fiche{count > 1 ? "s" : ""})
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            {/* Choix du nombre de fiches */}
+            <div>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: 11.5,
+                  fontWeight: 800,
+                  color: isDarkMode ? "#cbd5e1" : "#475569",
+                  marginBottom: 8,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Nombre de fiches à ajouter
+              </label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[5, 10, 15, 20, 25].map((cnt) => {
+                  const isSelected = continueCount === cnt;
+                  return (
+                    <button
+                      key={cnt}
+                      type="button"
+                      onClick={() => setContinueCount(cnt)}
+                      style={{
+                        flex: 1,
+                        padding: "9px 6px",
+                        borderRadius: 10,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                        border: isSelected
+                          ? "1.5px solid var(--mm-primary)"
+                          : `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.1)" : "rgba(15, 23, 42, 0.1)"}`,
+                        background: isSelected
+                          ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 24%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)")
+                          : (isDarkMode ? "rgba(255, 255, 255, 0.04)" : "#ffffff"),
+                        color: isSelected
+                          ? "var(--mm-primary)"
+                          : (isDarkMode ? "#94a3b8" : "#64748b"),
+                        transform: isSelected ? "scale(1.03)" : "scale(1)",
+                      }}
+                    >
+                      +{cnt}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
-          {/* Mini-défi de production (si applicable) */}
-          {productionInvite?.items?.length > 0 && (
-            <div style={{ marginBottom: 24, textAlign: "left", background: theme?.inputBg || "#F8FAFC", borderRadius: 18, padding: 18, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-              <div style={{ fontWeight: 900, color: theme?.text || "#0F172A", fontSize: 15 }}>🗣️ Défi production ({productionInvite.items.length})</div>
-              <div style={{ fontSize: 12, color: theme?.textMuted || "#64748B", marginTop: 4, marginBottom: 14 }}>
-                Ces expressions sont reconnues mais jamais produites. Écris une phrase réelle avec chacune :
-              </div>
-              {productionInvite.items.map((card) => {
-                const res = productionResult[card.id];
-                return (
-                  <div key={card.id} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: `1px solid ${theme?.border || "#E2E8F0"}` }}>
-                    <div style={{ fontWeight: 800, color: theme?.highlight || "var(--mm-primary)", fontSize: 14 }}>{card.front}</div>
-                    <div style={{ fontSize: 12, color: theme?.textMuted || "#64748B", marginBottom: 8 }}>{card.back}</div>
-                    <textarea
-                      value={productionDraft[card.id] || ""}
-                      onChange={(e) => setProductionDraft?.((prev) => ({ ...prev, [card.id]: e.target.value }))}
-                      placeholder="Ta phrase en anglais…"
-                      rows={2}
-                      style={{ width: "100%", padding: 10, borderRadius: 10, border: `1px solid ${theme?.border || "#E2E8F0"}`, background: theme?.cardBg || "#FFFFFF", color: theme?.text || "#0F172A", fontSize: 13, resize: "vertical" }}
-                    />
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-                      <button
-                        onClick={() => handleValidateProduction?.(card)}
-                        disabled={productionBusy === card.id || res?.correct}
-                        className="hov"
-                        style={{ padding: "8px 16px", background: res?.correct ? "#10B98133" : "#10B981", color: res?.correct ? "#10B981" : "white", border: "none", borderRadius: 10, fontWeight: 800, fontSize: 12, cursor: res?.correct ? "default" : "pointer" }}
-                      >
-                        {res?.correct ? "✅ Validée" : productionBusy === card.id ? "Analyse…" : "Valider"}
-                      </button>
-                      {res?.feedback && (
-                        <span style={{ fontSize: 12, color: res.correct ? "#10B981" : (theme?.textMuted || "#64748B") }}>{res.feedback}</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              <button
-                onClick={() => setProductionInvite?.(null)}
-                className="hov"
-                style={{ padding: "6px 12px", background: "none", border: `1px solid ${theme?.border || "#E2E8F0"}`, borderRadius: 10, color: theme?.textMuted || "#64748B", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-              >
-                Plus tard
-              </button>
-            </div>
-          )}
-
-          {/* Action secondaire : retour dashboard */}
-          <div style={{ display: "flex", justifyContent: "center" }}>
+          {/* Actions : Continuer & Terminer */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
             <button
-              onClick={() => {
-                setShowSessionSummary?.(false);
-                setView?.(reviewMode === "module" ? "categories" : "dashboard");
+              type="button"
+              onClick={handleContinueSession}
+              className="btn-glow hov"
+              style={{
+                width: "100%",
+                padding: "13px 20px",
+                background: "linear-gradient(135deg, var(--mm-primary), color-mix(in srgb, var(--mm-primary) 80%, black))",
+                color: "white",
+                border: "none",
+                borderRadius: 14,
+                fontWeight: 800,
+                fontSize: 14.5,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                boxShadow: "0 6px 20px color-mix(in srgb, var(--mm-primary) 35%, transparent)",
+                transition: "transform 0.15s ease",
               }}
+            >
+              ▶ Continuer (+{continueCount} fiche{continueCount > 1 ? "s" : ""})
+            </button>
+
+            <button
+              type="button"
+              onClick={handleCloseSummary}
               className="hov"
               style={{
-                padding: "10px 24px",
+                width: "100%",
+                padding: "11px 20px",
                 background: "transparent",
-                color: theme?.textMuted || "#64748B",
-                border: `1px solid ${theme?.border || "#E2E8F0"}`,
-                borderRadius: 12,
+                color: isDarkMode ? "#94a3b8" : "#64748b",
+                border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(15,23,42,0.12)"}`,
+                borderRadius: 14,
                 fontSize: 13,
                 fontWeight: 700,
                 cursor: "pointer",
+                transition: "all 0.15s ease",
               }}
             >
-              Terminer & Revenir {reviewMode === "module" ? "aux modules" : "au tableau de bord"}
+              Terminer la session
             </button>
           </div>
         </div>
@@ -335,30 +509,78 @@ export default function ReviewEngineView({
   return (
     <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both" }}>
       {/* Session Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <button
-          onClick={() => {
-            if (sessionTimerRef?.current) clearInterval(sessionTimerRef.current);
-            setView?.(reviewMode === "module" ? "categories" : "dashboard");
-            if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone);
-          }}
-          style={{ background: theme?.cardBg || "#FFFFFF", border: `1px solid ${theme?.border || "#E2E8F0"}`, borderRadius: 10, padding: "8px 16px", color: theme?.highlight || "var(--mm-primary)", cursor: "pointer", fontSize: 13, fontWeight: 600 }}
-        >
-          ← {reviewMode === "module" ? "Modules" : "Quitter"}
-        </button>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {reviewMode === "module" && reviewCategory && (
-            <span style={{ fontSize: 12, fontWeight: 800, padding: "4px 10px", borderRadius: 8, background: "color-mix(in srgb, var(--mm-primary) 15%, transparent)", color: theme?.highlight || "var(--mm-primary)", border: "1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)" }}>
-              🎯 Module : {reviewCategory}
-            </span>
-          )}
-          <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, color: theme?.textMuted || "#64748B" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
+          <button
+            onClick={() => {
+              if (sessionTimerRef?.current) clearInterval(sessionTimerRef.current);
+              setView?.((reviewMode === "module" || reviewMode === "free") ? "categories" : "dashboard");
+              if (reviewSessionDone > 0) updateStreakAfterSession(reviewSessionDone);
+            }}
+            style={{
+              background: theme?.cardBg || "#FFFFFF",
+              border: `1px solid ${theme?.border || "#E2E8F0"}`,
+              borderRadius: 10,
+              padding: isMobile ? "6px 12px" : "8px 16px",
+              color: theme?.highlight || "var(--mm-primary)",
+              cursor: "pointer",
+              fontSize: isMobile ? 12 : 13,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+          >
+            ← {(reviewMode === "module" || reviewMode === "free") ? "Modules" : "Quitter"}
+          </button>
+
+          <div style={{ fontFamily: "'JetBrains Mono'", fontSize: isMobile ? 14 : 15, color: theme?.textMuted || "#64748B", textAlign: "center", minWidth: 60 }}>
             <span style={{ color: theme?.highlight || "var(--mm-primary)", fontWeight: 800 }}>{reviewIndex + 1}</span> / {reviewQueue.length}
           </div>
+
+          <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: isMobile ? 13 : 14, background: theme?.cardBg || "#FFFFFF", color: "var(--mm-primary)", padding: "4px 10px", borderRadius: 8, border: `1px solid ${theme?.border || "#E2E8F0"}`, flexShrink: 0 }}>
+            ⏱ {Math.floor(sessionTimer / 60)}:{(sessionTimer % 60).toString().padStart(2, '0')}
+          </div>
         </div>
-        <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: 14, background: "#FFFFFF", color: "var(--mm-primary)", padding: "4px 12px", borderRadius: 8 }}>
-          ⏱ {Math.floor(sessionTimer / 60)}:{(sessionTimer % 60).toString().padStart(2, '0')}
-        </div>
+
+        {/* Module Badge Row */}
+        {reviewMode === "free" && (
+          <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+            <span style={{
+              fontSize: 11,
+              fontWeight: 800,
+              padding: "3px 10px",
+              borderRadius: 8,
+              background: "color-mix(in srgb, #10B981 15%, transparent)",
+              color: "#10B981",
+              border: "1px solid color-mix(in srgb, #10B981 30%, transparent)",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}>
+              🎮 Entraînement libre {reviewCategory ? `: ${reviewCategory}` : ""} (sans impact SRS)
+            </span>
+          </div>
+        )}
+        {reviewMode === "module" && reviewCategory && (
+          <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+            <span style={{
+              fontSize: 11,
+              fontWeight: 800,
+              padding: "3px 10px",
+              borderRadius: 8,
+              background: "color-mix(in srgb, var(--mm-primary) 15%, transparent)",
+              color: theme?.highlight || "var(--mm-primary)",
+              border: "1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}>
+              🎯 Module : {reviewCategory}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Combo Bar */}
@@ -652,7 +874,7 @@ export default function ReviewEngineView({
                 </div>
               ) : (
                 <div style={{ marginTop: 12 }}>
-                  <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} />
+                  <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(currentCard.category)} />
                 </div>
               )}
               {currentCard.example && currentCard.type !== "audio" && !/exemples?/i.test(currentCard.back || "") && (
@@ -661,7 +883,7 @@ export default function ReviewEngineView({
                     EXEMPLE
                   </div>
                   <div style={{ marginTop: 8 }}>
-                    <GodTierContent text={currentCard.example} theme={theme} isDarkMode={isDarkMode} />
+                    <GodTierContent text={currentCard.example} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(currentCard.category)} />
                   </div>
                 </div>
               )}
@@ -707,44 +929,49 @@ export default function ReviewEngineView({
             )}
 
             {/* FSRS Grading Buttons */}
-            <div className="review-btns-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-              {[
-                { q: 0, emoji: "💀", label: "Oublié", sub: getPreviewInterval(currentCard, 0), bg: isDarkMode ? "#2D0A0A" : "#FEE2E2", color: "#EF4444", border: "#EF4444" },
-                { q: 1, emoji: "😅", label: "Hésité", sub: getPreviewInterval(currentCard, 1), bg: isDarkMode ? "#2D1A00" : "#FFFBEB", color: "#F59E0B", border: "#F59E0B" },
-                { q: 3, emoji: "👍", label: "Bien", sub: getPreviewInterval(currentCard, 3), bg: isDarkMode ? "#1E1035" : "color-mix(in srgb, var(--mm-primary) 4%, white)", color: "var(--mm-primary)", border: "var(--mm-primary)" },
-                { q: 5, emoji: "⚡", label: "Facile", sub: getPreviewInterval(currentCard, 5), bg: isDarkMode ? "#0A2010" : "#ECFDF5", color: "#10B981", border: "#10B981" },
-              ].map(({ q, emoji, label, sub, bg, color, border }) => (
-                <button
-                  key={q}
-                  className="hov review-btn"
-                  onClick={() => {
-                    handleAnswer?.(q);
-                    if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
-                  }}
-                  style={{
-                    padding: "16px 10px",
-                    background: bg,
-                    color,
-                    border: `1.5px solid ${border}40`,
-                    borderRadius: 18,
-                    fontWeight: 800,
-                    fontSize: 14,
-                    cursor: "pointer",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 4,
-                    minHeight: 76,
-                    lineHeight: 1.2,
-                  }}
-                >
-                  <span style={{ fontSize: 22 }}>{emoji}</span>
-                  <span>{label}</span>
-                  <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span>
-                </button>
-              ))}
-            </div>
+            {(() => {
+              const showIntervalPreview = reviewMode !== "module" && reviewMode !== "free" && !reviewCategory;
+              return (
+                <div className="review-btns-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                  {[
+                    { q: 0, emoji: "💀", label: "Oublié", sub: showIntervalPreview ? getPreviewInterval(currentCard, 0) : null, bg: isDarkMode ? "#2D0A0A" : "#FEE2E2", color: "#EF4444", border: "#EF4444" },
+                    { q: 1, emoji: "😅", label: "Hésité", sub: showIntervalPreview ? getPreviewInterval(currentCard, 1) : null, bg: isDarkMode ? "#2D1A00" : "#FFFBEB", color: "#F59E0B", border: "#F59E0B" },
+                    { q: 3, emoji: "👍", label: "Bien", sub: showIntervalPreview ? getPreviewInterval(currentCard, 3) : null, bg: isDarkMode ? "#1E1035" : "color-mix(in srgb, var(--mm-primary) 4%, white)", color: "var(--mm-primary)", border: "var(--mm-primary)" },
+                    { q: 5, emoji: "⚡", label: "Facile", sub: showIntervalPreview ? getPreviewInterval(currentCard, 5) : null, bg: isDarkMode ? "#0A2010" : "#ECFDF5", color: "#10B981", border: "#10B981" },
+                  ].map(({ q, emoji, label, sub, bg, color, border }) => (
+                    <button
+                      key={q}
+                      className="hov review-btn"
+                      onClick={() => {
+                        handleAnswer?.(q);
+                        if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
+                      }}
+                      style={{
+                        padding: "16px 10px",
+                        background: bg,
+                        color,
+                        border: `1.5px solid ${border}40`,
+                        borderRadius: 18,
+                        fontWeight: 800,
+                        fontSize: 14,
+                        cursor: "pointer",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 4,
+                        minHeight: 76,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      <span style={{ fontSize: 22 }}>{emoji}</span>
+                      <span>{label}</span>
+                      {sub ? <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span> : null}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

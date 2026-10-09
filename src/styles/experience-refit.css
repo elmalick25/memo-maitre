@@ -1,0 +1,21 @@
+/* Scoped refinement; colors resolve through the original day/night tokens. */
+.english-experience, .lab-experience { min-width: 0; color: var(--mm-fg); }
+.english-experience [class*="ev-"], .lab-experience .lab-card-mobile { min-width: 0; }
+.english-experience button, .lab-experience button { min-height: 44px; line-height: 1.4; overflow-wrap: anywhere; border-radius: 8px !important; }
+.english-experience button:focus-visible, .lab-experience button:focus-visible { outline: 3px solid var(--mm-primary-glow); outline-offset: 3px; }
+.english-experience button:disabled, .lab-experience button:disabled { cursor: not-allowed; opacity: .55; }
+.english-experience input, .english-experience select, .lab-experience select { min-height: 44px; }
+.english-experience textarea { line-height: 1.6; }
+.english-experience [class*="hero"], .lab-experience { background: var(--mm-bg) !important; }
+.english-experience [class*="orb"], .lab-experience [class*="particle"] { animation: none !important; }
+.english-experience h1, .english-experience h2, .english-experience h3, .lab-experience h1, .lab-experience h2, .lab-experience h3 { letter-spacing: 0 !important; overflow-wrap: anywhere; }
+.english-experience .ev-nova-cefr-badge { color: var(--mm-primary-glow); }
+.english-experience pre, .lab-experience pre { max-width: 100%; overflow-x: auto; }
+@media (max-width: 600px) {
+  .english-experience .ev-nova-hero { padding: 16px; }
+  .english-experience .ev-view { overflow-x: clip; }
+  .lab-experience .lab-sticky-panel { min-width: 0 !important; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .english-experience *, .lab-experience * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

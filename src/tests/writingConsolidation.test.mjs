@@ -33,7 +33,7 @@ test('Writing Lab : La bannière est épurée sans les jetons de réutilisation 
 test('Writing Lab : Présence des règles CSS aux couleurs de l\'application dans english-views.css', () => {
   const css = readSrc('styles/english-views.css');
   assert.match(css, /\.ev-consolidation-banner\b/, "Doit contenir le style de la bannière");
-  assert.match(css, /var\(--mm-primary,\s*#b4552d\)/, "Doit utiliser la couleur primaire thématique de l'application");
+  assert.match(css, /var\(--mm-primary(?:,\s*[^)]+)?\)/, "Doit utiliser la couleur primaire thématique de l'application");
   assert.match(css, /\.ev-report-toggle-btn\b/, "Doit contenir le style du bouton de rapport rétractable");
 });
 

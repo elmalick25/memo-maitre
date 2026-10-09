@@ -520,12 +520,62 @@ export async function fetchReadableArticle(url, opts = {}) {
 }
 
 /**
+ * 🧵 Répare la continuité des phrases brisées par des balises, pubs ou sauts de ligne CMS intempestifs.
+ * Évite les césures en plein milieu d'une proposition (ex: "servir à les \n\n exploiter").
+ */
+export function repairBrokenSentenceFlow(text) {
+  if (!text || typeof text !== "string") return "";
+  let s = text;
+
+  // 1. Recolle les mots coupés par un tiret suivi d'un saut de ligne (césure typographique)
+  s = s.replace(/(\b\p{L}+)-\s*\n+\s*(\p{L}+\b)/gu, "$1$2");
+
+  // 2. Mots de liaison, déterminants, prépositions terminant une ligne : recollage obligatoire
+  // Ex: "avec son \n\n confrère", "servir à les \n\n exploiter", "dans \n\n un"
+  const connectives = "(?:de|du|des|le|la|les|un|une|ce|cet|cette|ces|mon|ton|son|sa|ses|notre|votre|leur|leurs|à|au|aux|en|dans|par|pour|sur|avec|sans|sous|et|ou|mais|donc|or|ni|car|que|qui|dont|où|d'|l'|qu'|c'|s'|n'|j'|the|a|an|of|in|to|for|with|on|at|by|from|into)";
+  const connRegex = new RegExp(`(\\b${connectives})\\s*\\n+\\s*`, "giu");
+  s = s.replace(connRegex, "$1 ");
+
+  // 3. Virgules, points-virgules, deux-points et parenthèses ouvrantes
+  s = s.replace(/([,;(\[«“])\s*\n+\s*/g, "$1 ");
+
+  // 4. Si la ligne ne se termine PAS par une ponctuation de fin de phrase (. ? ! : » ” ")
+  // et que la suite débute par une minuscule, un chiffre ou une ponctuation de liaison
+  s = s.replace(/([^\s.?!:»”"])\s*\n+\s*([a-zà-ÿ0-9])/gu, "$1 $2");
+
+  // 5. Cas où le saut de ligne arrive après une parenthèse fermante non terminée par un point
+  s = s.replace(/\)\s*\n+\s*([a-zà-ÿ0-9])/gu, ") $1");
+
+  return s;
+}
+
+/**
  * 🌐 Extracteur Universel par Densité Textuelle & Heuristique Journalistique
  * Fonctionne de façon autonome pour TOUS les sites web d'actualité dans le monde.
  */
 export function extractUniversalArticleParagraphs(rawText, item = {}) {
   if (!rawText || typeof rawText !== "string") return [];
-  const rawBlocks = rawText.split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+  const repaired = repairBrokenSentenceFlow(rawText);
+  const initialBlocks = repaired.split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+  if (!initialBlocks.length) return [];
+
+  // Recollage de continuité narrative : si un paragraphe a été coupé en plein milieu
+  const rawBlocks = [];
+  for (const block of initialBlocks) {
+    if (rawBlocks.length === 0) {
+      rawBlocks.push(block);
+      continue;
+    }
+    const prev = rawBlocks[rawBlocks.length - 1];
+    const prevEndsSentence = /[.!?»”"]\s*$/.test(prev);
+    const currStartsLower = /^[a-zà-ÿ0-9]/.test(block);
+
+    if (!prevEndsSentence && currStartsLower) {
+      rawBlocks[rawBlocks.length - 1] = `${prev} ${block}`.replace(/\s+/g, " ").trim();
+    } else {
+      rawBlocks.push(block);
+    }
+  }
   if (!rawBlocks.length) return [];
 
   const itemTitle = String(item?.titleFr || item?.title || "").toLowerCase().trim();
@@ -589,6 +639,10 @@ export function extractUniversalArticleParagraphs(rawText, item = {}) {
     result.push(p);
   }
 
-  return result.length > 0 ? result : (candidates.length > 0 ? candidates : [rawText.trim()]);
+  const outputList = result.length > 0 ? result : (candidates.length > 0 ? candidates : [rawText.trim()]);
+  return outputList
+    .map(p => String(p || '').replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').replace(/\*/g, '').replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean);
 }
+
 

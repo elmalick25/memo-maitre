@@ -1,3 +1,4 @@
+import { DOCUMENT_CARD_RULES } from "./lab/cardIntake.js";
 // src/lib/conceptMiningEngine.js
 // Moteur d'Extraction Forensique & Audit de Couverture Documentaire (Niveau 10)
 // Garantit qu'AUCUNE notion capitale, fonction, syntaxe ou piège ne soit omis lors de la conversion PDF -> Fiches.
@@ -6,6 +7,7 @@ export const CONCEPT_MINING_SYSTEM_PROMPT = `Tu es un inspecteur pédagogique ac
 Ton unique mission est d'extraire l'INVENTAIRE FORENSIQUE EXHAUSTIF de TOUTES les notions, fonctions, syntaxes, règles clés et pièges d'examen présents dans ce texte de cours.
 
 RÈGLE D'OR : ZÉRO OMISSION.
+N’invente aucune notion, piège ou application absente du passage. Recopie uniquement les informations explicitement présentes.
 Si le cours aborde 15 concepts distincts (ex: 'if strict', 'if alternative', 'when/unless', 'cond', 'case', 'loop for', 'loop repeat', 'dotimes', 'dolist', 'loop while', 'loop until', 'return', 'saut d\\'itération'), tu dois TOUS les lister individuellement dans l'inventaire. Ne regroupe pas les notions distinctes sous un terme générique.
 
 Pour chaque notion identifiée, fournis :
@@ -128,6 +130,7 @@ export function buildTargetedGenerationPrompt(concepts = [], activeProfileDirect
     .join("\n");
 
   return `Tu es le meilleur concepteur mondial de flashcards universitaires d'élite (FSRS & Active Recall Niveau 10).
+${DOCUMENT_CARD_RULES}
 ${pedagogyRule}
 ${activeProfileDirective}
 
@@ -140,5 +143,5 @@ LISTE DES NOTIONS À COUVRIR OBLIGATOIREMENT :
 ${conceptsList}
 
 Réponds UNIQUEMENT en JSON valide :
-{"cards":[{"front":"Question précise ou code à tracer","back":"**Réponse directe en gras**\\nExplication claire","type":"qa|code|trap|cloze","bloomLevel":"Remember|Understand|Apply|Analyze|Evaluate","keyword":"mot-clé","hint":"astuce courte optionnelle"}]}`;
+{"cards":[{"front":"Question précise ou code à tracer","back":"**Réponse directe en gras**\\nExplication claire","type":"qa|code|trap|cloze","bloomLevel":"Remember|Understand|Apply|Analyze|Evaluate","keyword":"mot-clé","hint":"","source_excerpt":"citation exacte qui justifie la réponse"}]}`;
 }

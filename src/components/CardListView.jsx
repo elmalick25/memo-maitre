@@ -1213,14 +1213,14 @@ export default function CardListView({
                           {(exp.type === "audio" && (exp.audioUrl || exp.audioId)) ? (
                             <AudioFichePlayer card={exp} />
                           ) : (
-                            <GodTierContent text={exp.back} theme={theme} isDarkMode={isDarkMode} />
+                            <GodTierContent text={exp.back} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(exp.category)} />
                           )}
                         </div>
                         {exp.example && !isEnglishCategory(exp.category) && !/exemples?|mini-dialogue|dialogue/i.test(exp.back || "") && (
                           <div style={{ background: theme?.inputBg || "#F8FAFC", padding: "12px", borderRadius: 12, fontSize: 13, color: theme?.textMuted || "#64748B", fontStyle: "italic", borderLeft: "3px solid var(--mm-primary)", marginBottom: 16 }}>
                             <span style={{ color: "var(--mm-primary)", fontSize: 10 }}>// exemple</span><br />
                             <div style={{ marginTop: 8 }}>
-                              <GodTierContent text={exp.example} theme={theme} isDarkMode={isDarkMode} />
+                              <GodTierContent text={exp.example} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(exp.category)} />
                             </div>
                           </div>
                         )}
@@ -1335,11 +1335,11 @@ export default function CardListView({
 
                 <div style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "rgba(255,255,255,0.5)", padding: 20, borderRadius: 20, marginBottom: 24, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
                   <div style={{ fontSize: 16, color: theme?.text || "#0F172A", lineHeight: 1.6 }}>
-                    <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} />
+                    <GodTierContent text={expandedCard.back} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(expandedCard.category)} />
                   </div>
                   {expandedCard.example && !isEnglishCategory(expandedCard.category) && !/exemples?|mini-dialogue|dialogue/i.test(expandedCard.back || "") && (
                     <div style={{ marginTop: 16, padding: "12px 16px", background: theme?.cardBg || "#FFFFFF", borderRadius: 12, fontSize: 14, color: theme?.textMuted || "#64748B", fontStyle: "italic", borderLeft: `3px solid ${catColor}` }}>
-                      <GodTierContent text={expandedCard.example} theme={theme} isDarkMode={isDarkMode} />
+                      <GodTierContent text={expandedCard.example} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(expandedCard.category)} />
                     </div>
                   )}
                 </div>

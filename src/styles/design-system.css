@@ -7,6 +7,7 @@
 @import url('./responsive.css');
 
 :root {
+  --mm-on-primary: #ffffff;
   /* Palette — Encre (mode nuit) */
   --mm-bg:           #07060f;
   --mm-bg-elev:      #110e22;
@@ -717,13 +718,30 @@ body::after {
   50% { opacity: 0.3; transform: scale(0.75); }
 }
 
-/* ─── Cartes Actualités TechIntel — Design Élite & Hiérarchie Héro ─── */
+/* ─── Cartes Actualités TechIntel — Design Premium & Hiérarchie Héro ─── */
+.tiv-card {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease !important;
+  will-change: transform;
+}
+
 .tiv-card.tiv-card-hero {
   position: relative !important;
   overflow: hidden !important;
-  border-radius: 20px !important;
-  border: 1.5px solid rgba(59, 130, 246, 0.35) !important;
-  box-shadow: 0 16px 40px -8px rgba(37, 99, 235, 0.12), inset 0 1px 0 #FFFFFF !important;
+  border-radius: 22px !important;
+  border: 1px solid rgba(59, 130, 246, 0.28) !important;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.05),
+    0 12px 32px -10px rgba(37, 99, 235, 0.16),
+    inset 0 1px 0 #FFFFFF !important;
+}
+
+.tiv-card.tiv-card-hero:hover {
+  transform: translateY(-2px);
+  border-color: rgba(59, 130, 246, 0.45) !important;
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 20px 44px -12px rgba(37, 99, 235, 0.22),
+    inset 0 1px 0 #FFFFFF !important;
 }
 
 .tiv-card.tiv-card-hero::before {
@@ -732,31 +750,82 @@ body::after {
   top: 0;
   left: 0;
   right: 0;
-  height: 2.5px;
-  background: linear-gradient(90deg, #F59E0B 0%, #EA580C 50%, #3B82F6 100%);
+  height: 3px;
+  background: linear-gradient(90deg, #F59E0B 0%, #EA580C 45%, #3B82F6 100%);
   z-index: 2;
 }
 
+.tiv-card.tiv-card-hero::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 90px;
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.05) 0%, transparent 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
 [data-theme="dark"] .tiv-card.tiv-card-hero {
-  background: linear-gradient(165deg, #18133a 0%, #110e28 100%) !important;
-  border: 1.5px solid rgba(139, 92, 246, 0.35) !important;
-  box-shadow: 0 8px 32px -4px rgba(7, 6, 15, 0.7), 0 2px 12px rgba(139, 92, 246, 0.15), inset 0 1px 0 rgba(178, 150, 255, 0.2) !important;
+  background: linear-gradient(165deg, #1B1440 0%, #120E2C 100%) !important;
+  border: 1px solid rgba(139, 92, 246, 0.32) !important;
+  box-shadow:
+    0 2px 6px rgba(7, 6, 15, 0.5),
+    0 16px 40px -10px rgba(7, 6, 15, 0.7),
+    0 0 0 1px rgba(139, 92, 246, 0.06),
+    inset 0 1px 0 rgba(178, 150, 255, 0.18) !important;
+}
+
+[data-theme="dark"] .tiv-card.tiv-card-hero:hover {
+  border-color: rgba(167, 139, 250, 0.5) !important;
+  box-shadow:
+    0 2px 6px rgba(7, 6, 15, 0.5),
+    0 22px 48px -12px rgba(7, 6, 15, 0.8),
+    0 0 24px rgba(139, 92, 246, 0.12),
+    inset 0 1px 0 rgba(178, 150, 255, 0.22) !important;
 }
 
 [data-theme="dark"] .tiv-card.tiv-card-hero::before {
   background: linear-gradient(90deg, #8B5CF6 0%, #A855F7 50%, #EC4899 100%) !important;
 }
 
+[data-theme="dark"] .tiv-card.tiv-card-hero::after {
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.08) 0%, transparent 100%);
+}
+
 .tiv-card.tiv-card-sub {
   border-radius: 16px !important;
-  border: 1px solid rgba(0, 0, 0, 0.08) !important;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.04) !important;
+  border: 1px solid rgba(15, 23, 42, 0.07) !important;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 4px 14px -4px rgba(15, 23, 42, 0.05) !important;
+}
+
+.tiv-card.tiv-card-sub:hover {
+  transform: translateY(-1.5px);
+  border-color: rgba(59, 130, 246, 0.3) !important;
+  box-shadow:
+    0 2px 4px rgba(15, 23, 42, 0.05),
+    0 10px 26px -8px rgba(37, 99, 235, 0.14) !important;
 }
 
 [data-theme="dark"] .tiv-card.tiv-card-sub {
-  background: rgba(23, 18, 51, 0.85) !important;
-  border: 1px solid rgba(178, 150, 255, 0.18) !important;
-  box-shadow: 0 4px 18px rgba(7, 6, 15, 0.5), inset 0 1px 0 rgba(178, 150, 255, 0.08) !important;
+  background: rgba(27, 21, 58, 0.75) !important;
+  border: 1px solid rgba(178, 150, 255, 0.14) !important;
+  box-shadow:
+    0 2px 6px rgba(7, 6, 15, 0.4),
+    0 8px 22px -6px rgba(7, 6, 15, 0.5),
+    inset 0 1px 0 rgba(178, 150, 255, 0.07) !important;
+}
+
+[data-theme="dark"] .tiv-card.tiv-card-sub:hover {
+  border-color: rgba(167, 139, 250, 0.35) !important;
+  box-shadow:
+    0 2px 6px rgba(7, 6, 15, 0.4),
+    0 14px 32px -8px rgba(7, 6, 15, 0.65),
+    0 0 18px rgba(139, 92, 246, 0.08),
+    inset 0 1px 0 rgba(178, 150, 255, 0.1) !important;
 }
 
 .tiv-article-title {
@@ -781,36 +850,88 @@ body::after {
 }
 
 .tiv-article-title.tiv-article-title-first {
-  font-size: clamp(14px, 1.2vw, 16px) !important;
+  font-size: clamp(18px, 1.4vw, 21px) !important;
   font-weight: 700 !important;
-  line-height: 1.32 !important;
+  line-height: 1.35 !important;
   letter-spacing: -0.015em !important;
 }
 
 .tiv-article-title.tiv-article-title-regular {
-  font-size: 13.5px !important;
+  font-size: 16px !important;
   font-weight: 700 !important;
-  line-height: 1.34 !important;
+  line-height: 1.42 !important;
   letter-spacing: -0.012em !important;
 }
 
-.tiv-article-summary,
-.tiv-article-summary * {
-  font-family: 'Plus Jakarta Sans', var(--mm-font-body), system-ui, -apple-system, BlinkMacSystemFont, sans-serif !important;
-  font-size: 12.2px !important;
-  font-weight: 400 !important;
-  font-style: normal !important;
-  line-height: 1.54 !important;
+/* News prose: source line breaks wrap naturally; only real blocks add space. */
+.tiv-article-summary {
+  margin: 0;
+  font-family: 'Plus Jakarta Sans', var(--mm-font-body), system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  font-style: normal;
+  line-height: 1.62;
+  color: var(--mm-fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  text-wrap: pretty;
 }
 
-[data-theme="dark"] .tiv-article-summary,
-[data-theme="dark"] .tiv-article-summary * {
-  color: #b6aada !important;
+.tiv-article-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
 }
 
-[data-theme="light"] .tiv-article-summary,
-[data-theme="light"] .tiv-article-summary * {
-  color: #475569 !important;
+.tiv-article-subheading {
+  margin: 8px 0 0;
+  font-family: var(--mm-font-body), system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--mm-fg);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.tiv-article-summary-clamped {
+  display: -webkit-box !important;
+  -webkit-line-clamp: 4 !important;
+  -webkit-box-orient: vertical !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+}
+
+.tiv-continuer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 0;
+  padding: 2px 6px;
+  min-height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mm-primary);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: inherit;
+  white-space: nowrap;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.tiv-continuer-btn:hover {
+  opacity: 0.8;
+  transform: translateX(2px);
+}
+.tiv-continuer-btn:focus-visible {
+  outline: 2px solid var(--mm-primary);
+  outline-offset: 3px;
 }
 
 /* Boutons Réduire / Fermer de carte d'actualité */
@@ -883,8 +1004,7 @@ body::after {
     line-height: 1.4 !important;
   }
 
-  .tiv-article-summary,
-  .tiv-article-summary * {
+  .tiv-article-summary {
     font-size: 13.5px !important;
     line-height: 1.66 !important;
   }

@@ -63,41 +63,67 @@ function robustJsonParse(raw) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PROMPT v8 — RECTO ÉPURÉ & ANCRAGE CONTEXTUEL LIVE NOVA :
-//   - Recto ("front") : STRICTEMENT l'expression anglaise correcte.
-//   - Verso ("back") : Contexte Live Nova (Tu as dit vs En réalité) + Comparatif
-//     + Anti-Pattern + Exemples. (Transition Métaphorique réservée aux idioms/phrasal verbs).
+// PROMPT v9 — DOUBLE SOURCE (CORRECTIONS ÉLÈVE + EXPRESSIONS RICHES DU COACH) :
+//   - Branche 1 : Correction des erreurs réelles de l'élève (source: "user_error")
+//   - Branche 2 : Expressions idiomatiques introduites par Nova ou clarifiées suite à
+//                 incompréhension (source: "coach_input" ou "comprehension_request")
 // ─────────────────────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `Tu es un ingénieur linguistique d'élite. Ton objectif est de générer des fiches d'anglais ultra-précises basées sur les erreurs réelles de l'utilisateur en discussion live avec Nova. Pas de blabla inutile.
+const SYSTEM_PROMPT = `Tu es un ingénieur linguistique d'élite. Ton objectif est de générer des fiches d'anglais ultra-précises basées sur la conversation live entre l'élève et Coach Nova.
 
-CONDITION STRICTE DE GÉNÉRATION (CORRECTION UTILISATEUR EXCLUSIVE) :
-- L'utilisateur a fait une erreur ou une formulation imparfaite (grammaire, préposition, article, temps, collocation, faux-ami, structure, ordre des mots, choix lexical comme "do you hear me" au lieu de "can you hear me?").
-- L'agent la corrige EXPLICITEMENT ("we say X, not Y") ou IMPLICITEMENT (l'agent réutilise la même idée en reformulant correctement).
-- → Crée une fiche avec front = STRICTEMENT la forme anglaise CORRECTE (ex: "Can you hear me?"). Zéro fioriture sur le recto.
-- Met impérativement "source": "user_error".
+CRITÈRES DE GÉNÉRATION (2 SOURCES VALIDES) :
+
+BRANCHE 1 — CORRECTION D'ERREUR UTILISATEUR ("source": "user_error") :
+- L'utilisateur a fait une erreur ou une formulation imparfaite (grammaire, préposition, faux-ami, structure, choix lexical comme "do you hear me" au lieu de "can you hear me?").
+- L'agent la corrige EXPLICITEMENT ou IMPLICITEMENT (recast correct).
+- "front" : STRICTEMENT la forme anglaise CORRECTE (ex: "Can you hear me?").
+- "source": "user_error"
+
+BRANCHE 2 — EXPRESSION DU COACH OU INCOMPRÉHENSION ("source": "coach_input" ou "comprehension_request") :
+- SOIT l'utilisateur a exprimé une incompréhension ("I don't understand", "What does that mean?", "Pardon?", ou demande en français) et Nova clarifie l'expression -> "source": "comprehension_request".
+- SOIT Nova emploie une expression idiomatique, un phrasal verb remarquable ou une formule native authentique de niveau B1/B2/C1 (ex: "to sprinkle magic", "to hit the ground running", "on the spur of the moment", "rule of thumb") -> "source": "coach_input".
+- "front" : L'expression ou le phrasal verb en anglais (forme canonique, ex: "to hit the ground running").
 
 EXCLUSION STRICTE :
-- Si l'utilisateur n'a fait AUCUNE erreur et que l'agent produit simplement du vocabulaire enrichi, du small talk ou des explications générales → RENVOIE STRICTEMENT {"cards": []}.
-- Ne crée JAMAIS de fiche si le message utilisateur était 100% correct.
+- Ne crée JAMAIS de fiche pour du vocabulaire ultra-basique (A1: "water", "like", "house"), ou du small talk sans aucune pépite linguistique.
+- Si le message utilisateur était correct ET que Nova n'a utilisé aucune expression remarquable -> RENVOIE STRICTEMENT {"cards": []}.
+- Maximum 1 fiche par tour de parole pour privilégier l'excellence.
 
 RÈGLE DU VERSO ("back") :
-1. En-tête obligatoire "### 🎙️ Contexte Live Nova" :
+Pour "user_error" :
+### 🎙️ Contexte Live Nova
 * 🔴 **Tu as dit :** "<ce que l'utilisateur a dit>" ❌
 * 🟢 **En réalité, on dit :** "<la forme correcte>" ✅
 * 📖 **Traduction :** <traduction française naturelle>
 
-2. Le Réflexe Natif & Transition Métaphorique :
-En 1 ou 2 phrases limpides, explique la logique ou l'image mentale (Transition Métaphorique si idiom/phrasal verb) :
-💡 **Le réflexe natif :** <pourquoi le natif utilise cette tournure, sans jargon>
+💡 **Le réflexe natif :**
+<explication limpide en 1-2 phrases de la logique native, Transition Métaphorique si idiom/phrasal verb>
 
-3. Mini-dialogue en contexte :
 💬 **Mini-dialogue :**
-* **A :** \`<réplique A en anglais, courte et naturelle>\`
-* **B :** \`<réplique B en anglais>\`
-↳ *<traduction française du dialogue>*
+* **A :** \`<réplique A en anglais>\`  
+  ↳ *<traduction française de la réplique A>*
+* **B :** \`<réplique B en anglais>\`  
+  ↳ *<traduction française de la réplique B>*
 
-4. Attention au piège :
-⚠️ **Attention au piège :** <le calque du français à bannir ou la nuance de registre (familier vs formel)>.
+⚠️ **Attention au piège :**
+<le calque du français à bannir>.
+
+Pour "coach_input" ou "comprehension_request" :
+### 🎙️ Découvert avec Coach Nova
+* 💎 **Expression :** <l'expression en anglais>
+* 📖 **Traduction :** <traduction française précise>
+* 🎯 **Dans la discussion :** "<la phrase courte où Nova l'a employée>"
+
+💡 **Le réflexe natif :**
+<explication claire du sens, de l'image mentale ou du contexte où un natif l'emploie>
+
+💬 **Mini-dialogue :**
+* **A :** \`<réplique A en anglais>\`  
+  ↳ *<traduction française de la réplique A>*
+* **B :** \`<réplique B en anglais>\`  
+  ↳ *<traduction française de la réplique B>*
+
+⚠️ **Attention au piège :**
+<nuance de registre ou piège fréquent>.
 
 RÉPONSE : UNIQUEMENT JSON valide, sans texte autour, sans markdown.
 INTERDIT : sauts de ligne réels dans une valeur JSON. Utiliser "\\n".
@@ -106,12 +132,12 @@ Schéma :
 {
   "cards": [
     {
-      "front": "Can you hear me?",
-      "type": "correction" | "grammar" | "vocabulary" | "phrasal_verb" | "idiom",
+      "front": "to hit the ground running",
+      "type": "idiom" | "phrasal_verb" | "vocabulary" | "correction" | "grammar",
       "difficulty": "A2" | "B1" | "B2" | "C1" | "C2",
-      "source": "user_error",
-      "back": "### 🎙️ Contexte Live Nova\\n* 🔴 **Tu as dit :** \\\"Do you hear me?\\\" ❌\\n* 🟢 **En réalité, on dit :** \\\"Can you hear me?\\\" ✅\\n* 📖 **Traduction :** Est-ce que tu m'entends ?\\n\\n💡 **Le réflexe natif :**\\nEn anglais, \\\"Can you hear me?\\\" teste le signal audio. \\\"Do you hear me?\\\" questionne plutôt l'obéissance ou l'attention (comme un parent fâché).\\n\\n💬 **Mini-dialogue :**\\n* **A :** \`Can you hear me clearly on this Zoom link, or should I switch my mic?\`\\n* **B :** \`Loud and clear!\`\\n↳ *M'entends-tu clairement sur ce lien Zoom, ou je change de micro ? — Cinq sur cinq !*\\n\\n⚠️ **Attention au piège :**\\nCalquer le présent français « Tu m'entends ? » avec l'auxiliaire « Do ».",
-      "example": "Can you hear me clearly on this Zoom call?"
+      "source": "user_error" | "coach_input" | "comprehension_request",
+      "back": "...",
+      "example": "She hit the ground running on her first day at the startup."
     }
   ]
 }
@@ -215,7 +241,8 @@ export function useAgentCardDetector({
       const newCards = parsed.cards.filter(c => {
         const f = norm(c.front);
         if (!f) { rejected.push([c.front, "front vide"]); return false; }
-        if (c.source && c.source !== "user_error") { rejected.push([c.front, "source non user_error"]); return false; }
+        const validSources = new Set(["user_error", "coach_input", "comprehension_request"]);
+        if (c.source && !validSources.has(c.source)) { rejected.push([c.front, "source non reconnue: " + c.source]); return false; }
         if (!isComplete(c)) { rejected.push([c.front, "fiche incomplète (verso manquant/trop court)"]); return false; }
         if (batchFronts.has(f)) { rejected.push([c.front, "doublon dans le même lot"]); return false; }
         if (overlaps(f, existingFronts)) { rejected.push([c.front, "déjà en base"]); return false; }
@@ -247,14 +274,12 @@ export function useAgentCardDetector({
           reviewHistory: [],
           imageUrl: null,
           _agentDetected: true,
-          // Les fiches produites par le prompt v8 sont déjà au bon format :
-          // on les marque pour qu'elles n'apparaissent jamais en "à moderniser".
-          _novaV8: back.includes("Contexte Live Nova")
-            && back.includes("Tu as dit")
-            && back.includes("En réalité, on dit"),
-          _type: c.type || "correction",
+          // Les fiches produites par le prompt v9 sont déjà au bon format :
+          _novaV8: (back.includes("Contexte Live Nova") && back.includes("Tu as dit") && back.includes("En réalité, on dit"))
+            || (back.includes("Découvert avec Coach Nova") && back.includes("Expression")),
+          _type: c.type || (c.source === "user_error" ? "correction" : "idiom"),
           _difficulty: c.difficulty || "B1",
-          _source: "user_error",
+          _source: c.source || "user_error",
           _pairIndex: pairIndex,
         };
       });

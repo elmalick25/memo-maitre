@@ -166,12 +166,17 @@ function sniffLanguage(code) {
   return null;
 }
 
+import { reformatDialogueWithPerTurnTranslation } from "../lib/englishCardEngine";
+
 // ───────────────────────────────────────────────────────────────────────────
 // Pré-traitement du contenu Markdown
 // ───────────────────────────────────────────────────────────────────────────
 function preprocessContent(content) {
   if (!content || typeof content !== "string") return "";
   let text = content.replace(/\r\n?/g, "\n");
+
+  // Reformatage des dialogues combinés (A sa traduction, B sa traduction)
+  text = reformatDialogueWithPerTurnTranslation(text);
 
   // Fenced code block manquant : si la 1re ligne non vide est un nom de
   // langage seul, on encapsule le reste.
