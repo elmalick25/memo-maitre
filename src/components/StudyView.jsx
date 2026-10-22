@@ -26,7 +26,7 @@ export default function StudyView({
   const isLearned = studyLearnedIds.includes(card.id);
 
   return (
-    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", maxWidth: 720, margin: "0 auto" }}>
+    <div className="mm-view-enter" style={{ maxWidth: 720, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <button
           onClick={() => setView("categories")}

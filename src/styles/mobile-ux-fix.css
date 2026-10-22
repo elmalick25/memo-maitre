@@ -49,7 +49,32 @@ input, select, textarea { font-size: max(16px, 1rem); }
 .card-hov.review-session-card {
   touch-action: pan-y pinch-zoom !important;
   overscroll-behavior-y: auto !important;
-  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Révision mobile : défilement fluide garanti ─────────────────────────
+   Toute zone à défilement horizontal (tableau, bloc de code…) à l'intérieur
+   de la fiche ne doit JAMAIS capter le défilement vertical : sinon, selon
+   l'endroit où l'on pose le doigt, la page « cale » et ne descend plus. */
+.review-session-card table,
+.review-session-card pre,
+.review-session-card [style*="overflow-x: auto"],
+.review-session-card [style*="overflow-x: scroll"] {
+  overflow-y: hidden !important;
+  overscroll-behavior-y: auto !important;
+}
+
+/* Sur écran tactile, l'effet « survol » de la carte reste collé après un
+   tap et relance une animation coûteuse pendant le scroll : on le coupe. */
+@media (hover: none) {
+  .card-hov:hover,
+  .card-hov.review-session-card:hover {
+    transform: none !important;
+    box-shadow: 0 10px 40px color-mix(in srgb, var(--mm-primary) 5%, transparent) !important;
+    transition: none !important;
+  }
+  .hov:hover {
+    transform: none !important;
+  }
 }
 
 /* Neutralisation absolue de tout SpeedDial flottant pendant la révision flashcard */
@@ -75,8 +100,20 @@ body.in-review-session [class*="speed-dial"] {
 }
 
 @keyframes speedDialPop {
-  from { opacity: 0; transform: translate(-50%, 50%) scale(0.2); }
-  to   { opacity: 1; transform: translate(-50%, 50%) scale(1); }
+  from { opacity: 0; transform: translate3d(-50%, 50%, 0) scale(0.4); }
+  to   { opacity: 1; transform: translate3d(-50%, 50%, 0) scale(1); }
+}
+
+@keyframes speedDialFade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Menu radial : boutons rendus sur leur propre calque GPU → apparition
+   instantanée même sur téléphone d'entrée de gamme. */
+.speed-dial-dest-btn {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 /* FSRS 4-button mobile bottom dock (fixed, immune to responsive overrides) */
@@ -129,4 +166,29 @@ body.keyboard-open .ai-orb-container {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── Entrée en révision : plus de blocage du défilement ──────────────────
+   Avant, l'animation d'entrée gardait un « transform » permanent sur toute
+   la page de révision (fill-mode both). Sur téléphone, le navigateur devait
+   alors redessiner une énorme couche graphique avant de pouvoir défiler :
+   la page « calait » quelques secondes à chaque entrée dans Review.
+   Désormais : fondu d'opacité seul, sans transform résiduel. */
+@keyframes mmViewFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.mm-view-enter {
+  animation: mmViewFadeIn 0.25s ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .mm-view-enter {
+    animation: flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  }
+}
+
+/* Le défilement « smooth » global entre en conflit avec le doigt sur
+   mobile (iOS/Android) et avec le retour en haut à l'entrée d'une vue. */
+@media (hover: none) {
+  html { scroll-behavior: auto !important; }
 }

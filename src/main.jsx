@@ -128,9 +128,11 @@ if (import.meta.env.PROD && typeof window !== "undefined" && "serviceWorker" in 
   // Au tout premier lancement il n'y a pas encore de SW : sa prise de contrôle
   // initiale ne doit PAS recharger la page (rechargement surprise au 1er usage).
   const hadController = Boolean(navigator.serviceWorker.controller);
-  // Quand le nouveau SW prend le contrôle, on recharge une seule fois.
+  // 🚫 JAMAIS de rechargement automatique : la page ne se recharge que si
+  // l'utilisateur clique explicitement sur « Mettre à jour » (UpdatePrompt).
+  let updateRequested = false;
   navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (refreshing || !hadController) return;
+    if (refreshing || !hadController || !updateRequested) return;
     refreshing = true;
     try { location.reload(); } catch {}
   });
@@ -138,10 +140,8 @@ if (import.meta.env.PROD && typeof window !== "undefined" && "serviceWorker" in 
   const updateSW = registerSW({
     immediate: true,
     onNeedRefresh() {
-      // Auto-apply : on active immédiatement le nouveau SW (skipWaiting).
-      // controllerchange ci-dessus rechargera la page proprement.
-      try { updateSW(true); } catch {}
-      // Notifie quand même pour UI éventuelle
+      // Mode prompt : on notifie l'utilisateur via UpdatePrompt, sans activer
+      // le nouveau SW ni recharger la page de lui-même.
       window.dispatchEvent(new CustomEvent("sw-update-available", { detail: { updateSW } }));
     },
     onOfflineReady() {
@@ -173,7 +173,7 @@ if (import.meta.env.PROD && typeof window !== "undefined" && "serviceWorker" in 
     },
   });
   // Expose globalement pour qu'UpdatePrompt puisse aussi déclencher la mise à jour manuellement
-  window.__SW_UPDATE__ = { updateSW: () => updateSW(true) };
+  window.__SW_UPDATE__ = { updateSW: () => { updateRequested = true; return updateSW(true); } };
 } else if (typeof window !== "undefined" && "serviceWorker" in navigator) {
   // Mode DEV : nettoyage actif de tout ancien SW parasitant localhost
   navigator.serviceWorker.getRegistrations().then((registrations) => {

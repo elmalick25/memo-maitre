@@ -11,7 +11,7 @@
 import React from "react";
 import RichText from "./RichText";
 
-export default function GodTierContent({ text, theme, isDarkMode: explicitIsDarkMode, showAudio = false }) {
+function GodTierContent({ text, theme, isDarkMode: explicitIsDarkMode, showAudio = false }) {
   // 🛡️ Anti-crash : l'IA renvoie parfois un objet/tableau au lieu d'une chaîne.
   // On coerce en chaîne pour éviter que RichText/react-markdown ne plante.
   let safeText = text;
@@ -66,3 +66,16 @@ export default function GodTierContent({ text, theme, isDarkMode: explicitIsDark
     </div>
   );
 }
+
+// ⚡ PERF : le rendu markdown (tableaux, code coloré…) est coûteux sur mobile.
+// On ne le refait que si le texte ou l'apparence change réellement — et non
+// à chaque re-rendu du parent (ex. pendant la révision).
+const areEqual = (prev, next) =>
+  prev.text === next.text &&
+  prev.isDarkMode === next.isDarkMode &&
+  prev.showAudio === next.showAudio &&
+  (prev.theme?.text || "") === (next.theme?.text || "") &&
+  (prev.theme?.bg || "") === (next.theme?.bg || "") &&
+  (prev.theme?.cardBg || "") === (next.theme?.cardBg || "");
+
+export default React.memo(GodTierContent, areEqual);

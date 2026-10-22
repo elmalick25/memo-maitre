@@ -635,6 +635,8 @@ export default function MemoMaster() {
   });
   const [sessionSummary, setSessionSummary] = useState(null);
   const sessionTimerRef = useRef(null);
+  const sessionStartedAtRef = useRef(0);
+  const [sessionStartedAt, setSessionStartedAt] = useState(0);
 
   const [retentionCurvePoints, setRetentionCurvePoints] = useState([]);
   const [cardsToForget, setCardsToForget] = useState([]);
@@ -1767,17 +1769,22 @@ export default function MemoMaster() {
   }, [expressions]);
 
   // ── GOD LEVEL – Timer de session ──────────────────────────────────────
+  // ⚡ PERF : avant, un setInterval(1s) mettait à jour un état de MemoMaster
+  // → toute l'app (fiche, markdown, menus…) se re-rendait chaque seconde
+  // pendant la révision, ce qui faisait « caler » le défilement sur mobile.
+  // Maintenant on mémorise seulement l'heure de début ; l'affichage du chrono
+  // est géré par un mini-composant isolé dans ReviewEngineView.
   useEffect(() => {
     if (view === "review" && !showSessionSummary) {
-      sessionTimerRef.current = setInterval(() => {
-        setSessionTimer(t => t + 1);
-      }, 1000);
-    } else {
-      clearInterval(sessionTimerRef.current);
-      if (view !== "review") setSessionTimer(0);
+      const startedAt = Date.now() - (sessionTimer || 0) * 1000;
+      sessionStartedAtRef.current = startedAt;
+      setSessionStartedAt(startedAt);
+    } else if (view !== "review") {
+      sessionStartedAtRef.current = 0;
+      setSessionStartedAt(0);
+      setSessionTimer(0);
     }
-    return () => clearInterval(sessionTimerRef.current);
-  }, [view, showSessionSummary]);
+  }, [view, showSessionSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── GOD LEVEL – Feedback audio & confetti intégré ──────────────────────
   // Chrono de réponse : remis à zéro à chaque nouvelle fiche affichée.
@@ -1866,7 +1873,13 @@ export default function MemoMaster() {
         return prevExps;
       });
       const sessionCards = reviewQueue;
-      const avgTime = sessionCards.length > 0 ? sessionTimer / sessionCards.length : 0;
+      // ⚡ Le chrono ne re-rend plus toute l'app chaque seconde : on calcule
+      // le temps écoulé à partir de l'horodatage de début de session.
+      const elapsedSec = sessionStartedAtRef.current
+        ? Math.max(0, Math.round((Date.now() - sessionStartedAtRef.current) / 1000))
+        : sessionTimer;
+      setSessionTimer(elapsedSec);
+      const avgTime = sessionCards.length > 0 ? elapsedSec / sessionCards.length : 0;
       const avgBefore = (sessionCards.reduce((s, c) => s + (c.level || 0), 0) / sessionCards.length).toFixed(1);
       // avgLevelAfter : niveau estimé après la session (q=0 → 0, q=1 → max(level,1), q=5 → min(7, level+1))
       const avgAfter = (sessionCards.reduce((s, c) => {
@@ -3285,6 +3298,7 @@ Données utilisateur :
               setShowSessionSummary={setShowSessionSummary}
               sessionSummary={sessionSummary}
               sessionTimer={sessionTimer}
+              sessionStartedAt={sessionStartedAt}
               sessionTimerRef={sessionTimerRef}
               reviewCombo={reviewCombo}
               reviewSessionDone={reviewSessionDone}

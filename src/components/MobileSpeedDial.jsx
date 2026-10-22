@@ -89,10 +89,12 @@ export default function MobileSpeedDial({
             position: "fixed",
             inset: 0,
             zIndex: 190,
-            background: isDarkMode ? "rgba(5, 8, 22, 0.65)" : "rgba(15, 23, 42, 0.35)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
-            animation: "fadeIn .18s ease",
+            // ⚡ PERF : plus de flou plein écran (backdrop-filter) — sur mobile il
+            // obligeait le téléphone à recalculer un flou de toute la page à
+            // chaque image de l'animation, d'où des icônes qui « arrivent »
+            // une par une. Un voile un peu plus opaque donne le même effet.
+            background: isDarkMode ? "rgba(5, 8, 22, 0.8)" : "rgba(15, 23, 42, 0.5)",
+            animation: "speedDialFade .14s ease-out both",
           }}
           aria-hidden="true"
         />
@@ -175,11 +177,9 @@ export default function MobileSpeedDial({
                   background: isTapped
                     ? "linear-gradient(135deg, #38BDF8, #0284C7)"
                     : (isDarkMode
-                      ? (isCurrent ? "linear-gradient(135deg, #0284C7, #0369A1)" : "rgba(22, 30, 49, 0.92)")
+                      ? (isCurrent ? "linear-gradient(135deg, #0284C7, #0369A1)" : "rgba(22, 30, 49, 0.98)")
                       : (isCurrent ? "linear-gradient(135deg, var(--mm-primary, #2563eb), var(--mm-primary-deep, #1d4ed8))" : "rgba(255, 255, 255, 0.98)")),
                   color: (isTapped || isCurrent) ? "#ffffff" : (isDarkMode ? "#E2E8F0" : "#0F172A"),
-                  backdropFilter: "blur(16px)",
-                  WebkitBackdropFilter: "blur(16px)",
                   boxShadow: isTapped
                     ? "0 0 24px rgba(56, 189, 248, 0.8), inset 0 0 12px rgba(255,255,255,0.9)"
                     : (isDarkMode
@@ -190,7 +190,8 @@ export default function MobileSpeedDial({
                   cursor: "pointer",
                   pointerEvents: "auto",
                   zIndex: 215,
-                  animation: `speedDialPop 0.24s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 18}ms both`,
+                  // Apparition quasi simultanée (décalage 10 ms) et plus courte.
+                  animation: `speedDialPop 0.16s cubic-bezier(0.34, 1.56, 0.64, 1) ${i * 10}ms both`,
                   transition: "transform 0.1s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.1s ease, border 0.1s ease",
                   WebkitTapHighlightColor: "transparent",
                 }}

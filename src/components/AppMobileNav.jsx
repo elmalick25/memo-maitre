@@ -1,5 +1,6 @@
 import React, { useRef } from "react";
 import MobileSpeedDial from "./MobileSpeedDial";
+import PomodoroClock from "./PomodoroClock";
 import MobileAddSheet from "./MobileAddSheet";
 import { isDue } from "../lib/fsrs";
 import { today } from "../utils/dateUtils";
@@ -359,7 +360,7 @@ export default function AppMobileNav({
               >
                 <span style={{ fontSize: 20 }}>{projectPomodoroMode === "study" ? "📚" : projectPomodoroMode === "project" ? "🗂️" : "☕"}</span>
                 <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 18, color: theme?.highlight || "var(--mm-primary)", fontWeight: 800, flex: 1 }}>
-                  {formatPomodoro(projectPomodoroTime)}
+                  <PomodoroClock fallback={projectPomodoroTime} />
                 </span>
                 <button
                   onClick={() => setProjectPomodoroActive((a) => !a)}

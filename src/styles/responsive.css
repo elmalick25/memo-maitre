@@ -352,6 +352,9 @@ svg {
   table {
     display: block;
     overflow-x: auto;
+    /* overflow-y explicite : sinon le tableau devient une zone défilante
+       verticale qui « capture » le doigt et bloque le scroll de la page. */
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
   }
 

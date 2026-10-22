@@ -85,13 +85,27 @@ export default function ReviewEngineView({
   saveModuleSession = () => {},
   clearModuleSession = () => {},
   setShowAgentPanel = () => {},
+  sessionStartedAt = 0,
 }) {
   const [optimizingCard, setOptimizingCard] = useState(false);
-  // Swipe gestuel local state
-  const [swipeX, setSwipeX] = useState(0);
-  const [swipeY, setSwipeY] = useState(0);
+  // Swipe gestuel : piloté par refs (aucun re-rendu pendant le geste)
+  const cardRef = useRef(null);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
+  const swipeTrackingRef = useRef(false);
+  const swipeActiveRef = useRef(false);
+  const applyCardOffset = (dx) => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.transition = "none";
+    el.style.transform = `translate3d(${dx}px, 0, 0) rotate(${dx * 0.05}deg)`;
+  };
+  const resetCardOffset = () => {
+    const el = cardRef.current;
+    if (!el || !el.style.transform) return;
+    el.style.transition = "transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)";
+    el.style.transform = "";
+  };
 
   // Configuration pour poursuivre la révision (module + nombre de fiches)
   const [selectedModule, setSelectedModule] = useState(reviewCategory || "all");
@@ -494,7 +508,7 @@ export default function ReviewEngineView({
   const tag = cognitiveTag(currentCard);
 
   return (
-    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(110px + env(safe-area-inset-bottom, 16px))" : 40 }}>
+    <div className="mm-view-enter" style={{ width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(110px + env(safe-area-inset-bottom, 16px))" : 40 }}>
       {/* Session Header */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
@@ -525,7 +539,7 @@ export default function ReviewEngineView({
           </div>
 
           <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 900, fontSize: isMobile ? 13 : 14, background: theme?.cardBg || "#FFFFFF", color: "var(--mm-primary)", padding: "4px 10px", borderRadius: 8, border: `1px solid ${theme?.border || "#E2E8F0"}`, flexShrink: 0 }}>
-            ⏱ {Math.floor(sessionTimer / 60)}:{(sessionTimer % 60).toString().padStart(2, '0')}
+            ⏱ <SessionClock startedAt={sessionStartedAt} fallbackSeconds={sessionTimer} />
           </div>
         </div>
 
@@ -742,7 +756,12 @@ export default function ReviewEngineView({
       </div>
 
       {/* Main Flashcard Container */}
+      {/* ⚡ PERF/SCROLL : le glissement de carte est appliqué directement sur
+          l'élément (ref) au lieu de passer par un état React. Avant, chaque
+          mouvement du doigt pouvait re-rendre toute la fiche (markdown,
+          tableaux…) et faire « caler » le défilement vertical sur mobile. */}
       <div
+        ref={cardRef}
         className="card-hov review-session-card"
         style={{
           position: "relative",
@@ -757,34 +776,41 @@ export default function ReviewEngineView({
           touchAction: "pan-y",
           overflowX: "clip",
           margin: "0 auto",
-          transform: `translate(${swipeX}px, ${swipeY}px) rotate(${swipeX * 0.05}deg)`,
-          transition: swipeX === 0 && swipeY === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none',
         }}
         onTouchStart={(e) => {
+          swipeActiveRef.current = false;
           if (!revealed) return;
           touchStartX.current = e.touches[0].clientX;
           touchStartY.current = e.touches[0].clientY;
+          swipeTrackingRef.current = true;
         }}
         onTouchMove={(e) => {
-          if (!revealed) return;
-          const currentX = e.touches[0].clientX;
-          const currentY = e.touches[0].clientY;
-          const dx = currentX - touchStartX.current;
-          const dy = currentY - touchStartY.current;
-          if (Math.abs(dx) > 22 && Math.abs(dx) > Math.abs(dy) * 2.5) {
-            setSwipeX(dx);
-            setSwipeY(0);
-          } else if (Math.abs(dy) > 6) {
-            setSwipeX(0);
-            setSwipeY(0);
+          if (!revealed || !swipeTrackingRef.current) return;
+          const dx = e.touches[0].clientX - touchStartX.current;
+          const dy = e.touches[0].clientY - touchStartY.current;
+          if (!swipeActiveRef.current) {
+            // Le doigt part surtout à la verticale → c'est un scroll : on
+            // arrête de suivre le geste pour laisser le navigateur défiler.
+            if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) {
+              swipeTrackingRef.current = false;
+              return;
+            }
+            if (Math.abs(dx) > 22 && Math.abs(dx) > Math.abs(dy) * 2.5) {
+              swipeActiveRef.current = true;
+            } else {
+              return;
+            }
           }
+          applyCardOffset(dx);
         }}
         onTouchEnd={(e) => {
-          if (!revealed) return;
+          const wasSwiping = swipeActiveRef.current;
+          swipeTrackingRef.current = false;
+          swipeActiveRef.current = false;
+          resetCardOffset();
+          if (!revealed || !wasSwiping) return;
           const dx = e.changedTouches[0].clientX - touchStartX.current;
           const dy = e.changedTouches[0].clientY - touchStartY.current;
-          setSwipeX(0);
-          setSwipeY(0);
           const threshold = 110;
           if (Math.abs(dx) > threshold && Math.abs(dx) > Math.abs(dy) * 2.5) {
             if (dx > threshold) {
@@ -795,6 +821,11 @@ export default function ReviewEngineView({
               if (window.navigator?.vibrate) window.navigator.vibrate([30, 30, 30]);
             }
           }
+        }}
+        onTouchCancel={() => {
+          swipeTrackingRef.current = false;
+          swipeActiveRef.current = false;
+          resetCardOffset();
         }}
       >
         {/* Card Header Badges */}
@@ -831,7 +862,9 @@ export default function ReviewEngineView({
         </div>
 
         {/* Recto Face */}
-        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}`, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+        {/* overflowX "clip" (et non "hidden") : "hidden" transformait ce bloc en
+            zone défilante verticale qui capturait le doigt sur mobile. */}
+        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}`, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "clip" }}>
           <div style={{ fontSize: 11, color: "var(--mm-primary-glow)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
             {activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}
           </div>
@@ -929,7 +962,7 @@ export default function ReviewEngineView({
         ) : (
           /* Revealed Face */
           <div style={{ animation: "slideIn 0.3s ease", width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
-            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
+            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "clip" }}>
               <div style={{ fontSize: 11, color: "var(--mm-primary)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
                 RÉPONSE
               </div>
@@ -1063,5 +1096,23 @@ export default function ReviewEngineView({
         </div>
       )}
     </div>
+  );
+}
+
+// ⏱ Chrono de session isolé : seul ce petit composant se met à jour chaque
+// seconde (au lieu de toute l'application).
+function SessionClock({ startedAt = 0, fallbackSeconds = 0 }) {
+  const compute = () => (startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : fallbackSeconds || 0);
+  const [seconds, setSeconds] = useState(compute);
+  useEffect(() => {
+    setSeconds(compute());
+    if (!startedAt) return undefined;
+    const id = setInterval(() => setSeconds(compute()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, fallbackSeconds]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <>
+      {Math.floor(seconds / 60)}:{(seconds % 60).toString().padStart(2, "0")}
+    </>
   );
 }

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import AgentPanel from "./AgentPanel";
+import PomodoroClock from "./PomodoroClock";
 
 export default function AppStatusBar({
   isDarkMode = false,
@@ -375,7 +376,7 @@ export default function AppStatusBar({
           </div>
 
           <button onClick={() => setIsPomoActive(!isPomoActive)} style={{ background: "none", border: "none", color: isPomoActive ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: "bold" }}>
-            ⏱ {Math.floor(pomoTime / 60)}:{String(pomoTime % 60).padStart(2, "0")}
+            ⏱ <PomodoroClock fallback={pomoTime} padMinutes={false} />
           </button>
 
           <button onClick={() => setIsDarkMode((d) => !d)} className="hov" style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", fontSize: 13 }} title="Mode Sombre/Clair">

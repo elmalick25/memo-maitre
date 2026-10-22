@@ -1,4 +1,5 @@
 import React from "react";
+import PomodoroClock from "./PomodoroClock";
 import { getArchetype, BADGES } from "../constants/gamification";
 import { isDue } from "../lib/fsrs";
 import { today } from "../utils/dateUtils";
@@ -233,7 +234,7 @@ export default function AppSidebar({
           {projectPomodoroTime < 25 * 60 || projectPomodoroActive ? (
             <div style={{ background: "rgba(139, 92, 246,0.15)", borderRadius: 8, padding: "6px 8px", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 13 }}>{projectPomodoroMode === "study" ? "📚" : projectPomodoroMode === "project" ? "🗂️" : "☕"}</span>
-              {!sidebarCollapsed && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: isDarkMode ? "#DDD6FE" : (theme?.text || "#0F172A"), fontWeight: 700 }}>{formatPomodoro(projectPomodoroTime)}</span>}
+              {!sidebarCollapsed && <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: isDarkMode ? "#DDD6FE" : (theme?.text || "#0F172A"), fontWeight: 700 }}><PomodoroClock fallback={projectPomodoroTime} /></span>}
               <button onClick={() => setProjectPomodoroActive((a) => !a)} style={{ marginLeft: "auto", background: "none", border: "none", color: isDarkMode ? "#DDD6FE" : (theme?.text || "#0F172A"), cursor: "pointer", fontSize: 11 }}>{projectPomodoroActive ? "⏸" : "▶"}</button>
             </div>
           ) : null}

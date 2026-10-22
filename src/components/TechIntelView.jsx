@@ -2407,10 +2407,14 @@ export default function TechIntelView({
 
     // 🚀 Affichage instantané du flux (zéro écran blanc : les cartes s'affichent immédiatement)
     setItems(combined);
+    // ⚡ Le flux est visible : on termine l'état de chargement ICI.
+    // Les résumés IA, la notation et le préchargement hors-ligne continuent
+    // en arrière-plan sans bloquer la page ni le bouton Actualiser.
+    setLoading(false);
 
     // 🚀 Pipeline PARALLÈLE avec budget global < 1 min : explications IA, corps complets,
     // notation IA et textes intégraux tournent EN MÊME TEMPS (au lieu de l'un après l'autre).
-    const REFRESH_BUDGET_MS = 240000;
+    const REFRESH_BUDGET_MS = 110000;
     const budgetStart = Date.now();
     const withinBudget = (p, ms) => {
       let tId;
@@ -2508,7 +2512,7 @@ export default function TechIntelView({
         prefetchOfflineRef.current(combined, (d, t) => {
           if (t > 0) setProgress(50 + Math.round((d / t) * 45));
         }),
-        200000
+        60000
       );
     }
     setProgress(96);
