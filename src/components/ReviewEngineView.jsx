@@ -508,7 +508,7 @@ export default function ReviewEngineView({
   const tag = cognitiveTag(currentCard);
 
   return (
-    <div className="mm-view-enter" style={{ width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(110px + env(safe-area-inset-bottom, 16px))" : 40 }}>
+    <div className="mm-view-enter" style={{ width: "100%", maxWidth: "100%", boxSizing: "border-box", paddingBottom: isMobile ? "calc(110px + env(safe-area-inset-bottom, 16px))" : 40 }}>
       {/* Session Header */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
@@ -774,7 +774,6 @@ export default function ReviewEngineView({
           width: "100%",
           boxSizing: "border-box",
           touchAction: "pan-y",
-          overflowX: "clip",
           margin: "0 auto",
         }}
         onTouchStart={(e) => {
@@ -862,9 +861,7 @@ export default function ReviewEngineView({
         </div>
 
         {/* Recto Face */}
-        {/* overflowX "clip" (et non "hidden") : "hidden" transformait ce bloc en
-            zone défilante verticale qui capturait le doigt sur mobile. */}
-        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}`, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "clip" }}>
+        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}`, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
           <div style={{ fontSize: 11, color: "var(--mm-primary-glow)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
             {activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}
           </div>
@@ -962,7 +959,7 @@ export default function ReviewEngineView({
         ) : (
           /* Revealed Face */
           <div style={{ animation: "slideIn 0.3s ease", width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
-            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "clip" }}>
+            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
               <div style={{ fontSize: 11, color: "var(--mm-primary)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
                 RÉPONSE
               </div>

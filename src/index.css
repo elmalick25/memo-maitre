@@ -53,10 +53,9 @@ html {
   margin: 0;
   padding: 0;
   width: 100%;
-  max-width: 100%;
   height: 100%;          /* référence pour les enfants */
   background: var(--mm-bg, #07060f);
-  overflow-x: clip;      /* Bloque toute dérive/défilement horizontal gestuel ou programmatique */
+  overflow-x: hidden;
   overflow-y: auto;      /* ← LE scroll container principal */
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
@@ -65,23 +64,18 @@ html {
 body {
   margin: 0;
   padding: 0;
-  width: 100%;
-  max-width: 100%;
   min-height: 100%;      /* s'étire avec le contenu */
-  overflow-x: clip;      /* Ne défile jamais horizontalement */
-  overflow-y: visible;   /* NE scrolle PAS — laisse html le faire */
+  overflow: visible;     /* NE scrolle PAS — laisse html le faire */
   position: relative;
 }
 
 #root {
   width: 100%;
   min-height: 100%;      /* s'étire, ne fixe pas la hauteur */
-  max-width: 100%;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  overflow-x: clip;
-  overflow-y: visible;
+  overflow: visible;
 }
 
 @keyframes soundwave-bar {

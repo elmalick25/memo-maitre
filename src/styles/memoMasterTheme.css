@@ -4,9 +4,8 @@ html {
   margin: 0 !important;
   padding: 0 !important;
   width: 100% !important;
-  max-width: 100% !important;
   height: 100% !important;
-  overflow-x: clip !important;
+  overflow-x: hidden !important;
   overflow-y: auto !important;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
@@ -16,9 +15,8 @@ body {
   margin: 0 !important;
   padding: 0 !important;
   width: 100% !important;
-  max-width: 100% !important;
   min-height: 100% !important;
-  overflow-x: clip !important;
+  overflow-x: hidden !important;
   overflow-y: visible !important;
   position: relative;
 }
@@ -27,10 +25,8 @@ body {
   margin: 0 !important;
   padding: 0 !important;
   width: 100% !important;
-  max-width: 100% !important;
   min-height: 100% !important;
-  overflow-x: clip !important;
-  overflow-y: visible !important;
+  overflow: visible !important;
 }
 
 *,

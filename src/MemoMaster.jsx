@@ -156,16 +156,17 @@ export default function MemoMaster() {
 
   // ── Auto scroll-to-top systématique à chaque changement de vue ─────────────
   useEffect(() => {
-    const resetScroll = () => {
-      if (typeof window !== "undefined") {
+    if (typeof window !== "undefined") {
+      try {
         window.scrollTo({ top: 0, left: 0, behavior: "instant" });
         if (document.documentElement) document.documentElement.scrollTop = 0;
         if (document.body) document.body.scrollTop = 0;
+        const main = document.querySelector("main, [data-app-scroll], .app-scroll");
+        if (main) main.scrollTop = 0;
+      } catch {
+        window.scrollTo(0, 0);
       }
-    };
-    resetScroll();
-    const rafId = requestAnimationFrame(resetScroll);
-    return () => cancelAnimationFrame(rafId);
+    }
   }, [view, navState.subView]);
 
   // ── Préchargement intelligent d'EnglishPractice en arrière-plan ────────────
@@ -1229,14 +1230,7 @@ export default function MemoMaster() {
 
 
 
-  // ── Scroll-to-top à chaque changement de vue ──
-  useEffect(() => {
-    try {
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      const main = document.querySelector("main, [data-app-scroll], .app-scroll");
-      if (main) main.scrollTo({ top: 0, left: 0, behavior: "instant" });
-    } catch { window.scrollTo(0, 0); }
-  }, [view, navState.subView]);
+
 
   // Stamina regeneration
   useEffect(() => {
@@ -3068,7 +3062,7 @@ Données utilisateur :
   if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#070D1F", color: "var(--mm-primary-glow)", fontFamily: "'Outfit', sans-serif", gap: 16 }}><div style={{ fontSize: 48, animation: "pulse 1s infinite", filter: "drop-shadow(0 0 20px rgba(249,115,22,0.8))" }}>🧠</div><h2 style={{ fontWeight: 800, letterSpacing: "-0.5px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Initialisation du Second Cerveau...</h2></div>;
 
   return (
-    <div style={{ minHeight: "100vh", width: "100%", maxWidth: "100%", overflowX: "clip", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
+    <div style={{ minHeight: "100vh", width: "100%", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
       {/* Topbar flottante : centre de notifications (Desktop uniquement) */}
       {!isMobile && (
         <div
@@ -3114,7 +3108,7 @@ Données utilisateur :
 
       {/* ── LAYOUT PRINCIPAL : Sidebar + Content ── */}
       <div style={{ height: zenFocusMode || isMobile ? 0 : 68, transition: "height 0.3s cubic-bezier(0.4,0,0.2,1)" }} />{/* spacer nav fixe */}
-      <div style={{ display: "flex", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", width: "100%", maxWidth: "100%", boxSizing: "border-box", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
 
         {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) ═══ */}
         <AppSidebar
