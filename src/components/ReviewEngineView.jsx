@@ -7,8 +7,9 @@ import AudioPlayButton from "./AudioPlayButton";
 import { isEnglishCategory } from "../lib/englishCardEngine";
 import { SocraticChat, RabbitHoleViewer } from "../MemoMasterUpgrades";
 import { getPreviewInterval, cognitiveTag } from "../lib/fsrs";
-import { analyzeLeech } from "../lib/memoryLab";
+import { analyzeLeech, isNovaCard, isNovaMistakeCard } from "../lib/memoryLab";
 import { colorMix } from "../lib/colorMix";
+import { pickExtraSessionCards } from "../lib/extraSessionEngine.js";
 
 export default function ReviewEngineView({
   reviewQueue = [],
@@ -81,6 +82,9 @@ export default function ReviewEngineView({
   reviewCategory = null,
   categories = [],
   expressions = [],
+  saveModuleSession = () => {},
+  clearModuleSession = () => {},
+  setShowAgentPanel = () => {},
 }) {
   const [optimizingCard, setOptimizingCard] = useState(false);
   // Swipe gestuel local state
@@ -134,41 +138,15 @@ export default function ReviewEngineView({
   };
 
   const handleContinueSession = () => {
-    let pool = (expressions || []).filter((e) => !e.paused);
-    if (selectedModule && selectedModule !== "all") {
-      pool = pool.filter((e) => e.category === selectedModule);
-    }
-
-    if (pool.length === 0) {
-      showToast?.("Aucune fiche disponible dans ce module", "info");
-      return;
-    }
-
-    // Priorisation intelligente :
-    // 1. Fiches déjà préparées dans dailySessionPreview (si non encore révisées)
-    // 2. Fiches échues / dues
-    // 3. Fiches avec le plus faible niveau
-    const previewIds = new Set((dailySessionPreview || []).map((c) => c.id));
-    const fromPreview = pool.filter((c) => previewIds.has(c.id));
-    const others = pool.filter((c) => !previewIds.has(c.id));
-
-    const now = Date.now();
-    others.sort((a, b) => {
-      const aDue = a.nextReview ? new Date(a.nextReview).getTime() : 0;
-      const bDue = b.nextReview ? new Date(b.nextReview).getTime() : 0;
-      const aIsDue = aDue <= now;
-      const bIsDue = bDue <= now;
-      if (aIsDue && !bIsDue) return -1;
-      if (!aIsDue && bIsDue) return 1;
-      if (aDue !== bDue) return aDue - bDue;
-      return (a.level || 0) - (b.level || 0);
+    const pickedCards = pickExtraSessionCards({
+      expressions,
+      dailySessionPreview,
+      selectedModule,
+      count: continueCount,
     });
 
-    const candidatePool = [...fromPreview, ...others];
-    const pickedCards = candidatePool.slice(0, continueCount);
-
     if (pickedCards.length === 0) {
-      showToast?.("Aucune fiche disponible", "info");
+      showToast?.("Aucune fiche disponible dans ce module", "info");
       return;
     }
 
@@ -507,7 +485,7 @@ export default function ReviewEngineView({
   const tag = cognitiveTag(currentCard);
 
   return (
-    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both" }}>
+    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(env(safe-area-inset-bottom, 16px) + 36px)" : 40 }}>
       {/* Session Header */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
@@ -530,7 +508,7 @@ export default function ReviewEngineView({
               flexShrink: 0,
             }}
           >
-            ← {(reviewMode === "module" || reviewMode === "free") ? "Modules" : "Quitter"}
+            ← {(reviewMode === "module" || reviewMode === "free") ? "Modules" : "Accueil"}
           </button>
 
           <div style={{ fontFamily: "'JetBrains Mono'", fontSize: isMobile ? 14 : 15, color: theme?.textMuted || "#64748B", textAlign: "center", minWidth: 60 }}>
@@ -542,45 +520,70 @@ export default function ReviewEngineView({
           </div>
         </div>
 
-        {/* Module Badge Row */}
-        {reviewMode === "free" && (
-          <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+        {/* Mode & Category Context Banner */}
+        <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+          {reviewMode === "free" ? (
             <span style={{
-              fontSize: 11,
+              fontSize: 11.5,
               fontWeight: 800,
-              padding: "3px 10px",
-              borderRadius: 8,
-              background: "color-mix(in srgb, #10B981 15%, transparent)",
+              padding: "4px 12px",
+              borderRadius: 10,
+              background: "color-mix(in srgb, #10B981 12%, transparent)",
               color: "#10B981",
               border: "1px solid color-mix(in srgb, #10B981 30%, transparent)",
               maxWidth: "100%",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}>
-              🎮 Entraînement libre {reviewCategory ? `: ${reviewCategory}` : ""} (sans impact SRS)
+              <span>🎮</span>
+              <span>Entraînement libre {reviewCategory ? `· ${reviewCategory}` : ""} (sans impact SRS)</span>
             </span>
-          </div>
-        )}
-        {reviewMode === "module" && reviewCategory && (
-          <div style={{ display: "flex", justifyContent: "center", width: "100%" }}>
+          ) : reviewCategory ? (
             <span style={{
-              fontSize: 11,
+              fontSize: 11.5,
               fontWeight: 800,
-              padding: "3px 10px",
-              borderRadius: 8,
-              background: "color-mix(in srgb, var(--mm-primary) 15%, transparent)",
+              padding: "4px 12px",
+              borderRadius: 10,
+              background: "color-mix(in srgb, var(--mm-primary) 12%, transparent)",
               color: theme?.highlight || "var(--mm-primary)",
               border: "1px solid color-mix(in srgb, var(--mm-primary) 30%, transparent)",
               maxWidth: "100%",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
             }}>
-              🎯 Module : {reviewCategory}
+              <span>🎯</span>
+              <span>Révision FSRS · Module {reviewCategory}</span>
             </span>
-          </div>
-        )}
+          ) : (
+            <span style={{
+              fontSize: 11.5,
+              fontWeight: 800,
+              padding: "4px 12px",
+              borderRadius: 10,
+              background: "color-mix(in srgb, var(--mm-primary) 8%, transparent)",
+              color: theme?.highlight || "var(--mm-primary)",
+              border: "1px solid color-mix(in srgb, var(--mm-primary) 22%, transparent)",
+              maxWidth: "100%",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}>
+              <span>🧠</span>
+              <span>Révision FSRS Quotidienne</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Combo Bar */}
@@ -589,7 +592,7 @@ export default function ReviewEngineView({
       </div>
 
       {/* Progress Bar */}
-      <div style={{ height: 8, background: theme?.inputBg || "#F8FAFC", borderRadius: 4, marginBottom: 32, overflow: "hidden" }}>
+      <div style={{ height: 8, background: theme?.inputBg || "#F8FAFC", borderRadius: 4, marginBottom: isMobile ? 18 : 32, overflow: "hidden" }}>
         <div style={{ height: "100%", background: "linear-gradient(90deg, var(--mm-primary), var(--mm-primary))", borderRadius: 4, transition: "width 0.4s ease", width: `${((reviewIndex + 1) / reviewQueue.length) * 100}%` }} />
       </div>
 
@@ -643,27 +646,18 @@ export default function ReviewEngineView({
             {optimizingCard ? "⏳ Optimisation..." : "✨ Optimiser"}
           </button>
 
-          {(() => {
-            const _leech = analyzeLeech(currentCard);
-            if (!_leech.isLeech) return null;
-            return (
-              <button
-                onClick={() => handleRescueLeech?.(currentCard)}
-                disabled={leechRescueLoading}
-                className="hov btn-glow"
-                title={`Cette fiche a échoué ${_leech.totalLapses}× — l'IA va la reformuler pour la rendre mémorisable`}
-                style={{ background: "linear-gradient(135deg, #F59E0B, #DC2626)", color: "white", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, border: "none", cursor: leechRescueLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, boxShadow: "0 4px 12px rgba(245,158,11,0.35)" }}
-              >
-                {leechRescueLoading ? "⏳" : "🩹"} Sauver
-              </button>
-            );
-          })()}
-
           <button
             onClick={() => {
               deleteExp?.(currentCard.id);
               const newQueue = reviewQueue.filter(c => c.id !== currentCard.id);
               setReviewQueue?.(newQueue);
+              if (reviewCategory && typeof saveModuleSession === "function") {
+                if (newQueue.length === 0) {
+                  clearModuleSession?.(reviewCategory);
+                } else {
+                  saveModuleSession(reviewCategory, newQueue, Math.min(reviewIndex, Math.max(0, newQueue.length - 1)));
+                }
+              }
               setRevealed?.(false);
               setUserAnswer?.("");
               setSocraticHint?.("");
@@ -692,9 +686,50 @@ export default function ReviewEngineView({
             </button>
           )}
         </div>
-        <span style={{ background: colorMix(tag.color, 13), color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
-          {tag.icon} {tag.label}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAgentPanel?.(true);
+              if (typeof window !== "undefined") {
+                window.dispatchEvent(
+                  new CustomEvent("memomaster:agent-card-focus", {
+                    detail: { card: currentCard, revealed: Boolean(revealed) },
+                  })
+                );
+              }
+            }}
+            className="hov btn-glow"
+            title="Poser une question à l'IA Maodo sur cette fiche"
+            style={{
+              background: isDarkMode
+                ? "linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(168, 85, 247, 0.22))"
+                : "linear-gradient(135deg, #EEF2FF, #FAF5FF)",
+              color: isDarkMode ? "#C084FC" : "#7E22CE",
+              border: isDarkMode
+                ? "1px solid rgba(168, 85, 247, 0.4)"
+                : "1px solid rgba(168, 85, 247, 0.3)",
+              padding: isMobile ? "4px 10px" : "4px 12px",
+              borderRadius: 20,
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: isDarkMode
+                ? "0 2px 10px rgba(168, 85, 247, 0.2)"
+                : "0 2px 8px rgba(168, 85, 247, 0.12)",
+              transition: "all 0.2s ease",
+            }}
+          >
+            <span style={{ fontSize: 13 }}>🤖</span>
+            <span>{isMobile ? "IA" : "Demander à l'IA"}</span>
+          </button>
+          <span style={{ background: colorMix(tag.color, 13), color: tag.color, padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+            {tag.icon} {tag.label}
+          </span>
+        </div>
       </div>
 
       {/* Main Flashcard Container */}
@@ -704,10 +739,14 @@ export default function ReviewEngineView({
           position: "relative",
           background: theme?.cardBg || "#FFFFFF",
           border: `1px solid ${theme?.border || "#E2E8F0"}`,
-          borderRadius: 26,
-          padding: "32px",
+          borderRadius: isMobile ? 20 : 26,
+          padding: isMobile ? "16px 14px" : "32px",
           boxShadow: "0 10px 40px color-mix(in srgb, var(--mm-primary) 5.0%, transparent)",
           maxWidth: 700,
+          width: "100%",
+          boxSizing: "border-box",
+          touchAction: "pan-y",
+          overflowX: "clip",
           margin: "0 auto",
           transform: `translate(${swipeX}px, ${swipeY}px) rotate(${swipeX * 0.05}deg)`,
           transition: swipeX === 0 && swipeY === 0 ? 'transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)' : 'none',
@@ -723,11 +762,10 @@ export default function ReviewEngineView({
           const currentY = e.touches[0].clientY;
           const dx = currentX - touchStartX.current;
           const dy = currentY - touchStartY.current;
-          if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 2.5) {
-            e.preventDefault();
+          if (Math.abs(dx) > 22 && Math.abs(dx) > Math.abs(dy) * 2.5) {
             setSwipeX(dx);
             setSwipeY(0);
-          } else if (Math.abs(dy) > 8) {
+          } else if (Math.abs(dy) > 6) {
             setSwipeX(0);
             setSwipeY(0);
           }
@@ -752,9 +790,27 @@ export default function ReviewEngineView({
       >
         {/* Card Header Badges */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <span style={{ background: theme?.inputBg || "#F8FAFC", color: theme?.highlight || "var(--mm-primary)", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
-            {currentCard.category}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ background: theme?.inputBg || "#F8FAFC", color: theme?.highlight || "var(--mm-primary)", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+              {currentCard.category}
+            </span>
+            {isNovaMistakeCard(currentCard) && (
+              <span style={{
+                background: "color-mix(in srgb, #3b82f6 14%, transparent)",
+                color: "#2563eb",
+                border: "1px solid color-mix(in srgb, #3b82f6 28%, transparent)",
+                padding: "4px 12px",
+                borderRadius: 20,
+                fontSize: 11,
+                fontWeight: 800,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5
+              }}>
+                🎙️ Erreur Nova
+              </span>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span style={{ background: "#FFFFFF", color: "var(--mm-primary)", padding: "6px 14px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "JetBrains Mono" }}>
               {currentCard.difficulty !== undefined ? `Diff: ${currentCard.difficulty.toFixed(1)}/10` : `EF: ${(currentCard.easeFactor || 2.5).toFixed(1)}`}
@@ -766,12 +822,12 @@ export default function ReviewEngineView({
         </div>
 
         {/* Recto Face */}
-        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}` }}>
+        <div style={{ background: isDarkMode ? "#1A0F2E" : "color-mix(in srgb, var(--mm-primary) 4%, white)", borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, border: `1px solid ${theme?.border || "#E2E8F0"}`, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
           <div style={{ fontSize: 11, color: "var(--mm-primary-glow)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
             {activeFacet ? `QUESTION (${activeFacet.type.toUpperCase()})` : "QUESTION"}
           </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: currentCard.imageUrl ? 20 : 0 }}>
-            <div style={{ fontSize: 26, fontWeight: 800, color: theme?.highlight || "var(--mm-primary)", lineHeight: 1.35 }}>
+            <div style={{ fontSize: isMobile ? 21 : 26, fontWeight: 800, color: theme?.highlight || "var(--mm-primary)", lineHeight: 1.35, wordBreak: "break-word", overflowWrap: "break-word", minWidth: 0, flex: 1 }}>
               {activeFacet ? activeFacet.front : currentCard.front}
             </div>
             {isEnglishCategory(currentCard.category) && (
@@ -863,8 +919,8 @@ export default function ReviewEngineView({
           )
         ) : (
           /* Revealed Face */
-          <div style={{ animation: "slideIn 0.3s ease" }}>
-            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: "28px", marginBottom: 20 }}>
+          <div style={{ animation: "slideIn 0.3s ease", width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
+            <div style={{ background: isDarkMode ? "#2A1400" : "#FFFFFF", border: `2px solid ${isDarkMode ? "#3D2000" : "color-mix(in srgb, var(--mm-primary) 4%, white)"}`, borderRadius: 20, padding: isMobile ? "20px 16px" : "28px", marginBottom: 20, width: "100%", maxWidth: "100%", boxSizing: "border-box", overflowX: "hidden" }}>
               <div style={{ fontSize: 11, color: "var(--mm-primary)", fontWeight: 800, letterSpacing: 2, marginBottom: 14, fontFamily: "'JetBrains Mono'" }}>
                 RÉPONSE
               </div>
@@ -877,7 +933,7 @@ export default function ReviewEngineView({
                   <GodTierContent text={activeFacet ? activeFacet.back : currentCard.back} theme={theme} isDarkMode={isDarkMode} showAudio={isEnglishCategory(currentCard.category)} />
                 </div>
               )}
-              {currentCard.example && currentCard.type !== "audio" && !/exemples?/i.test(currentCard.back || "") && (
+              {currentCard.example && currentCard.type !== "audio" && !/exemples?/i.test(currentCard.back || "") && !String(currentCard.back || "").toLowerCase().includes(String(currentCard.example).trim().toLowerCase()) && (
                 <div style={{ background: theme?.inputBg || "#F8FAFC", padding: "16px 20px", borderRadius: 16, marginTop: 24, fontSize: 15, color: theme?.textMuted || "#64748B", fontStyle: "italic", borderLeft: `4px solid ${theme?.highlight || "var(--mm-primary)"}`, position: "relative" }}>
                   <div style={{ position: "absolute", top: -10, left: 16, background: theme?.bg || "#FFFFFF", padding: "0 8px", fontSize: 11, fontWeight: 900, color: theme?.highlight || "var(--mm-primary)", letterSpacing: 1 }}>
                     EXEMPLE
@@ -887,16 +943,6 @@ export default function ReviewEngineView({
                   </div>
                 </div>
               )}
-            </div>
-
-            {/* Mnemonic & Deep Dive tools */}
-            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
-              <button className="hov" onClick={generateMnemonic} disabled={mnemonicLoading} style={{ flex: 1, padding: "12px", background: "linear-gradient(135deg, #FFFFFF, color-mix(in srgb, var(--mm-primary) 4%, white))", color: "var(--mm-primary)", border: "1px solid color-mix(in srgb, var(--mm-primary) 22%, white)", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
-                {mnemonicLoading ? "⏳ Création..." : "✨ Générer Mnémonique"}
-              </button>
-              <button className="hov" onClick={() => setRabbitHoleOpen?.(true)} style={{ flex: 1, padding: "12px", background: "linear-gradient(135deg, #2A1400, #3D2000)", color: "#FFA114", border: "1px solid #5C3200", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>
-                🕳️ Deep Dive
-              </button>
             </div>
 
             {rabbitHoleOpen && (
@@ -930,9 +976,9 @@ export default function ReviewEngineView({
 
             {/* FSRS Grading Buttons */}
             {(() => {
-              const showIntervalPreview = reviewMode !== "module" && reviewMode !== "free" && !reviewCategory;
+              const showIntervalPreview = reviewMode !== "free";
               return (
-                <div className="review-btns-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                <div className="review-btns-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: isMobile ? 6 : 10, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
                   {[
                     { q: 0, emoji: "💀", label: "Oublié", sub: showIntervalPreview ? getPreviewInterval(currentCard, 0) : null, bg: isDarkMode ? "#2D0A0A" : "#FEE2E2", color: "#EF4444", border: "#EF4444" },
                     { q: 1, emoji: "😅", label: "Hésité", sub: showIntervalPreview ? getPreviewInterval(currentCard, 1) : null, bg: isDarkMode ? "#2D1A00" : "#FFFBEB", color: "#F59E0B", border: "#F59E0B" },
@@ -947,26 +993,29 @@ export default function ReviewEngineView({
                         if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
                       }}
                       style={{
-                        padding: "16px 10px",
+                        padding: isMobile ? "12px 4px" : "16px 10px",
                         background: bg,
                         color,
                         border: `1.5px solid ${border}40`,
                         borderRadius: 18,
                         fontWeight: 800,
-                        fontSize: 14,
+                        fontSize: isMobile ? 12 : 14,
+                        minWidth: 0,
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
                         cursor: "pointer",
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
                         justifyContent: "center",
                         gap: 4,
-                        minHeight: 76,
+                        minHeight: isMobile ? 68 : 76,
                         lineHeight: 1.2,
                       }}
                     >
-                      <span style={{ fontSize: 22 }}>{emoji}</span>
-                      <span>{label}</span>
-                      {sub ? <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span> : null}
+                      <span style={{ fontSize: isMobile ? 18 : 22 }}>{emoji}</span>
+                      <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{label}</span>
+                      {sub ? <span style={{ fontSize: isMobile ? 9 : 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span> : null}
                     </button>
                   ))}
                 </div>

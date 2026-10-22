@@ -48,7 +48,7 @@ input, select, textarea { font-size: max(16px, 1rem); }
 .review-session-card,
 .card-hov.review-session-card {
   touch-action: pan-y pinch-zoom !important;
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: auto !important;
   -webkit-overflow-scrolling: touch;
 }
 

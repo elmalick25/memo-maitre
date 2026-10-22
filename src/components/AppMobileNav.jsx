@@ -42,36 +42,38 @@ export default function AppMobileNav({
 
   return (
     <>
-      <MobileSpeedDial
-        view={view}
-        isDarkMode={isDarkMode}
-        badges={{
-          dashboard: sessionRemainingCount,
-          list: dueCount > 0 ? dueCount : 0,
-        }}
-        onNavigate={(id) => {
-          setMobileDrawerOpen(false);
-          setMobileFabOpen(false);
-          setView(id);
-          navigate?.(id);
-          if (id === "dashboard" || id === "home") {
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }
-        }}
-        onOpenAddSheet={() => {
-          setMobileDrawerOpen(false);
-          setMobileFabOpen(false);
-          if (typeof setMobileAddSheetOpen === "function") {
-            setMobileAddSheetOpen(true);
-          } else {
-            setView("add");
-          }
-        }}
-        onOpenMoreDrawer={() => {
-          setMobileFabOpen(false);
-          setMobileDrawerOpen(true);
-        }}
-      />
+      {view !== "review" && (
+        <MobileSpeedDial
+          view={view}
+          isDarkMode={isDarkMode}
+          badges={{
+            dashboard: sessionRemainingCount,
+            list: dueCount > 0 ? dueCount : 0,
+          }}
+          onNavigate={(id) => {
+            setMobileDrawerOpen(false);
+            setMobileFabOpen(false);
+            setView(id);
+            navigate?.(id);
+            if (id === "dashboard" || id === "home") {
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }
+          }}
+          onOpenAddSheet={() => {
+            setMobileDrawerOpen(false);
+            setMobileFabOpen(false);
+            if (typeof setMobileAddSheetOpen === "function") {
+              setMobileAddSheetOpen(true);
+            } else {
+              setView("add");
+            }
+          }}
+          onOpenMoreDrawer={() => {
+            setMobileFabOpen(false);
+            setMobileDrawerOpen(true);
+          }}
+        />
+      )}
 
       <MobileAddSheet
         open={mobileAddSheetOpen}
