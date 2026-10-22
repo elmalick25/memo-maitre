@@ -1,5 +1,4 @@
 import React, { useRef, useState, useEffect, useMemo } from "react";
-import { createPortal } from "react-dom";
 import GodTierContent from "./GodTierContent";
 import ComboBar from "./ComboBar";
 import SessionEndHook from "./SessionEndHook";
@@ -994,96 +993,36 @@ export default function ReviewEngineView({
                 { q: 5, emoji: "⚡", label: "Facile", sub: showIntervalPreview ? getPreviewInterval(currentCard, 5) : null, bg: isDarkMode ? "#0A2010" : "#ECFDF5", color: "#10B981", border: "#10B981" },
               ];
 
-              if (isMobile) {
-                if (typeof document === "undefined") return null;
-                return createPortal(
-                  <div
-                    className="review-btns-dock"
-                    style={{
-                      position: "fixed",
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      width: "100%",
-                      zIndex: 9999,
-                      background: isDarkMode ? "rgba(11, 17, 32, 0.96)" : "rgba(255, 255, 255, 0.97)",
-                      backdropFilter: "blur(20px)",
-                      WebkitBackdropFilter: "blur(20px)",
-                      borderTop: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(226, 232, 240, 0.9)"}`,
-                      boxShadow: "0 -8px 32px rgba(0, 0, 0, 0.18)",
-                      padding: "8px 10px calc(10px + env(safe-area-inset-bottom, 12px))",
-                      boxSizing: "border-box",
-                      animation: "slideUpDock 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
-                    }}
-                  >
-                    {grades.map(({ q, emoji, label, sub, bg, color, border }) => (
-                      <button
-                        key={q}
-                        type="button"
-                        className="hov review-btn"
-                        onClick={() => {
-                          handleAnswer?.(q);
-                          if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
-                        }}
-                        style={{
-                          padding: "8px 2px",
-                          background: bg,
-                          color,
-                          border: `1.5px solid ${border}40`,
-                          borderRadius: 14,
-                          fontWeight: 800,
-                          fontSize: 11.5,
-                          minWidth: 0,
-                          boxSizing: "border-box",
-                          cursor: "pointer",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 2,
-                          minHeight: 52,
-                          lineHeight: 1.2,
-                          touchAction: "manipulation",
-                        }}
-                      >
-                        <span style={{ fontSize: 17 }}>{emoji}</span>
-                        <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{label}</span>
-                        {sub ? <span style={{ fontSize: 9.5, opacity: 0.8, fontWeight: 700 }}>{sub}</span> : null}
-                      </button>
-                    ))}
-                  </div>,
-                  document.body
-                );
-              }
-
               return (
                 <div
-                  className="review-btns-row"
+                  className="review-btns-dock"
                   style={{
                     display: "grid",
                     gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                    gap: 10,
+                    gap: isMobile ? 6 : 10,
                     width: "100%",
                     maxWidth: "100%",
                     boxSizing: "border-box",
+                    marginTop: isMobile ? 16 : 20,
                   }}
                 >
                   {grades.map(({ q, emoji, label, sub, bg, color, border }) => (
                     <button
                       key={q}
+                      type="button"
                       className="hov review-btn"
                       onClick={() => {
                         handleAnswer?.(q);
                         if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
                       }}
                       style={{
-                        padding: "16px 10px",
+                        padding: isMobile ? "10px 4px" : "16px 10px",
                         background: bg,
                         color,
                         border: `1.5px solid ${border}40`,
                         borderRadius: 14,
                         fontWeight: 800,
-                        fontSize: 14,
+                        fontSize: isMobile ? 12 : 14,
                         minWidth: 0,
                         maxWidth: "100%",
                         boxSizing: "border-box",
@@ -1093,14 +1032,14 @@ export default function ReviewEngineView({
                         alignItems: "center",
                         justifyContent: "center",
                         gap: 2,
-                        minHeight: 76,
+                        minHeight: isMobile ? 54 : 76,
                         lineHeight: 1.2,
                         touchAction: "manipulation",
                       }}
                     >
-                      <span style={{ fontSize: 22 }}>{emoji}</span>
+                      <span style={{ fontSize: isMobile ? 18 : 22 }}>{emoji}</span>
                       <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>{label}</span>
-                      {sub ? <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span> : null}
+                      {sub ? <span style={{ fontSize: isMobile ? 9.5 : 10, opacity: 0.75, fontWeight: 600 }}>{sub}</span> : null}
                     </button>
                   ))}
                 </div>
