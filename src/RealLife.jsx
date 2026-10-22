@@ -1,58 +1,27 @@
-// RealLife.jsx — Immersion anglais réel : catalogue vidéo + lecteur 3 passes
-// Protocole d'or : Passe 1 SANS sous-titres (verrouillés) → Passe 2 AVEC (blur/peek + transcript cliquable) → Passe 3 SANS.
+// RealLife.jsx — Immersion anglais réel : catalogue vidéo + transcript interactif
 // Props : callClaude, storage, setExpressions, showToast, today, isDarkMode, awardXP
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { resolveKey } from "./lib/security/apiKeys.js";
 import { extractExpressions, buildWildCard } from "./EnglishInTheWild.jsx";
+import AudioPlayButton from "./components/AudioPlayButton.jsx";
+import { safeParseJSON } from "./lib/textUtils.js";
 
-// ── Catalogue : catégories + requêtes de recherche ──────────────────────────
-const CATEGORIES = [
-  {
-    id: "ielts",
-    icon: "🎓",
-    label: "IELTS Speaking",
-    query: "IELTS speaking test band 8 full interview",
-    fallback: ["MOfDdaVeCFo", "Q-oOOGkVs_Y", "9V-hltafDrY", "3TQjWo1TA8I", "l0iGnP0Vw4Q", "5J3Q0YQEDkE"],
-  },
-  {
-    id: "leaders",
-    icon: "🏛️",
-    label: "Leaders & Speech",
-    query: "Obama Trump Steve Jobs famous speech english",
-    fallback: ["UF8uR6Z6KLc", "Bhu6endZ_9E", "d-diB65scQU", "Hq38pgSlF4Q", "1AT5klu_yAQ", "TBuIGBCF9jc"],
-  },
-  {
-    id: "realtalk",
-    icon: "🎤",
-    label: "Real Talk & Accents",
-    query: "street interview native english accents talk show",
-    fallback: ["MMkGvo_MJoc", "9Nlqzz3Zn1s", "N4-eZzWLFtM", "0Q0dGKvA0Bk", "z6EchXyieos", "eIho2S0ZahI"],
-  },
-  {
-    id: "podcast",
-    icon: "🎧",
-    label: "Podcasts & TED",
-    query: "TED talk english fast natural speech",
-    fallback: ["arj7oStGLkU", "8S0FDjFBj8o", "Ks-_Mh1QhMc", "iCvmsMzlF7o", "H14bBuluwB8", "RcGyVTAoXEU"],
-  },
-];
+import {
+  CATEGORIES,
+  PIPED_HOSTS,
+  INVIDIOUS_HOSTS,
+  getRotatingFallback,
+} from "./lib/realLifeCatalog.js";
+import { getOfficialYouTubeTranscript } from "./lib/youtubeTranscript.js";
+import { curateExpressions } from "./lib/realLifeCuration.js";
 
-// Chaîne YouTube dédiée (vidéos de la chaîne elle-même, pas une recherche)
-CATEGORIES.push({
-  id: "tvseries",
-  icon: "📺",
-  label: "Learn English With TV Series",
-  query: "Learn English With TV Series",
-  channelHandle: "LearnEnglishWithTVSeries",
-  channelName: "Learn English With TV Series",
-  fallback: [],
-});
+export { CATEGORIES, PIPED_HOSTS, INVIDIOUS_HOSTS, getRotatingFallback, curateExpressions };
 
 const YT_API = "https://www.googleapis.com/youtube/v3";
 
-// ── Vidéos d'une chaîne (par handle @...) ───────────────────────────────────
-async function fetchChannelVideos(cat, n) {
+// ── Vidéos d'une chaîne (par handle @...) avec pagination ────────────────────
+async function fetchChannelVideos(cat, n, pageToken = "", pageNum = 1) {
   const key = resolveKey("VITE_YOUTUBE_API_KEY");
   if (key) {
     try {
@@ -60,7 +29,8 @@ async function fetchChannelVideos(cat, n) {
       const d = r.ok ? await r.json() : null;
       const uploads = d?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
       if (uploads) {
-        const r2 = await fetch(`${YT_API}/playlistItems?part=snippet&maxResults=${n}&playlistId=${uploads}&key=${key}`, { signal: AbortSignal.timeout(12000) });
+        const url = `${YT_API}/playlistItems?part=snippet&maxResults=${n}&playlistId=${uploads}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}&key=${key}`;
+        const r2 = await fetch(url, { signal: AbortSignal.timeout(12000) });
         const d2 = r2.ok ? await r2.json() : null;
         const list = (d2?.items || []).map(it => ({
           id: it.snippet?.resourceId?.videoId,
@@ -68,7 +38,7 @@ async function fetchChannelVideos(cat, n) {
           channel: it.snippet?.channelTitle || cat.channelName,
           thumb: it.snippet?.thumbnails?.medium?.url,
         })).filter(v => v.id);
-        if (list.length) return list;
+        if (list.length) return { list, nextPageToken: d2?.nextPageToken || "" };
       }
     } catch { /* on passe aux instances publiques */ }
   }
@@ -77,7 +47,7 @@ async function fetchChannelVideos(cat, n) {
       const r = await fetch(`${h}/api/v1/resolveurl?url=${encodeURIComponent(`https://www.youtube.com/@${cat.channelHandle}`)}`, { signal: AbortSignal.timeout(10000) });
       const ucid = r.ok ? (await r.json())?.ucid : null;
       if (!ucid) continue;
-      const r2 = await fetch(`${h}/api/v1/channels/${ucid}/videos`, { signal: AbortSignal.timeout(10000) });
+      const r2 = await fetch(`${h}/api/v1/channels/${ucid}/videos?page=${pageNum}`, { signal: AbortSignal.timeout(10000) });
       if (!r2.ok) continue;
       const d2 = await r2.json();
       const arr = Array.isArray(d2) ? d2 : (d2?.videos || []);
@@ -85,14 +55,77 @@ async function fetchChannelVideos(cat, n) {
         id: it.videoId, title: decodeEntities(it.title || ""), channel: cat.channelName,
         thumb: `https://i.ytimg.com/vi/${it.videoId}/mqdefault.jpg`,
       }));
-      if (list.length) return list;
+      if (list.length) return { list, nextPageToken: String(pageNum + 1) };
     } catch { /* instance suivante */ }
   }
   // Dernier recours : recherche publique filtrée sur le nom de la chaîne
-  const found = await searchWithoutKey(cat.query, 50);
+  const found = await searchWithoutKey(cat.query, 50, pageNum);
   const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z]/g, "");
-  const mine = found.filter(v => norm(v.channel) === norm(cat.channelName));
-  return (mine.length ? mine : found).slice(0, n);
+  const mine = (Array.isArray(found) ? found : []).filter(v => norm(v.channel) === norm(cat.channelName));
+  const list = (mine.length ? mine : (Array.isArray(found) ? found : [])).slice(0, n);
+  return { list, nextPageToken: String(pageNum + 1) };
+}
+
+
+// ── Recherche par titre DANS une chaîne précise avec pagination ──────────────
+const normTxt = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+function matchesQuery(title, q) {
+  const words = normTxt(q).split(" ").filter(w => w.length > 1);
+  const t = normTxt(title);
+  return words.length ? words.every(w => t.includes(w)) : true;
+}
+async function searchInChannel(cat, q, n, pageToken = "", pageNum = 1) {
+  const key = resolveKey("VITE_YOUTUBE_API_KEY");
+  const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (key) {
+    try {
+      const r = await fetch(`${YT_API}/channels?part=id,contentDetails&forHandle=${encodeURIComponent(cat.channelHandle)}&key=${key}`, { signal: AbortSignal.timeout(12000) });
+      const d = r.ok ? await r.json() : null;
+      const chId = d?.items?.[0]?.id;
+      if (chId) {
+        const url = `${YT_API}/search?part=snippet&type=video&maxResults=${Math.max(n, 25)}&channelId=${chId}&q=${encodeURIComponent(q)}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ""}&key=${key}`;
+        const r2 = await fetch(url, { signal: AbortSignal.timeout(12000) });
+        const d2 = r2.ok ? await r2.json() : null;
+        const list = (d2?.items || []).map(it => ({
+          id: it.id?.videoId, title: decodeEntities(it.snippet?.title),
+          channel: it.snippet?.channelTitle || cat.channelName, thumb: it.snippet?.thumbnails?.medium?.url,
+        })).filter(v => v.id);
+        if (list.length) return { list: list.slice(0, n), nextPageToken: d2?.nextPageToken || "" };
+        // Fallback : parcourir les uploads et filtrer par titre
+        const uploads = d?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+        let token = pageToken, acc = [];
+        for (let page = 0; uploads && page < 5 && acc.length < n; page++) {
+          const r3 = await fetch(`${YT_API}/playlistItems?part=snippet&maxResults=50&playlistId=${uploads}${token ? `&pageToken=${encodeURIComponent(token)}` : ""}&key=${key}`, { signal: AbortSignal.timeout(12000) });
+          const d3 = r3.ok ? await r3.json() : null;
+          if (!d3) break;
+          for (const it of d3.items || []) {
+            const title = decodeEntities(it.snippet?.title);
+            if (matchesQuery(title, q)) acc.push({ id: it.snippet?.resourceId?.videoId, title, channel: cat.channelName, thumb: it.snippet?.thumbnails?.medium?.url });
+          }
+          token = d3.nextPageToken; if (!token) break;
+        }
+        if (acc.length) return { list: acc.slice(0, n), nextPageToken: token || "" };
+      }
+    } catch { /* instances publiques */ }
+  }
+  for (const h of INVIDIOUS_HOSTS) {
+    try {
+      const r = await fetch(`${h}/api/v1/resolveurl?url=${encodeURIComponent(`https://www.youtube.com/@${cat.channelHandle}`)}`, { signal: AbortSignal.timeout(10000) });
+      const ucid = r.ok ? (await r.json())?.ucid : null;
+      if (!ucid) continue;
+      const r2 = await fetch(`${h}/api/v1/channels/${ucid}/search?q=${encodeURIComponent(q)}&page=${pageNum}`, { signal: AbortSignal.timeout(10000) });
+      if (!r2.ok) continue;
+      const d2 = await r2.json();
+      const list = (Array.isArray(d2) ? d2 : []).filter(it => it.videoId).slice(0, n).map(it => ({
+        id: it.videoId, title: decodeEntities(it.title || ""), channel: cat.channelName,
+        thumb: `https://i.ytimg.com/vi/${it.videoId}/mqdefault.jpg`,
+      }));
+      if (list.length) return { list, nextPageToken: String(pageNum + 1) };
+    } catch { /* instance suivante */ }
+  }
+  const found = await searchWithoutKey(`${q} ${cat.channelName}`, 50, pageNum);
+  const mine = (Array.isArray(found) ? found : []).filter(v => norm(v.channel) === norm(cat.channelName));
+  return { list: mine.slice(0, n), nextPageToken: String(pageNum + 1) };
 }
 
 // ── Transcript horodaté ─────────────────────────────────────────────────────
@@ -114,85 +147,80 @@ function parseTimedText(raw) {
   return out;
 }
 
-const PIPED_HOSTS = [
-  "https://pipedapi.kavin.rocks",
-  "https://pipedapi.adminforge.de",
-  "https://api.piped.private.coffee",
-  "https://pipedapi.drgns.space",
-];
-const INVIDIOUS_HOSTS = [
-  "https://invidious.privacydev.net",
-  "https://inv.nadeko.net",
-  "https://yewtu.be",
-  "https://invidious.f5.si",
-];
-// Proxies CORS utilisés uniquement en dernier recours pour les sous-titres YouTube natifs
-const CORS_PROXIES = [
-  (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-];
+function parseJson3(data) {
+  return (data?.events || []).filter(e => e.segs).map(e => ({
+    start: (e.tStartMs || 0) / 1000,
+    dur: (e.dDurationMs || 3000) / 1000,
+    text: decodeEntities(e.segs.map(x => x.utf8 || "").join("")),
+  })).filter(x => x.text);
+}
 
+// Normalise une réponse JSON de transcript (worker maison ou service compatible)
+function segmentsFromJson(data) {
+  if (!data) return [];
+  if (Array.isArray(data.events)) return parseJson3(data);
+  const segs = data.segments || data.transcript;
+  if (!Array.isArray(segs) || !segs.length || (segs[0].start == null && segs[0].offset == null)) return [];
+  return segs.map(s => ({
+    start: Number(s.start ?? s.offset ?? 0) > 10000 ? Number(s.start ?? s.offset) / 1000 : Number(s.start ?? s.offset ?? 0),
+    dur: Number(s.dur ?? s.duration ?? 3) > 1000 ? Number(s.dur ?? s.duration) / 1000 : Number(s.dur ?? s.duration ?? 3),
+    text: decodeEntities(s.text || s.content || ""),
+  })).filter(s => s.text);
+}
+
+// Mémoire de session : évite de re-télécharger un transcript déjà obtenu
+const transcriptMemo = new Map();
+
+// Récupération des sous-titres horodatés via le protocole InnerTube Android 20.10.38 + fallbacks Worker
 async function fetchTimedTranscript(videoId) {
-  const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  if (transcriptMemo.has(videoId)) return transcriptMemo.get(videoId);
+
+  // 1) Protocole officiel InnerTube Android 20.10.38 (contourne le blocage BotGuard sans IA)
+  try {
+    const list = await getOfficialYouTubeTranscript(videoId);
+    if (Array.isArray(list) && list.length) {
+      transcriptMemo.set(videoId, list);
+      return list;
+    }
+  } catch (err) {
+    console.warn("[RealLife] getOfficialYouTubeTranscript fallback:", err?.message || err);
+  }
+
+  // 2) Fallback direct Cloudflare Worker route /yt/transcript
+  const PROXY = (import.meta.env.VITE_PROXY_URL || "").replace(/\/$/, "");
   const WORKER_URL = import.meta.env.VITE_TRANSCRIPT_WORKER_URL;
   const tries = [];
-  if (WORKER_URL) tries.push({ kind: "worker", url: `${WORKER_URL}?url=${encodeURIComponent(videoUrl)}` });
-  for (const h of PIPED_HOSTS) tries.push({ kind: "piped", url: `${h}/streams/${videoId}` });
-  for (const h of INVIDIOUS_HOSTS) tries.push({ kind: "invidious", url: `${h}/api/v1/captions/${videoId}` });
-  // Dernier recours : piste timedtext YouTube via un proxy CORS
-  for (const lang of ["en", "en-US", "en-GB"]) {
-    const direct = `https://www.youtube.com/api/timedtext?lang=${lang}&v=${videoId}`;
-    for (const mk of CORS_PROXIES) tries.push({ kind: "timedtext", url: mk(direct) });
-  }
+  if (PROXY) tries.push({ kind: "proxy", url: `${PROXY}/yt/transcript?v=${videoId}` });
+  if (WORKER_URL) tries.push({ kind: "worker", url: `${WORKER_URL}?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${videoId}`)}` });
 
   for (const t of tries) {
     try {
-      const r = await fetch(t.url, { signal: AbortSignal.timeout(12000) });
-      if (!r.ok) continue;
+      const r = await fetch(t.url, { signal: AbortSignal.timeout(30000) });
       const ct = r.headers.get("content-type") || "";
-      if (ct.includes("json")) {
-        const data = await r.json();
-        const segs = data.segments || data.transcript;
-        if (Array.isArray(segs) && segs.length && (segs[0].start != null || segs[0].offset != null)) {
-          return segs.map(s => ({
-            start: Number(s.start ?? s.offset ?? 0) > 10000 ? Number(s.start ?? s.offset) / 1000 : Number(s.start ?? s.offset ?? 0),
-            dur: Number(s.dur ?? s.duration ?? 3) > 1000 ? Number(s.dur ?? s.duration) / 1000 : Number(s.dur ?? s.duration ?? 3),
-            text: decodeEntities(s.text || s.content || ""),
-          })).filter(s => s.text);
+      if (!ct.includes("json")) {
+        const body = await r.text().catch(() => "");
+        if (r.ok) {
+          const parsed = parseTimedText(body);
+          if (parsed.length) { transcriptMemo.set(videoId, parsed); return parsed; }
         }
-        const list = data.subtitles || data.captions;
-        if (Array.isArray(list) && list.length) {
-          const origin = new URL(t.url).origin;
-          const ordered = [
-            ...list.filter(c => /^en/i.test(c.code || c.languageCode || c.label || "")),
-            ...list,
-          ];
-          for (const pick of ordered) {
-            let url = pick.url;
-            if (url && url.startsWith("/")) url = origin + url;
-            if (!url) continue;
-            try {
-              const cr = await fetch(url, { signal: AbortSignal.timeout(12000) });
-              if (!cr.ok) continue;
-              const parsed = parseTimedText(await cr.text());
-              if (parsed.length) return parsed;
-            } catch { /* piste suivante */ }
-          }
-        }
-      } else {
-        const parsed = parseTimedText(await r.text());
-        if (parsed.length) return parsed;
+        continue;
       }
-    } catch { /* on essaie la source suivante */ }
+      const data = await r.json().catch(() => null);
+      const segs = segmentsFromJson(data);
+      if (segs.length) { transcriptMemo.set(videoId, segs); return segs; }
+    } catch (e) {
+      console.warn("[RealLife] Transcript indisponible via", t.kind, e?.message || e);
+    }
   }
   return [];
 }
 
-// ── Recherche vidéo sans clé API (instances publiques Piped / Invidious) ─────
-async function searchWithoutKey(query, n) {
+// ── Recherche vidéo sans clé API (instances publiques Piped / Invidious) avec pagination ─────
+async function searchWithoutKey(query, n, page = 1) {
+  const p = Math.max(1, Number(page) || 1);
   for (const h of PIPED_HOSTS) {
     try {
-      const r = await fetch(`${h}/search?q=${encodeURIComponent(query)}&filter=videos`, { signal: AbortSignal.timeout(10000) });
+      const r = await fetch(`${h}/search?q=${encodeURIComponent(query)}&filter=videos&page=${p}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) continue;
       const d = await r.json();
       const items = (d.items || d || []).filter(it => (it.url || it.id));
@@ -210,7 +238,7 @@ async function searchWithoutKey(query, n) {
   }
   for (const h of INVIDIOUS_HOSTS) {
     try {
-      const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(query)}&type=video`, { signal: AbortSignal.timeout(10000) });
+      const r = await fetch(`${h}/api/v1/search?q=${encodeURIComponent(query)}&type=video&page=${p}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) continue;
       const d = await r.json();
       const list = (Array.isArray(d) ? d : []).filter(it => it.videoId).map(it => ({
@@ -274,11 +302,12 @@ export default function RealLife({
   const [freeUrl, setFreeUrl] = useState("");
   const [query, setQuery] = useState("");
 
+  // ── Pagination & Rotation dynamique des recherches ──
+  const [pageTokens, setPageTokens] = useState({});
+  const [pageNumbers, setPageNumbers] = useState({});
+
   // ── Session ──
   const [active, setActive] = useState(null); // { id, title, channel }
-  const [pass, setPass] = useState(1);        // 1 blind · 2 decoding · 3 mastery
-  const [unlocked, setUnlocked] = useState(false); // sous-titres débloqués ?
-  const [peek, setPeek] = useState(false);    // survol → révélation
   const [segments, setSegments] = useState([]);
   const [loadingTx, setLoadingTx] = useState(false);
   const [time, setTime] = useState(0);
@@ -295,6 +324,17 @@ export default function RealLife({
   const playerRef = useRef(null);
   const tickRef = useRef(null);
   const lineRefs = useRef({});
+  const transcriptContainerRef = useRef(null);
+  const [autoScrollTranscript, setAutoScrollTranscript] = useState(true);
+  const [showTranscript, setShowTranscript] = useState(false);
+
+  // Option : Création automatique des fiches à la fin de la vidéo (ON/OFF)
+  const [autoCreateCards, setAutoCreateCards] = useState(() => {
+    try {
+      const v = typeof window !== "undefined" ? localStorage.getItem("reallife_auto_create_cards") : null;
+      return v === null ? true : v === "1";
+    } catch { return true; }
+  });
 
   // Restaure la dernière catégorie
   useEffect(() => {
@@ -310,20 +350,35 @@ export default function RealLife({
     storage?.set?.("reallife_state", { catId, count, videos, query }).catch?.(() => { });
   }, [catId, count, videos, query]); // eslint-disable-line
 
-  // ── Recherche du catalogue ──
+  // ── Recherche du catalogue avec rotation continue ──
   const search = useCallback(async () => {
     const cat = CATEGORIES.find(c => c.id === catId) || CATEGORIES[0];
     const n = Math.max(1, Math.min(25, Number(count) || 6));
+    const q = query.trim();
+    const searchScopeKey = q ? `q:${q.toLowerCase()}` : `cat:${cat.id}`;
+    const curPage = pageNumbers[searchScopeKey] || 0;
+    const nextPage = curPage + 1;
+    const curToken = pageTokens[searchScopeKey] || "";
+
     setSearching(true);
     try {
-      // Recherche par titre : l'utilisateur a tapé le nom d'une vidéo
-      const q = query.trim();
+      // 1. Recherche par titre textuel (requête directe utilisateur)
       if (q) {
-        const term = cat.channelHandle ? `${q} ${cat.channelName}` : q;
+        if (cat.channelHandle) {
+          const res = await searchInChannel(cat, q, n, curToken, nextPage);
+          const list = res.list || [];
+          setVideos(list);
+          setPageTokens(prev => ({ ...prev, [searchScopeKey]: res.nextPageToken || "" }));
+          setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+          toast(list.length ? `${list.length} vidéo(s) de ${cat.channelName} pour « ${q} » (Lot ${nextPage})` : `Aucune vidéo « ${q} » trouvée sur ${cat.channelName}.`, list.length ? "success" : "warning");
+          return;
+        }
+        const term = q;
         const key = resolveKey("VITE_YOUTUBE_API_KEY");
         if (key) {
           try {
-            const r = await fetch(`${YT_API}/search?part=snippet&type=video&maxResults=${n}&videoCaption=closedCaption&videoEmbeddable=true&relevanceLanguage=en&q=${encodeURIComponent(term)}&key=${key}`, { signal: AbortSignal.timeout(12000) });
+            const url = `${YT_API}/search?part=snippet&type=video&maxResults=${n}&videoEmbeddable=true&q=${encodeURIComponent(term)}${curToken ? `&pageToken=${encodeURIComponent(curToken)}` : ""}&key=${key}`;
+            const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
             if (r.ok) {
               const d = await r.json();
               const list = (d.items || []).map(it => ({
@@ -334,31 +389,48 @@ export default function RealLife({
               })).filter(v => v.id);
               if (list.length) {
                 setVideos(list);
-                toast(`${list.length} vidéo(s) trouvée(s) pour « ${q} »`, "success");
+                setPageTokens(prev => ({ ...prev, [searchScopeKey]: d.nextPageToken || "" }));
+                setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+                toast(`${list.length} vidéo(s) trouvée(s) pour « ${q} » (Lot ${nextPage})`, "success");
                 return;
               }
             }
-          } catch { /* on tente la recherche publique */ }
+          } catch { /* recherche publique fallback */ }
         }
-        const found = await searchWithoutKey(term, Math.max(n, 10));
+        const found = await searchWithoutKey(term, Math.max(n, 10), nextPage);
         if (found.length) {
           setVideos(found.slice(0, n));
-          toast(`${Math.min(found.length, n)} vidéo(s) trouvée(s) pour « ${q} »`, "success");
+          setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+          toast(`${Math.min(found.length, n)} vidéo(s) trouvée(s) pour « ${q} » (Lot ${nextPage})`, "success");
         } else {
           setVideos([]);
-          toast(`Aucune vidéo trouvée pour « ${q} » — vérifie le titre ou colle l'URL directe.`, "warning");
+          toast(`Aucune autre vidéo trouvée pour « ${q} » — réessaie ou colle l'URL directe.`, "warning");
         }
         return;
       }
+
+      // 2. Chaîne officielle (Learn English With TV Series) avec pagination YouTube & Invidious
       if (cat.channelHandle) {
-        const list = await fetchChannelVideos(cat, n);
+        const res = await fetchChannelVideos(cat, n, curToken, nextPage);
+        let list = res.list || [];
+        if (!list.length && cat.fallback?.length) {
+          list = getRotatingFallback(cat, n, nextPage);
+        }
         setVideos(list);
-        toast(list.length ? `${list.length} vidéo(s) de la chaîne ${cat.channelName}` : "Chaîne momentanément inaccessible — réessaie ou colle une URL.", list.length ? "success" : "warning");
+        setPageTokens(prev => ({ ...prev, [searchScopeKey]: res.nextPageToken || "" }));
+        setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+        toast(list.length ? `${list.length} nouvelle(s) vidéo(s) de ${cat.channelName} (Lot ${nextPage})` : "Chaîne momentanément inaccessible — réessaie ou colle une URL.", list.length ? "success" : "warning");
         return;
       }
+
+      // 3. Recherche thématique (IELTS Speaking) avec rotation continue de requêtes et de pages
+      const queriesList = Array.isArray(cat.queries) && cat.queries.length ? cat.queries : [cat.query];
+      const qIndex = (nextPage - 1) % queriesList.length;
+      const targetQuery = queriesList[qIndex];
+
       const key = resolveKey("VITE_YOUTUBE_API_KEY");
       if (key) {
-        const url = `${YT_API}/search?part=snippet&type=video&maxResults=${n}&videoCaption=closedCaption&videoEmbeddable=true&relevanceLanguage=en&q=${encodeURIComponent(cat.query)}&key=${key}`;
+        const url = `${YT_API}/search?part=snippet&type=video&maxResults=${n}&videoCaption=closedCaption&videoEmbeddable=true&relevanceLanguage=en&q=${encodeURIComponent(targetQuery)}${curToken ? `&pageToken=${encodeURIComponent(curToken)}` : ""}&key=${key}`;
         const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
         if (r.ok) {
           const d = await r.json();
@@ -370,42 +442,41 @@ export default function RealLife({
           })).filter(v => v.id);
           if (list.length) {
             setVideos(list);
-            toast(`${list.length} vidéo(s) trouvée(s) — ${cat.label}`, "success");
+            setPageTokens(prev => ({ ...prev, [searchScopeKey]: d.nextPageToken || "" }));
+            setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+            toast(`${list.length} nouvelle(s) vidéo(s) chargée(s) — ${cat.label} (Lot ${nextPage})`, "success");
             return;
           }
         }
       }
-      // Sans clé (ou clé en échec) : recherche via instances publiques
-      const open = await searchWithoutKey(cat.query, n);
+
+      // Sans clé (ou clé en échec) : recherche via instances publiques avec pagination
+      const open = await searchWithoutKey(targetQuery, n, nextPage);
       if (open.length) {
         setVideos(open);
-        toast(`${open.length} vidéo(s) trouvée(s) — ${cat.label} (recherche publique)`, "success");
+        setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+        toast(`${open.length} nouvelle(s) vidéo(s) trouvée(s) — ${cat.label} (Lot ${nextPage})`, "success");
         return;
       }
-      // Dernier recours : sélection curatée
-      const list = cat.fallback.slice(0, n).map(id => ({
-        id, title: `${cat.label} — capsule ${id}`, channel: "Sélection curatée",
-        thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
-      }));
+
+      // Dernier recours : rotation cyclique continue dans la sélection curatée (garantit du contenu neuf à chaque clic)
+      const list = getRotatingFallback(cat, n, nextPage);
       setVideos(list);
-      toast(`Recherche en ligne indisponible — ${list.length} capsule(s) curatée(s) affichée(s).`, "info");
+      setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+      toast(`Sélection curatée renouvelée — Lot ${nextPage} (${list.length} capsules).`, "info");
     } catch (e) {
-      let list = [];
-      try { list = await searchWithoutKey(cat.query, n); } catch { /* ignore */ }
-      if (!list.length) {
-        list = cat.fallback.slice(0, n).map(id => ({
-          id, title: `${cat.label} — capsule ${id}`, channel: "Sélection curatée",
-          thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg`,
-        }));
-        toast("Recherche échouée — sélection curatée affichée.", "warning");
+      const list = getRotatingFallback(cat, n, nextPage);
+      if (list.length) {
+        setVideos(list);
+        setPageNumbers(prev => ({ ...prev, [searchScopeKey]: nextPage }));
+        toast(`Connexion lente : Lot ${nextPage} affiché depuis la sélection.`, "warning");
       } else {
-        toast(`${list.length} vidéo(s) trouvée(s) (recherche publique).`, "success");
+        toast("Erreur de chargement des vidéos.", "warning");
       }
-      setVideos(list);
     } finally {
       setSearching(false);
     }
-  }, [catId, count, query, toast]);
+  }, [catId, count, query, pageTokens, pageNumbers, toast]);
 
   // ── Ouverture d'une session ──
   const loadTranscript = useCallback(async (videoId, silent = false) => {
@@ -426,21 +497,68 @@ export default function RealLife({
 
   const openVideo = useCallback(async (v) => {
     setActive(v);
-    const isTv = catId === "tvseries" || v?.category === "tvseries" || /learn english with/i.test(v?.channel || "") || /learn english with/i.test(v?.title || "");
-    setPass(isTv ? 2 : 1); setUnlocked(isTv); setPeek(isTv);
     setSegments([]); setTime(0); setDuration(0); setWord(null);
+    setShowTranscript(false);
     wildRunRef.current = null;
     setWild({ status: "idle", items: [], done: 0, total: 0 });
     setWildSelected([]); setShowWild(false); setWildPrompted(false);
-    await loadTranscript(v.id);
-  }, [catId, loadTranscript]);
+    if (autoCreateCards) {
+      await loadTranscript(v.id);
+    }
+  }, [loadTranscript, autoCreateCards]);
+
+  const toggleTranscript = useCallback(() => {
+    setShowTranscript(prev => {
+      const next = !prev;
+      if (next && active?.id && !segments.length && !loadingTx) {
+        loadTranscript(active.id);
+      }
+      return next;
+    });
+  }, [active, segments.length, loadingTx, loadTranscript]);
 
   const closeVideo = useCallback(() => {
     try { playerRef.current?.destroy?.(); } catch { }
     playerRef.current = null;
     if (tickRef.current) clearInterval(tickRef.current);
     setActive(null);
+    setShowTranscript(false);
   }, []);
+
+  const toggleAutoCreateCards = useCallback(() => {
+    setAutoCreateCards(prev => {
+      const next = !prev;
+      try { localStorage.setItem("reallife_auto_create_cards", next ? "1" : "0"); } catch {}
+      toast(next ? "⚡ Création de fiches & transcription activées" : "⏸️ Mode visionnage pur : transcription et fiches désactivées", "info");
+      if (next && active?.id && !segments.length && !loadingTx) {
+        loadTranscript(active.id);
+      } else if (!next) {
+        wildRunRef.current = null;
+        setSegments([]);
+        setWild({ status: "idle", items: [], done: 0, total: 0 });
+      }
+      return next;
+    });
+  }, [toast, active, segments, loadingTx, loadTranscript]);
+
+  const normFront = useCallback((v) => String(v || "").toLowerCase().replace(/\s+/g, " ").trim(), []);
+
+  const existingDeckCardsForVideo = useMemo(() => {
+    if (!active?.title || !expressions?.length) return [];
+    const normTitle = normFront(active.title);
+    return expressions.filter(e => {
+      const cat = normFront(e.category || "");
+      return cat.includes(normTitle) || (e.tags && e.tags.some(t => normFront(t).includes(normTitle)));
+    });
+  }, [active, expressions, normFront]);
+
+  const alreadyInDeckCount = useMemo(() => {
+    if (!wild.items.length) {
+      return existingDeckCardsForVideo.length;
+    }
+    const existing = new Set((expressions || []).map(e => normFront(e.front)));
+    return wild.items.filter(item => existing.has(normFront(item?.expr))).length;
+  }, [wild.items, expressions, existingDeckCardsForVideo, normFront]);
 
   // ── Player YouTube ──
   useEffect(() => {
@@ -453,6 +571,7 @@ export default function RealLife({
         videoId: active.id,
         playerVars: {
           rel: 0, modestbranding: 1, cc_load_policy: 0, iv_load_policy: 3, playsinline: 1,
+          enablejsapi: 1, origin: window.location.origin,
         },
         events: {
           onReady: (e) => { setDuration(e.target.getDuration() || 0); },
@@ -476,13 +595,14 @@ export default function RealLife({
 
   // ── Lancement de l'extraction dès que le transcript est disponible ──
   useEffect(() => {
-    if (!active || !segments.length || !callClaude) return;
+    if (!autoCreateCards || !active || !segments.length || !callClaude) return;
     if (wildRunRef.current === active.id) return;
     const runId = active.id;
     wildRunRef.current = runId;
     const full = segments.map(s => s.text).join(" ").replace(/\s+/g, " ").trim();
     const chunks = [];
-    for (let i = 0; i < full.length && chunks.length < 6; i += 6000) chunks.push(full.slice(i, i + 6000));
+    // Aucun plafond arbitraire : on analyse 100% de la vidéo par blocs de 6000 caractères
+    for (let i = 0; i < full.length; i += 6000) chunks.push(full.slice(i, i + 6000));
     setWild({ status: "running", items: [], done: 0, total: chunks.length });
     (async () => {
       const seen = new Set();
@@ -506,18 +626,63 @@ export default function RealLife({
     })();
   }, [active, segments, callClaude]);
 
-  // ── Fin de visionnage → proposer les fiches ──
+  // ── Fin de visionnage → Curation IA & Création des fiches ──
   const [endedTick, setEndedTick] = useState(0);
+  const [isCurating, setIsCurating] = useState(false);
   const nearEnd = duration > 0 && time / duration >= 0.98;
+
+  const performCurationAndCreate = useCallback(async (isAuto = false) => {
+    if (!active || !wild.items.length || isCurating) return;
+    setIsCurating(true);
+    toast("✨ Analyse IA en cours : sélection des expressions les plus percutantes...", "info");
+
+    let bestItems = wild.items;
+    if (callClaude && wild.items.length > 6) {
+      try {
+        bestItems = await curateExpressions(callClaude, wild.items, active.title);
+      } catch (err) {
+        console.warn("RealLife curation IA fallback", err);
+      }
+    }
+
+    setWild(prev => ({ ...prev, items: bestItems, isCurated: true }));
+    setWildSelected(bestItems.map((_, i) => i));
+    setIsCurating(false);
+
+    if (isAuto && autoCreateCards && setExpressions) {
+      const existing = new Set((expressions || []).map(e => normFront(e.front)));
+      const now = Date.now();
+      const cards = [];
+      bestItems.forEach((e, i) => {
+        const k = normFront(e?.expr);
+        if (!k || existing.has(k)) return;
+        existing.add(k);
+        cards.push(buildWildCard(e, `reallife_${now}_${i}`, `RealLife · ${active?.title || ""}`));
+      });
+      if (cards.length) {
+        setExpressions(prev => [...cards, ...prev]);
+        toast(`✨ IA : ${cards.length} fiche(s) pépite(s) ajoutée(s) automatiquement à MemoMaster !`, "success");
+        awardXP?.(cards.length * 3);
+      } else {
+        toast("Toutes les meilleures expressions de cette vidéo sont déjà dans ton deck !", "info");
+      }
+    } else {
+      setShowWild(true);
+    }
+  }, [active, wild.items, isCurating, callClaude, autoCreateCards, setExpressions, expressions, awardXP, toast]);
+
   useEffect(() => {
     if (!active || wildPrompted) return;
     if (endedTick > 0 || nearEnd) {
       setWildPrompted(true);
-      setShowWild(true);
+      if (autoCreateCards) {
+        performCurationAndCreate(true);
+      } else {
+        toast("🎬 Vidéo terminée. Expressions disponibles dans le bouton Fiches en haut !", "info");
+      }
     }
-  }, [endedTick, nearEnd, active, wildPrompted]);
+  }, [endedTick, nearEnd, active, wildPrompted, autoCreateCards, performCurationAndCreate, toast]);
 
-  const normFront = (v) => String(v || "").toLowerCase().replace(/\s+/g, " ").trim();
   const addWildCards = () => {
     if (!setExpressions) return;
     const existing = new Set((expressions || []).map(e => normFront(e.front)));
@@ -540,18 +705,6 @@ export default function RealLife({
     setShowWild(false);
   };
 
-  // ── Verrou de la passe 1 : 90 % de la vidéo écoutée ──
-  const progress = duration ? Math.min(1, time / duration) : 0;
-  const canUnlock = progress >= 0.9;
-
-  useEffect(() => {
-    if (pass === 1 && canUnlock && !unlocked) {
-      setUnlocked(true);
-      toast("🔓 Passe 1 validée — sous-titres débloqués avec succès !", "success");
-      awardXP?.(20);
-    }
-  }, [canUnlock, pass, unlocked]); // eslint-disable-line
-
   // ── Ligne courante ──
   const currentIdx = useMemo(() => {
     if (!segments.length) return -1;
@@ -562,11 +715,16 @@ export default function RealLife({
     return idx;
   }, [segments, time]);
 
+  // Défilement fluide confiné au conteneur des sous-titres (la vidéo et la page restent immobiles)
   useEffect(() => {
-    if (pass === 2 && currentIdx >= 0) {
-      lineRefs.current[currentIdx]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!autoScrollTranscript || currentIdx < 0) return;
+    const container = transcriptContainerRef.current;
+    const el = lineRefs.current[currentIdx];
+    if (container && el) {
+      const targetTop = el.offsetTop - container.offsetTop - (container.clientHeight / 2) + (el.clientHeight / 2);
+      container.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
     }
-  }, [currentIdx, pass]);
+  }, [currentIdx, autoScrollTranscript]);
 
   // ── Contrôles réflexes ──
   const seek = (t) => { try { playerRef.current?.seekTo(Math.max(0, t), true); playerRef.current?.playVideo?.(); } catch { } };
@@ -589,36 +747,14 @@ export default function RealLife({
     return () => window.removeEventListener("keydown", onKey);
   }, [active, currentIdx, segments]); // eslint-disable-line
 
-  // ── Changement de passe ──
-  const goPass = (n) => {
-    if (n > 1 && !unlocked) { toast("🔒 Termine d'abord la passe 1 (écoute à l'aveugle à 90 %).", "warning"); return; }
-    setPass(n);
-    setPeek(false);
-    if (n === 2 || n === 3) seek(0);
-    if (n === 3) awardXP?.(15);
-    const wantNative = n === 2 && !segments.length;
-    const p = playerRef.current;
-    try {
-      if (wantNative) {
-        p?.loadModule?.("captions");
-        p?.loadModule?.("cc");
-        p?.setOption?.("captions", "track", { languageCode: "en" });
-        p?.setOption?.("cc", "track", { languageCode: "en" });
-      } else {
-        p?.setOption?.("captions", "track", {});
-        p?.setOption?.("cc", "track", {});
-      }
-    } catch { }
-  };
-
   const retriedRef = useRef(false);
   useEffect(() => { retriedRef.current = false; }, [active?.id]);
   useEffect(() => {
-    if (pass === 2 && !loadingTx && !segments.length && active && !retriedRef.current) {
+    if ((autoCreateCards || showTranscript) && !loadingTx && !segments.length && active && !retriedRef.current) {
       retriedRef.current = true;
       loadTranscript(active.id, true);
     }
-  }, [pass, loadingTx, segments.length, active, loadTranscript]);
+  }, [autoCreateCards, showTranscript, loadingTx, segments.length, active, loadTranscript]);
 
   // ── Clic sur un mot ──
   const onWordClick = useCallback(async (w, sentence) => {
@@ -666,90 +802,30 @@ export default function RealLife({
     awardXP?.(5);
   }, [word, setExpressions, today, active, toast, awardXP]);
 
-  // ── Design Tokens & Couleurs (Bleu Roi & Fond Blanc) ──
-  const royalBlue = "#2563EB";
-  const royalBlueDark = "#1D4ED8";
-  const royalBlueSoft = "rgba(37, 99, 235, 0.08)";
-  const royalBlueBorder = "rgba(37, 99, 235, 0.25)";
+  // ── Design Tokens & Couleurs (Adaptatifs Jour/Nuit & Design System) ──
+  const royalBlue = "var(--mm-primary, #6366F1)";
+  const royalBlueDark = "var(--mm-primary-hover, #4F46E5)";
+  const royalBlueSoft = "color-mix(in srgb, var(--mm-primary, #6366F1) 12%, transparent)";
+  const royalBlueBorder = "color-mix(in srgb, var(--mm-primary, #6366F1) 28%, transparent)";
 
   const cardStyle = {
-    background: isDarkMode ? "rgba(15, 23, 42, 0.85)" : "#FFFFFF",
-    border: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.08)" : "rgba(15, 23, 42, 0.08)"}`,
+    background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-surface, #0f172a) 85%, transparent)" : "#FFFFFF",
+    border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-border, #ffffff) 10%, transparent)" : "color-mix(in srgb, var(--mm-border, #0f172a) 10%, transparent)"}`,
     borderRadius: 20,
     padding: 22,
-    boxShadow: isDarkMode ? "0 8px 32px rgba(0, 0, 0, 0.25)" : "0 4px 20px rgba(0, 0, 0, 0.04)",
+    boxShadow: isDarkMode ? "0 8px 32px rgba(0, 0, 0, 0.35)" : "0 4px 20px rgba(0, 0, 0, 0.05)",
   };
 
-  const txtColor = isDarkMode ? "#F1F5F9" : "#0F172A";
-  const dimColor = isDarkMode ? "rgba(241, 245, 249, 0.65)" : "rgba(15, 23, 42, 0.65)";
-  const inputBg = isDarkMode ? "rgba(0, 0, 0, 0.3)" : "#F8FAFC";
-  const inputBorder = isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(15, 23, 42, 0.12)";
+  const txtColor = isDarkMode ? "var(--mm-fg, #F1F5F9)" : "var(--mm-fg, #0F172A)";
+  const dimColor = isDarkMode ? "var(--mm-fg-muted, rgba(241, 245, 249, 0.65))" : "var(--mm-fg-muted, rgba(15, 23, 42, 0.65))";
+  const inputBg = isDarkMode ? "color-mix(in srgb, var(--mm-bg, #000000) 45%, transparent)" : "var(--mm-bg-elev, #F8FAFC)";
+  const inputBorder = isDarkMode ? "color-mix(in srgb, var(--mm-border, #ffffff) 14%, transparent)" : "color-mix(in srgb, var(--mm-border, #0f172a) 14%, transparent)";
 
   // ════════════════════════ VUE CATALOGUE ════════════════════════
   if (!active) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-        {/* En-tête Hero en Bleu Pastel Lumineux (Identique à "Modes & outils") */}
-        <div style={{
-          ...cardStyle,
-          position: "relative",
-          overflow: "hidden",
-          background: isDarkMode
-            ? "linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(99, 102, 241, 0.35))"
-            : "linear-gradient(135deg, rgba(37, 99, 235, 0.14), rgba(59, 130, 246, 0.22))",
-          border: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.4)" : "rgba(59, 130, 246, 0.35)"}`,
-          boxShadow: "0 4px 16px rgba(37, 99, 235, 0.12)",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8, flexWrap: "wrap" }}>
-            <span style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 38,
-              height: 38,
-              borderRadius: 12,
-              background: isDarkMode ? "rgba(37, 99, 235, 0.25)" : "rgba(37, 99, 235, 0.15)",
-              border: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.4)" : "rgba(59, 130, 246, 0.35)"}`,
-              fontSize: 20,
-            }}>🌍</span>
-            <div style={{
-              fontSize: 20,
-              fontWeight: 900,
-              color: isDarkMode ? "#93C5FD" : "#1D4ED8",
-              letterSpacing: "-0.02em",
-            }}>
-              RealLife · Immersion Anglais Réel
-            </div>
-            <span style={{
-              marginLeft: "auto",
-              padding: "5px 12px",
-              borderRadius: 999,
-              fontSize: 11,
-              fontWeight: 800,
-              background: isDarkMode ? "rgba(37, 99, 235, 0.25)" : "rgba(37, 99, 235, 0.15)",
-              color: isDarkMode ? "#93C5FD" : "#1D4ED8",
-              border: `1px solid ${isDarkMode ? "rgba(99, 102, 241, 0.4)" : "rgba(59, 130, 246, 0.35)"}`,
-              backdropFilter: "blur(8px)",
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}>
-              Protocole 3 Passes
-            </span>
-          </div>
 
-          <p style={{
-            margin: 0,
-            fontSize: 13,
-            color: isDarkMode ? "rgba(241, 245, 249, 0.85)" : "#334155",
-            lineHeight: 1.6,
-            maxWidth: 840,
-          }}>
-            Entraîne ton oreille sur des flux réels sans sous-titres artificiels. Applique la méthode d'or :
-            <strong style={{ color: isDarkMode ? "#93C5FD" : "#1D4ED8", fontWeight: 800 }}> 1. Blind</strong> (écoute pure) →
-            <strong style={{ color: isDarkMode ? "#93C5FD" : "#1D4ED8", fontWeight: 800 }}> 2. Decoding</strong> (transcript interactif) →
-            <strong style={{ color: isDarkMode ? "#93C5FD" : "#1D4ED8", fontWeight: 800 }}> 3. Mastery</strong> (ancrage définitif).
-          </p>
-        </div>
 
         {/* Barre de Recherche & Filtres */}
         <div style={cardStyle}>
@@ -782,7 +858,7 @@ export default function RealLife({
                     color: activeCat ? "#FFFFFF" : txtColor,
                     background: activeCat ? `linear-gradient(135deg, ${royalBlue}, ${royalBlueDark})` : (isDarkMode ? "rgba(255, 255, 255, 0.04)" : "#F8FAFC"),
                     border: `1px solid ${activeCat ? "transparent" : inputBorder}`,
-                    boxShadow: activeCat ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none",
+                    boxShadow: activeCat ? "0 4px 14px color-mix(in srgb, var(--mm-primary, #6366F1) 35%, transparent)" : "none",
                     transition: "all 0.18s ease",
                   }}
                 >
@@ -864,15 +940,21 @@ export default function RealLife({
                 color: "#FFFFFF",
                 fontWeight: 800,
                 fontSize: 14,
-                boxShadow: "0 4px 14px rgba(37, 99, 235, 0.3)",
+                boxShadow: "0 4px 14px color-mix(in srgb, var(--mm-primary, #6366F1) 30%, transparent)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 gap: 8,
               }}
             >
-              <span>{searching ? "⏳" : "🔍"}</span>
-              <span>{searching ? "Recherche en cours…" : "Rechercher"}</span>
+              <span>{searching ? "⏳" : ((pageNumbers[query.trim() ? `q:${query.trim().toLowerCase()}` : `cat:${catId}`] || 0) > 0 ? "🔄" : "🔍")}</span>
+              <span>
+                {searching
+                  ? "Recherche en cours…"
+                  : (pageNumbers[query.trim() ? `q:${query.trim().toLowerCase()}` : `cat:${catId}`] || 0) > 0
+                    ? `Nouvelles vidéos (Lot ${(pageNumbers[query.trim() ? `q:${query.trim().toLowerCase()}` : `cat:${catId}`] || 0) + 1})`
+                    : "Rechercher"}
+              </span>
             </button>
           </div>
 
@@ -983,7 +1065,7 @@ export default function RealLife({
             <div style={{ fontSize: 36, marginBottom: 12 }}>🎬</div>
             <div style={{ fontWeight: 800, fontSize: 16, color: txtColor, marginBottom: 6 }}>Aucune vidéo sélectionnée</div>
             <div style={{ fontSize: 13, color: dimColor, maxWidth: 420, margin: "0 auto", lineHeight: 1.5 }}>
-              Choisis une thématique ci-dessus ou colle un lien YouTube direct pour lancer le protocole 3 Passes (Blind → Decoding → Mastery).
+              Choisis une capsule ci-dessus ou colle un lien YouTube direct pour lancer la vidéo avec transcript interactif.
             </div>
           </div>
         )}
@@ -992,14 +1074,6 @@ export default function RealLife({
   }
 
   // ════════════════════════ VUE SESSION ════════════════════════
-  const passes = [
-    { n: 1, icon: "🎧", label: "Blind", hint: "0 sous-titre" },
-    { n: 2, icon: "👁️", label: "Decoding", hint: "transcript interactif" },
-    { n: 3, icon: "👑", label: "Mastery", hint: "validation finale" },
-  ];
-
-  const isTvSeries = catId === "tvseries" || active?.category === "tvseries" || /learn english with/i.test(active?.channel || "") || /learn english with/i.test(active?.title || "");
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* Barre Supérieure Vidéo */}
@@ -1029,75 +1103,66 @@ export default function RealLife({
           {active.title}
         </div>
         <button
-          onClick={() => setShowWild(true)}
+          onClick={toggleAutoCreateCards}
           className="hov"
-          title="Extraction In the Wild en arrière-plan"
-          style={{ padding: "8px 12px", borderRadius: 10, cursor: "pointer", background: royalBlueSoft, color: txtColor, border: `1px solid ${royalBlueBorder}`, fontWeight: 800, fontSize: 12 }}
+          title={autoCreateCards ? "Mode apprentissage actif (fiches et transcription) : clique pour passer en visionnage pur" : "Mode visionnage pur : clique pour activer la transcription et les fiches"}
+          style={{
+            padding: "8px 14px",
+            borderRadius: 10,
+            cursor: "pointer",
+            background: autoCreateCards ? "rgba(99, 102, 241, 0.22)" : "rgba(255, 255, 255, 0.05)",
+            color: autoCreateCards ? (isDarkMode ? "#C4B5FD" : "#4338CA") : dimColor,
+            border: `1px solid ${autoCreateCards ? "rgba(99, 102, 241, 0.45)" : inputBorder}`,
+            fontWeight: 800,
+            fontSize: 12,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            transition: "all 0.2s ease",
+            boxShadow: autoCreateCards ? "0 2px 10px rgba(99, 102, 241, 0.2)" : "none",
+          }}
         >
-          {wild.status === "running" && `⛏️ Extraction… ${wild.done}/${wild.total} · ${wild.items.length} fiche(s)`}
-          {wild.status === "ready" && `🃏 ${wild.items.length} fiche(s) prêtes`}
-          {wild.status === "empty" && "🃏 Aucune fiche"}
-          {wild.status === "idle" && (loadingTx ? "⏳ Transcript…" : segments.length ? "⛏️ Extraction…" : "🃏 Fiches (transcript requis)")}
+          <span>{autoCreateCards ? "⚡ Mode Fiches : ON" : "🎬 Visionnage pur"}</span>
         </button>
-      </div>
 
-      {/* Mode TV Series : 1 seul visionnage direct OU Timeline Protocole 3 Passes */}
-      {isTvSeries ? (
-        <div style={{
-          padding: "10px 16px",
-          borderRadius: 14,
-          background: isDarkMode ? "rgba(37, 99, 235, 0.12)" : "rgba(37, 99, 235, 0.08)",
-          border: `1px solid ${royalBlueBorder}`,
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          fontSize: 13,
-          fontWeight: 700,
-          color: txtColor,
-        }}>
-          <span style={{ fontSize: 18 }}>📺</span>
-          <span>Visionnage unique direct · Learn English With TV Series (accès libre aux sous-titres et transcript interactif)</span>
-        </div>
-      ) : (
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {passes.map(p => {
-            const locked = p.n > 1 && !unlocked;
-            const on = pass === p.n;
-            return (
-              <button
-                key={p.n}
-                onClick={() => goPass(p.n)}
-                className="hov"
-                style={{
-                  flex: "1 1 180px",
-                  padding: "10px 14px",
-                  borderRadius: 14,
-                  cursor: locked ? "not-allowed" : "pointer",
-                  opacity: locked ? 0.45 : 1,
-                  fontWeight: 800,
-                  fontSize: 13,
-                  textAlign: "left",
-                  color: on ? "#FFFFFF" : txtColor,
-                  background: on
-                    ? `linear-gradient(135deg, ${royalBlue}, ${royalBlueDark})`
-                    : isDarkMode ? "rgba(255, 255, 255, 0.03)" : "#FFFFFF",
-                  border: `1px solid ${on ? "transparent" : inputBorder}`,
-                  boxShadow: on ? "0 4px 14px rgba(37, 99, 235, 0.3)" : "none",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>{locked ? "🔒" : p.icon}</span>
-                  <span>Passe {p.n} · {p.label}</span>
-                </div>
-                <div style={{ opacity: on ? 0.85 : 0.6, fontWeight: 600, fontSize: 11, marginTop: 2 }}>
-                  {p.hint}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+        {/* Le bouton d'action des fiches n'apparaît que s'il est pertinent : soit en mode Fiches actif, soit si des fiches ont déjà été créées */}
+        {(alreadyInDeckCount > 0 || autoCreateCards) && (
+          <button
+            onClick={() => {
+              if (wild.items.length || existingDeckCardsForVideo.length) setShowWild(true);
+            }}
+            className="hov"
+            title={
+              alreadyInDeckCount > 0
+                ? `${alreadyInDeckCount} fiche(s) de cette vidéo sont déjà créées et enregistrées dans MemoMaster. Clique pour les voir.`
+                : "Voir les fiches extraites par l'IA"
+            }
+            style={{
+              padding: "8px 14px",
+              borderRadius: 10,
+              cursor: "pointer",
+              background: alreadyInDeckCount > 0 ? "rgba(34, 197, 94, 0.16)" : royalBlueSoft,
+              color: alreadyInDeckCount > 0 ? (isDarkMode ? "#86EFAC" : "#15803D") : txtColor,
+              border: `1px solid ${alreadyInDeckCount > 0 ? "rgba(34, 197, 94, 0.35)" : royalBlueBorder}`,
+              fontWeight: 800,
+              fontSize: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              transition: "all 0.2s ease",
+            }}
+          >
+            {alreadyInDeckCount > 0 ? `✅ ${alreadyInDeckCount} fiche(s) créée(s)` : (
+              <>
+                {wild.status === "running" && `⛏️ Extraction… ${wild.done}/${wild.total} · ${wild.items.length} fiche(s)`}
+                {wild.status === "ready" && (wild.isCurated ? `✨ ${wild.items.length} pépite(s) prête(s)` : `🃏 ${wild.items.length} fiche(s) prêtes`)}
+                {wild.status === "empty" && "🃏 Aucune fiche"}
+                {wild.status === "idle" && (loadingTx ? "⏳ Transcript…" : segments.length ? "⛏️ Extraction…" : "🃏 Fiches")}
+              </>
+            )}
+          </button>
+        )}
+      </div>
 
       {/* Lecteur Vidéo & Dock Contrôles (taille compacte centrée) */}
       <div style={{ ...cardStyle, padding: 0, overflow: "hidden", maxWidth: 560, width: "100%", margin: "0 auto" }}>
@@ -1166,79 +1231,122 @@ export default function RealLife({
           </div>
         </div>
 
-        {/* Barre de Progression de Déblocage (Passe 1) */}
-        {!unlocked && (
-          <div style={{ padding: "0 16px 14px", background: isDarkMode ? "rgba(0, 0, 0, 0.2)" : "#F8FAFC" }}>
-            <div style={{
-              height: 7,
-              borderRadius: 99,
-              background: isDarkMode ? "rgba(255, 255, 255, 0.08)" : "rgba(15, 23, 42, 0.08)",
-              overflow: "hidden",
-            }}>
-              <div style={{
-                width: `${Math.round(progress * 100)}%`,
-                height: "100%",
-                background: `linear-gradient(90deg, ${royalBlue}, #3B82F6)`,
-                transition: "width 0.2s linear",
-              }} />
-            </div>
-            <div style={{ fontSize: 11, color: dimColor, marginTop: 6, fontWeight: 600 }}>
-              🔒 Sous-titres verrouillés — écoute encore {Math.max(0, 90 - Math.round(progress * 100))}% pour débloquer la Passe 2.
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Guide Passe 1 */}
-      {pass === 1 && (
-        <div style={{ ...cardStyle, textAlign: "center", padding: "28px 20px" }}>
-          <div style={{ fontSize: 32, marginBottom: 6 }}>🎧</div>
-          <div style={{ fontWeight: 900, color: txtColor, fontSize: 16 }}>Passe 1 · Écoute Active Pure</div>
-          <div style={{ color: dimColor, fontSize: 13, marginTop: 6, lineHeight: 1.6, maxWidth: 600, margin: "6px auto 0" }}>
-            Aucun texte ni sous-titre. Concentre-toi sur l'intonation, le débit et le sens général.
-            Capter 50 à 60% est normal et constitue le cœur du déblocage auditif.
+      {/* Emplacement Transcript : Bouton pour afficher la transcription */}
+      {!showTranscript && (
+        <div style={{
+          ...cardStyle,
+          padding: "16px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 12,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>📝</span>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: 14, color: txtColor }}>
+                Sous-titres & Transcription
+              </div>
+              <div style={{ fontSize: 12, color: dimColor }}>
+                {segments.length > 0
+                  ? `${segments.length} segments horodatés disponibles pour cette vidéo`
+                  : "Transcription interactive avec suivi dynamique et décodage de mots au clic"}
+              </div>
+            </div>
           </div>
+
+          <button
+            onClick={toggleTranscript}
+            className="hov"
+            style={{
+              padding: "9px 18px",
+              borderRadius: 8,
+              cursor: "pointer",
+              fontWeight: 800,
+              fontSize: 13,
+              color: royalBlue,
+              background: royalBlueSoft,
+              border: `1px solid ${royalBlueBorder}`,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              transition: "all 0.15s ease",
+            }}
+          >
+            <span>{loadingTx ? "⏳" : "📝"}</span>
+            <span>{loadingTx ? "Chargement des sous-titres…" : "Afficher les transcriptions ▼"}</span>
+            {segments.length > 0 && !loadingTx && (
+              <span style={{
+                fontSize: 11,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: royalBlue,
+                color: "#fff",
+                fontWeight: 800,
+              }}>
+                {segments.length}
+              </span>
+            )}
+          </button>
         </div>
       )}
 
-      {/* Guide Passe 3 */}
-      {pass === 3 && (
-        <div style={{ ...cardStyle, textAlign: "center", padding: "28px 20px" }}>
-          <div style={{ fontSize: 32, marginBottom: 6 }}>👑</div>
-          <div style={{ fontWeight: 900, color: txtColor, fontSize: 16 }}>Passe 3 · Validation Auditive Finale</div>
-          <div style={{ color: dimColor, fontSize: 13, marginTop: 6, lineHeight: 1.6, maxWidth: 600, margin: "6px auto 0" }}>
-            Réécoute sans assistance : les liaisons et structures décodées en Passe 2 doivent maintenant être instantanément perçues.
-          </div>
-        </div>
-      )}
-
-      {/* Transcript Intelligent Passe 2 */}
-      {pass === 2 && (
+      {/* Transcript Intelligent Interactif (affiché à la demande) */}
+      {showTranscript && (
         <div style={cardStyle}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
             <div style={{ fontWeight: 900, color: txtColor, fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
               <span>📝</span>
               <span>Smart Transcript Interactif</span>
+              {segments.length > 0 && (
+                <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 999, background: royalBlueSoft, color: royalBlue, fontWeight: 800 }}>
+                  {segments.length} segments
+                </span>
+              )}
             </div>
-
-            <label style={{
-              color: dimColor,
-              fontSize: 12,
-              fontWeight: 700,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginLeft: "auto",
-              cursor: "pointer",
-            }}>
-              <input
-                type="checkbox"
-                checked={peek}
-                onChange={e => setPeek(e.target.checked)}
-                style={{ accentColor: royalBlue }}
-              />
-              Tout révéler (sinon : survole une phrase)
-            </label>
+            <div style={{ color: dimColor, fontSize: 12, marginLeft: "auto", fontWeight: 600, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>Clique sur un mot pour sa définition</span>
+              <button
+                onClick={() => setAutoScrollTranscript(p => !p)}
+                className="hov"
+                title={autoScrollTranscript ? "Le sous-titre actif défile dans ce cadre (la vidéo reste immobile en haut)" : "Défilement automatique des sous-titres désactivé"}
+                style={{
+                  padding: "4px 9px",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: autoScrollTranscript ? royalBlueSoft : "transparent",
+                  color: autoScrollTranscript ? royalBlue : dimColor,
+                  border: `1px solid ${autoScrollTranscript ? royalBlueBorder : inputBorder}`,
+                }}
+              >
+                {autoScrollTranscript ? "📜 Suivi auto : ON" : "📜 Suivi auto : OFF"}
+              </button>
+              <button
+                onClick={() => setShowTranscript(false)}
+                className="hov"
+                title="Masquer la transcription"
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  background: isDarkMode ? "rgba(255, 255, 255, 0.08)" : "#F1F5F9",
+                  color: txtColor,
+                  border: `1px solid ${inputBorder}`,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                ✕ Masquer les sous-titres ▲
+              </button>
+            </div>
           </div>
 
           {loadingTx && (
@@ -1248,12 +1356,12 @@ export default function RealLife({
           )}
 
           {!loadingTx && !segments.length && (
-            <div style={{ color: dimColor, fontSize: 13, lineHeight: 1.6 }}>
-              Transcript horodaté non disponible directement : les sous-titres natifs YouTube ont été activés dans le lecteur.
+            <div style={{ color: dimColor, fontSize: 13, lineHeight: 1.6, padding: "10px 0" }}>
+              Transcript horodaté non disponible directement : utilise les sous-titres natifs YouTube (bouton CC dans le lecteur).
               <div style={{ marginTop: 10 }}>
                 <button
                   className="hov"
-                  onClick={() => active && loadTranscript(active.id, true)}
+                  onClick={() => active && loadTranscript(active.id, false)}
                   style={{
                     padding: "7px 14px",
                     borderRadius: 8,
@@ -1271,85 +1379,85 @@ export default function RealLife({
             </div>
           )}
 
-          <div style={{
-            maxHeight: 360,
-            overflowY: "auto",
-            display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            paddingRight: 6,
-          }}>
-            {segments.map((s, i) => {
-              const isCur = i === currentIdx;
-              const revealed = peek || isCur;
-              return (
-                <div
-                  key={i}
-                  ref={el => (lineRefs.current[i] = el)}
-                  onDoubleClick={() => seek(s.start)}
-                  className="reallife-line"
-                  style={{
-                    display: "flex",
-                    gap: 12,
-                    padding: "8px 12px",
-                    borderRadius: 10,
-                    background: isCur ? royalBlueSoft : "transparent",
-                    borderLeft: isCur ? `3px solid ${royalBlue}` : "3px solid transparent",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <button
-                    onClick={() => seek(s.start)}
-                    style={{
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      color: isCur ? royalBlue : dimColor,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      fontVariantNumeric: "tabular-nums",
-                      padding: 0,
-                      minWidth: 42,
-                      textAlign: "left",
-                    }}
-                  >
-                    {fmt(s.start)}
-                  </button>
-
+          {segments.length > 0 && (
+            <div
+              ref={transcriptContainerRef}
+              style={{
+                maxHeight: 360,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                paddingRight: 6,
+              }}
+            >
+              {segments.map((s, i) => {
+                const isCur = i === currentIdx;
+                return (
                   <div
+                    key={i}
+                    ref={el => (lineRefs.current[i] = el)}
+                    onDoubleClick={() => seek(s.start)}
+                    className="reallife-line"
                     style={{
-                      flex: 1,
-                      color: txtColor,
-                      fontSize: 14,
-                      lineHeight: 1.65,
-                      filter: revealed ? "none" : "blur(5px)",
-                      transition: "filter 0.18s ease",
+                      display: "flex",
+                      gap: 12,
+                      padding: "8px 12px",
+                      borderRadius: 10,
+                      background: isCur ? royalBlueSoft : "transparent",
+                      borderLeft: isCur ? `3px solid ${royalBlue}` : "3px solid transparent",
+                      transition: "all 0.15s ease",
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.filter = "none"; }}
-                    onMouseLeave={e => { if (!revealed) e.currentTarget.style.filter = "blur(5px)"; }}
                   >
-                    {s.text.split(/\s+/).map((w, j) => (
-                      <span
-                        key={j}
-                        onClick={() => onWordClick(w, s.text)}
-                        style={{ cursor: "pointer", borderRadius: 3, padding: "1px 2px" }}
-                        onMouseEnter={e => {
-                          e.currentTarget.style.background = royalBlueSoft;
-                          e.currentTarget.style.color = royalBlue;
-                        }}
-                        onMouseLeave={e => {
-                          e.currentTarget.style.background = "transparent";
-                          e.currentTarget.style.color = "inherit";
-                        }}
-                      >
-                        {w}{" "}
-                      </span>
-                    ))}
+                    <button
+                      onClick={() => seek(s.start)}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        color: isCur ? royalBlue : dimColor,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        fontVariantNumeric: "tabular-nums",
+                        padding: 0,
+                        minWidth: 42,
+                        textAlign: "left",
+                      }}
+                    >
+                      {fmt(s.start)}
+                    </button>
+
+                    <div
+                      style={{
+                        flex: 1,
+                        color: txtColor,
+                        fontSize: 14,
+                        lineHeight: 1.65,
+                      }}
+                    >
+                      {s.text.split(/\s+/).map((w, j) => (
+                        <span
+                          key={j}
+                          onClick={() => onWordClick(w, s.text)}
+                          style={{ cursor: "pointer", borderRadius: 3, padding: "1px 2px" }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.background = royalBlueSoft;
+                            e.currentTarget.style.color = royalBlue;
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.background = "transparent";
+                            e.currentTarget.style.color = "inherit";
+                          }}
+                        >
+                          {w}{" "}
+                        </span>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -1367,6 +1475,7 @@ export default function RealLife({
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ fontWeight: 900, fontSize: 17, color: royalBlue }}>{word.w}</div>
+            <AudioPlayButton text={word.w} size="sm" showLabel={false} isDarkMode={isDarkMode} />
             <button
               onClick={() => setWord(null)}
               style={{
@@ -1428,22 +1537,70 @@ export default function RealLife({
       {showWild && (
         <div onClick={() => setShowWild(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
           <div onClick={e => e.stopPropagation()} style={{ ...cardStyle, width: "min(720px, 100%)", maxHeight: "85vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontWeight: 900, fontSize: 18, color: txtColor }}>🃏 Fiches extraites de la vidéo</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div style={{ fontWeight: 900, fontSize: 18, color: txtColor, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span>{wild.isCurated ? "✨ Pépites sélectionnées par l'IA" : "🃏 Fiches extraites de la vidéo"}</span>
+                {alreadyInDeckCount > 0 && (
+                  <span style={{ fontSize: 12, background: "rgba(34, 197, 94, 0.16)", color: isDarkMode ? "#86EFAC" : "#15803D", padding: "3px 8px", borderRadius: 6, fontWeight: 700 }}>
+                    ✅ {alreadyInDeckCount} déjà créée(s) dans ton deck
+                  </span>
+                )}
+              </div>
+              {wild.items.length > 6 && (
+                <button
+                  disabled={isCurating}
+                  onClick={() => performCurationAndCreate(false)}
+                  className="hov"
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    cursor: isCurating ? "wait" : "pointer",
+                    background: "rgba(99, 102, 241, 0.15)",
+                    color: isDarkMode ? "#A5B4FC" : "#4338CA",
+                    border: "1px solid rgba(99, 102, 241, 0.3)",
+                    fontWeight: 800,
+                    fontSize: 12,
+                  }}
+                >
+                  {isCurating ? "⏳ Orpaillage IA..." : "✨ Orpailler avec l'IA"}
+                </button>
+              )}
+            </div>
             <div style={{ fontSize: 13, color: dimColor }}>
-              {wild.status === "running" && `Extraction en cours (${wild.done}/${wild.total})… les fiches apparaissent au fur et à mesure.`}
-              {wild.status === "ready" && "Sélectionne les fiches à ajouter à tes révisions."}
+              {wild.isCurated && "L'IA a passé en revue tout le transcript pour retenir uniquement les expressions idiomatiques et structures natives les plus intéressantes."}
+              {!wild.isCurated && wild.status === "running" && `Extraction en cours (${wild.done}/${wild.total})… les fiches apparaissent au fur et à mesure.`}
+              {!wild.isCurated && wild.status === "ready" && "Sélectionne les fiches à ajouter à tes révisions."}
               {wild.status === "empty" && "Aucune expression exploitable n'a été trouvée."}
-              {wild.status === "idle" && (segments.length ? "Préparation…" : "Pas de transcript disponible pour cette vidéo : l'extraction ne peut pas démarrer.")}
+              {wild.status === "idle" && (segments.length ? "Préparation de l'analyse…" : "Cette capsule n'a pas de sous-titres fournis par son auteur sur YouTube : active le bouton CC dans le lecteur ou choisis une capsule avec sous-titres.")}
             </div>
             {wild.items.map((e, i) => {
               const on = wildSelected.includes(i);
+              const isAlreadyAdded = expressions.some(exp => normFront(exp.front) === normFront(e.expr));
               return (
                 <label key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: 12, borderRadius: 12, cursor: "pointer", border: `1px solid ${on ? royalBlueBorder : inputBorder}`, background: on ? royalBlueSoft : "transparent" }}>
                   <input type="checkbox" checked={on} onChange={() => setWildSelected(p => on ? p.filter(x => x !== i) : [...p, i])} style={{ marginTop: 3 }} />
                   <div>
-                    <div style={{ fontWeight: 800, color: txtColor }}>{e.expr} {e.ipa ? <span style={{ fontWeight: 500, color: dimColor, fontSize: 12 }}>· {e.ipa}</span> : null}</div>
+                    <div style={{ fontWeight: 800, color: txtColor, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span>{e.expr}</span>
+                      <span onClick={ev => ev.preventDefault()}><AudioPlayButton text={e.expr} size="sm" showLabel={false} isDarkMode={isDarkMode} /></span>
+                      {e.ipa ? <span style={{ fontWeight: 500, color: dimColor, fontSize: 12 }}>· {e.ipa}</span> : null}
+                      {isAlreadyAdded && (
+                        <span style={{ fontSize: 11, background: "rgba(34, 197, 94, 0.16)", color: isDarkMode ? "#86EFAC" : "#15803D", padding: "2px 7px", borderRadius: 6, fontWeight: 700 }}>
+                          ✅ Déjà créée
+                        </span>
+                      )}
+                    </div>
                     <div style={{ fontSize: 13, color: dimColor }}>{e.meaning}</div>
-                    {e.examples?.[0] && <div style={{ fontSize: 12, color: dimColor, fontStyle: "italic", marginTop: 4 }}>“{e.examples[0].en || e.examples[0]}”</div>}
+                    {(e.examples || []).slice(0, 3).map((ex, j) => {
+                      const en = typeof ex === "string" ? ex : ex?.en;
+                      if (!en) return null;
+                      return (
+                        <div key={j} style={{ fontSize: 12, color: dimColor, fontStyle: "italic", marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                          <span onClick={ev => ev.preventDefault()}><AudioPlayButton text={en} size="sm" showLabel={false} isDarkMode={isDarkMode} /></span>
+                          <span>“{en}”{ex?.fr ? <span style={{ fontStyle: "normal", opacity: 0.8 }}> — {ex.fr}</span> : null}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </label>
               );

@@ -28,6 +28,9 @@ export default function useExpressionsManager({
   callClaude = () => {},
   playSound = () => {},
   storage = null,
+  setDailyPlanState = () => {},
+  setReviewQueue = () => {},
+  setModuleSessions = () => {},
 }) {
   const [versionHistory, setVersionHistory] = useState({});
 
@@ -112,8 +115,35 @@ export default function useExpressionsManager({
   // ── Suppression ──
   const deleteExp = useCallback((id) => {
     setExpressions((prev) => prev.filter((e) => e.id !== id));
+    setReviewQueue((prevQ) => prevQ.filter((c) => c.id !== id));
+    setDailyPlanState((prev) => {
+      if (!prev || !Array.isArray(prev.ids) || !prev.ids.includes(id)) return prev;
+      const next = {
+        ...prev,
+        ids: prev.ids.filter((i) => i !== id),
+        doneIds: Array.isArray(prev.doneIds) ? prev.doneIds.filter((i) => i !== id) : [],
+        bonusIds: Array.isArray(prev.bonusIds) ? prev.bonusIds.filter((i) => i !== id) : [],
+      };
+      try { localStorage.setItem("memomaitre_dailyPlan_v1", JSON.stringify(next)); } catch {}
+      return next;
+    });
+    setModuleSessions((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [cat, sess] of Object.entries(next)) {
+        if (sess && Array.isArray(sess.queue) && sess.queue.some((c) => c.id === id)) {
+          sess.queue = sess.queue.filter((c) => c.id !== id);
+          if (sess.index >= sess.queue.length) sess.index = Math.max(0, sess.queue.length - 1);
+          changed = true;
+        }
+      }
+      if (changed) {
+        try { localStorage.setItem("mm_interrupted_module_sessions_v1", JSON.stringify(next)); } catch {}
+      }
+      return next;
+    });
     showToast("Fiche supprimée.", "info");
-  }, [setExpressions, showToast]);
+  }, [setExpressions, setReviewQueue, setDailyPlanState, setModuleSessions, showToast]);
 
   // ── Ajout de fiches depuis le Lab / OCR / Documents (Hermétique Anti-Doublons) ──
   const addCardsFromLab = useCallback((cards, options = {}) => {

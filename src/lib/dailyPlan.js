@@ -150,7 +150,12 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
 
   // Fiches du plan encore valides : toujours dues, ou déjà faites aujourd'hui.
   const bonusSet = new Set(base.bonusIds);
-  const keptAll = base.ids.filter((id) => byId.has(id) || doneSet.has(id));
+  // Protection contre le vidage au montage : si cards est vide mais que le plan est déjà scellé
+  // avec des fiches non terminées, on ne purge pas base.ids.
+  const isTransientEmpty = cards.length === 0 && base.ids.length > 0 && doneSet.size < base.ids.length;
+  const keptAll = isTransientEmpty
+    ? base.ids
+    : base.ids.filter((id) => byId.has(id) || doneSet.has(id));
 
   // Les révisions BONUS (hors plan, choisies explicitement) ne consomment pas
   // le quota du jour : elles s'ajoutent au plan sans en réduire le contenu.
@@ -179,7 +184,7 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
   // révisions, fiche suspendue, sync…), une place se libérait et de nouvelles
   // fiches (souvent anglaises) étaient injectées à chaque sortie de session.
   // Les révisions supplémentaires passent par la session bonus explicite.
-  const planLocked = base.sealed === true && base.ids.length > 0;
+  const planLocked = base.sealed === true && kept.length > 0;
   const freeSlots = planLocked ? 0 : (room === Infinity ? Infinity : room - allowedPending.length);
   let ids = kept;
   if (freeSlots > 0) {
@@ -230,13 +235,16 @@ export function buildDailyPlan({ plan, dueCards, todayISO, reviewedTodayIds = []
  * que le compteur « fait aujourd'hui » reste exact sans jamais faire remonter
  * le restant.
  */
-export function markCardDone(plan, cardId, todayISO) {
+export function markCardDone(plan, cardId, todayISO, opts = {}) {
   const base = normalizeDailyPlan(plan, todayISO);
   if (cardId === undefined || cardId === null) return base;
   const isOutsidePlan = !base.ids.includes(cardId);
   const ids = isOutsidePlan ? [...base.ids, cardId] : base.ids;
   const doneIds = base.doneIds.includes(cardId) ? base.doneIds : [...base.doneIds, cardId];
-  const bonusIds = isOutsidePlan && !base.bonusIds.includes(cardId)
+  // Si countInPlan est vrai (révision module FSRS), la fiche est intégrée au plan et réduit le restant.
+  // Sinon (hors plan par défaut ou bonus explicite), elle est marquée en bonusIds.
+  const isBonus = opts.countInPlan ? Boolean(opts.bonus) : isOutsidePlan;
+  const bonusIds = isBonus && !base.bonusIds.includes(cardId)
     ? [...base.bonusIds, cardId]
     : base.bonusIds;
   return { ...base, sealed: true, ids, doneIds, bonusIds };

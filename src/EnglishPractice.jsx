@@ -8,10 +8,10 @@
 import useWritingLab from "./hooks/useWritingLab";
 import "./styles/experience-refit.css";
 import { safeHTML } from "./lib/htmlSanitizer";
-import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { PenLine, Shuffle, History, Plus, Sparkles, Layers, BookOpenCheck, LayoutGrid, SpellCheck2, Mic, Square, Globe, AlertTriangle, CheckCircle2, Lightbulb, RotateCcw, AudioLines, Repeat2, Ear, Loader2, Volume2, ArrowRight, PlusCircle, Zap, ChevronUp, ChevronDown, BarChart2, Search, Trash2, ExternalLink, Copy, Check } from "lucide-react";
-import EnglishInTheWild from "./EnglishInTheWild";
-import RealLife from "./RealLife";
+const EnglishInTheWild = lazy(() => import("./EnglishInTheWild"));
+const RealLife = lazy(() => import("./RealLife"));
 import AgentVoiceBar, { AGENT_VOICES, useElevenLabsAgent, MODE_CONFIGS } from "./AgentVoiceBar";
 import { registerAgentClientTool, setContextSnapshotBuilder } from "./lib/agentClientTools";
 import { summarizeForContinuity } from "./lib/agentSessionMemory";
@@ -25,12 +25,12 @@ import { fsrs, fsrsFromProduction } from "./lib/fsrs";
 import { recordProductiveUse, getExpressionsNeedingProduction, computeMasteryStage } from "./lib/masteryStages";
 import useProductiveUse, { englishCategoryFilter } from "./hooks/useProductiveUse";
 import { today } from "./utils/dateUtils";
-import LiveNewsModule from "./components/LiveNewsModule";
+const LiveNewsModule = lazy(() => import("./components/LiveNewsModule"));
 import { useXP } from "./hooks/useXP";
 import { useCEFR } from "./hooks/useCEFR";
 import CoachSpeedListening from "./components/CoachSpeedListening";
 import CoachNewsAnchor from "./components/CoachNewsAnchor";
-import BattleMode from "./components/BattleMode";
+const BattleMode = lazy(() => import("./components/BattleMode"));
 import SpeakItChallenge from "./components/SpeakItChallenge";
 import ProductionChallenge from "./components/ProductionChallenge";
 
@@ -46,6 +46,7 @@ import { safeParseJSON } from "./lib/textUtils";
 import { colorMix } from "./lib/colorMix";
 import { getDailyOralTargets, isTargetSpoken } from "./lib/english/dailyOralTargets";
 import { getRandomTopicPair, getRandomOpeningGreeting } from "./lib/english/novaTopicsBank";
+import { NOVA_NATURAL_CORRECTION_RULES, pickRecurringMistakes, buildRecurringMistakesLayer } from "./lib/english/novaNaturalCorrection";
 import { groupSpeechTurns } from "./lib/livekitConversation";
 import { getNovaLearnerProfile, buildContinuityPrompt, updateLearnerProfileFromSession } from "./lib/english/novaMemory";
 
@@ -168,7 +169,15 @@ function EnglishPracticeInner({
 
   // Profil apprenant et mémoire de continuité long-terme pour Coach Nova
   const [learnerProfile, setLearnerProfile] = useState(() => getNovaLearnerProfile(storage));
-  const continuityMemory = useMemo(() => buildContinuityPrompt(learnerProfile), [learnerProfile]);
+  const recurringMistakesLayer = useMemo(
+    () => buildRecurringMistakesLayer(pickRecurringMistakes(expressions, 5)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [expressions?.length]
+  );
+  const continuityMemory = useMemo(
+    () => [buildContinuityPrompt(learnerProfile), recurringMistakesLayer].filter(Boolean).join(" "),
+    [learnerProfile, recurringMistakesLayer]
+  );
 
   const novaSessionMemoryRef = useRef(null);
   const isGeneratingMemoryRef = useRef(false);
@@ -338,18 +347,6 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   }, [dailyOralTargetsData, liveKitTranscriptions, practiceMessages]);
   const [speakItOpen, setSpeakItOpen] = useState(false);
   const [coachMode, setCoachMode] = useState("pronunciation");
-  const [practiceDebateTopic, setPracticeDebateTopic] = useState("");
-  const [practiceDebateHistory, setPracticeDebateHistory] = useState([]);
-  const [practiceDebateSide, setPracticeDebateSide] = useState("for");
-  const [debateListening, setDebateListening] = useState(false);
-  // FIX (audit): états manquants utilisés par l'UI Débat (gradient + animation shatter)
-  const [debateBalance, setDebateBalance] = useState(50);
-  const [debateShatter, setDebateShatter] = useState(0);
-
-  const [practiceRoleplayScenario, setPracticeRoleplayScenario] = useState("");
-  const [practiceRoleplayHistory, setPracticeRoleplayHistory] = useState([]);
-  const [practiceRoleplayCharacter, setPracticeRoleplayCharacter] = useState("interviewer");
-  const [roleplayListening, setRoleplayListening] = useState(false);
 
   const [practiceDictationText, setPracticeDictationText] = useState("");
   const [practiceDictationSentences, setPracticeDictationSentences] = useState([]);
@@ -525,21 +522,6 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
   const [srsShowBack, setSrsShowBack] = useState(false);     // flip card
   const [srsFilter, setSrsFilter] = useState("overdue"); // "overdue" | "today" | "all"
 
-  // ── Role-Play Vocal (Web Speech API — zéro dep) ───────────────────────
-  // Tous les états volatils dans des refs pour éviter re-renders pendant la boucle vocale.
-  const rpHistoryRef = useRef([]);          // { role, text, feedback }[]
-  const rpScenarioRef = useRef(null);        // scénario courant
-  const rpTurnRef = useRef(0);           // nombre d'échanges
-  const rpRecogRef = useRef(null);        // SpeechRecognition instance
-  const rpSpeakingRef = useRef(false);       // TTS en cours
-  // Un seul état React pour forcer le re-render au bon moment
-  const [rpState, setRpState] = useState("idle"); // "idle"|"picking"|"running"|"listening"|"thinking"|"scoring"|"done"
-  const [rpScenario, setRpScenario] = useState(null);   // pour afficher le titre
-  const [rpHistory, setRpHistory] = useState([]);     // pour afficher le transcript
-  const [rpScore, setRpScore] = useState(null);   // JSON scoring final
-  const [rpError, setRpError] = useState("");
-  const MAX_RP_TURNS = 10;
-
   // ── Agent vocal ElevenLabs ───────────────────────────────────────────────
   const [agentVoiceId, setAgentVoiceId] = useState(AGENT_VOICES[0].id);
   const [agentError, setAgentError] = useState("");
@@ -613,9 +595,14 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
 
     // Load Chat Messages
     storage.get("nova_practice_messages").then(savedMessages => {
-      if (savedMessages && savedMessages.length > 0) {
-        setPracticeMessages(savedMessages);
+      const cleanMessages = Array.isArray(savedMessages)
+        ? savedMessages.filter(m => !String(m?.text || "").toLowerCase().includes("black button"))
+        : [];
+      if (cleanMessages.length > 0) {
+        setPracticeMessages(cleanMessages);
       } else {
+        // Nettoyer le cache local si un ancien message obsolète était présent
+        storage.set("nova_practice_messages", null).catch(() => { });
         // Load Memory
         storage.get("nova_session_memory").then(saved => {
           if (saved && saved.novaThought && saved.compressedMemory) {
@@ -1086,7 +1073,7 @@ Renvoie UNIQUEMENT le JSON valide (sans backticks markdown) :
 
     const immersionInst = immersionMode
       ? "IMMERSION MODE: Never correct grammar mid-conversation. Never switch to French. Flow naturally like a native friend."
-      : "CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly — no parentheses, no brackets, no 'small correction:', nothing that interrupts the conversation. If the student makes a grammar, vocabulary, or preposition mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply (a natural corrective recast), then keep the conversation flowing exactly as if nothing happened. The mistake will be turned into a flashcard automatically behind the scenes — your only job is to always use the correct form yourself and never break the flow.";
+      : NOVA_NATURAL_CORRECTION_RULES;
 
     const profile = novaLearnerProfileRef.current;
     const profileInst = `[PSYCHOLINGUISTIC PROFILE] Actual Level: ${profile.actualLevel} | Learning Style: ${profile.learningStyle} | Hot Topics: ${profile.hotTopics} | Daily State: ${profile.dailyState}. Adapt your tone, vocabulary, and pacing to match this profile precisely.`;
@@ -1172,34 +1159,28 @@ Never sound like a school teacher, quiz, or vocabulary tester. Have fun and let 
     }
 
     let modeInstruction = "";
-    if (practiceSubView === "debate" && practiceDebateTopic) {
-      modeInstruction = `MODE: COSMIC ARENA DEBATE.
-You are ARGOS, an intense, highly articulate, and sharp debate coach and opponent.
-Debate Topic: "${practiceDebateTopic}". Student Level: ${practiceLevel || "intermediate"}.
-YOUR ROLE: Take a strong, compelling counter-position on "${practiceDebateTopic}". Challenge the student's arguments aggressively but constructively in English. Keep replies to 1-3 sentences and end with a counter-argument question.`;
-    } else if (practiceSubView === "roleplay" && practiceRoleplayScenario) {
-      const char = practiceRoleplayCharacter || "the other person in the scene";
-      modeInstruction = `MODE: ROLEPLAY PRACTICE.
-You are embodying the character "${char}" in the scenario: "${practiceRoleplayScenario}". Student Level: ${practiceLevel || "intermediate"}.
-YOUR ROLE: Stay fully in character. Respond naturally in character in English, and keep the scene moving with a realistic question or prompt. Keep replies to 1-3 sentences.`;
-    } else if (practiceSubView === "ielts") {
+    if (practiceSubView === "ielts") {
       modeInstruction = `MODE: IELTS SPEAKING EXAM.
 You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart || 1}. Ask formal IELTS questions and evaluate fluency. Keep responses concise (1-3 sentences).`;
     } else {
-      modeInstruction = `You are NOVA — the world's most engaging and natural real-life English conversation partner. Tone: charismatic, empathetic, articulate, effortless conversational rhythm. Speak like a top-tier native peer.`;
+      modeInstruction = `You are NOVA — the world's most engaging and natural real-life English conversation partner. Tone: charismatic, empathetic, articulate, effortless conversational rhythm. Speak like a top-tier native peer.
+
+[DYNAMIC ROLEPLAY & DEBATE MODES EMBEDDED]
+- If the student chooses or wants to DEBATE: Take a strong, compelling counter-position constructively in English (1-3 sentences per turn) and challenge their arguments with friendly passion.
+- If the student wants a ROLEPLAY simulation (e.g. Job interview, salary negotiation, client meeting, restaurant, doctor): Step immediately into character and maintain realistic conversational spoken dialogue.`;
     }
 
     return [
       modeInstruction,
       nameInst,
       conversationVibeInst,
-      "CORRECTION STYLE: Never point out, flag, or mention the student's mistake directly. If the student makes a mistake, silently model the correct form by naturally reusing their idea with the right wording in your own reply (a natural corrective recast), then keep the conversation flowing smoothly. Never break the flow.",
+      NOVA_NATURAL_CORRECTION_RULES,
       profileInst,
       continuityInst,
       relationshipInst,
       "CRITICAL RULES: Replies 1–3 sentences MAX. End with one focused, engaging open question. Natural real-life spoken register. Never use lists or bullet points.",
     ].filter(Boolean).join("\n");
-  }, [studentName, practiceSubView, practiceDebateTopic, practiceRoleplayScenario, practiceRoleplayCharacter, practiceIeltsPart, practiceLevel]);
+  }, [studentName, practiceSubView, practiceIeltsPart, practiceLevel]);
 
   const liveKitSystemPrompt = useMemo(
     () => buildLiveKitSystemPrompt(),
@@ -1238,8 +1219,6 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
   const xpPopupTimerRef = useRef(null);
   // FIX B7: refs vers tous les MediaStreams actifs pour cleanup au unmount
   const activeStreamsRef = useRef(new Set());        // verrou synchrone anti double-envoi
-  const debateRecorderRef = useRef(null);    // pour stopper l'enregistrement débat manuellement
-  const roleplayRecorderRef = useRef(null);  // pour stopper l'enregistrement roleplay manuellement
   const userHasInteractedRef = useRef(false); // débloque l'autoplay TTS après 1ère interaction
 
   // ── Filet de sécurité : reset practiceLoading après 30 s ──────────────────
@@ -1405,7 +1384,7 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
 
   // Restore last active sub-view so navigating away and back keeps context
   useEffect(() => {
-    const VALID_VIEWS = ["chat", "wild", "debate", "roleplay", "writing", "dictation"];
+    const VALID_VIEWS = ["chat", "wild", "writing", "dictation"];
     const ALL_SUBVIEWS = [...VALID_VIEWS, "reallife"];
     storage.get("english_subview").then(saved => {
       if (saved && ALL_SUBVIEWS.includes(saved)) setPracticeSubView(saved);
@@ -1508,8 +1487,27 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
     if (!text?.trim()) return false;
     userHasInteractedRef.current = true;
     setPracticeSpeaking(true);
-    liveKitVoiceBus.say(text);
-    return true;
+    if (liveKitVoiceBus._sayHandler) {
+      liveKitVoiceBus.say(text);
+      return true;
+    }
+    try {
+      playEnglishAudio(text, {
+        raw: true,
+        onStart: () => {
+          setPracticeSpeaking(true);
+          liveKitVoiceBus.notify({ isSpeaking: true, agentState: "speaking" });
+        },
+        onEnd: () => {
+          setPracticeSpeaking(false);
+          liveKitVoiceBus.notify({ isSpeaking: false, agentState: "listening" });
+        },
+      });
+      return true;
+    } catch (e) {
+      console.warn("[speakText] fallback audio failed:", e);
+      return false;
+    }
   };
 
   // Marquer l'interaction utilisateur — débloque l'autoplay TTS pour la session
@@ -1529,8 +1527,11 @@ You are an official IELTS Speaking examiner conducting Part ${practiceIeltsPart 
 
   const correctMessage = async (userText) => {
     try {
+      // Nettoyage préalable des bégaiements / hésitations orales humaines naturelles (ex: "I can I can" -> "I can", "the the" -> "the")
+      const cleanedUserText = String(userText || "").replace(/\b(\w+)\s+\1\b/gi, "$1").trim();
       const raw = await callClaude(
-        `Tu es un coach d'anglais expert et bienveillant. L'étudiant a écrit: "${userText}".
+        `Tu es un coach d'anglais expert et bienveillant. L'étudiant a dit : "${cleanedUserText}".
+RÈGLE ABSOLUE : Ignore totalement les répétitions de mots consécutifs ou hésitations orales (ex: "I I", "can can"). Ce sont des hésitations humaines naturelles et JAMAIS des fautes linguistiques. Ne crée AUCUNE faute sur un bégaiement ou une répétition orale.
 Analyse sa phrase et réponds UNIQUEMENT en JSON valide, sans markdown :
 {
   "corrected": "version corrigée complète de la phrase (identique à l'originale si aucune faute)",
@@ -1551,24 +1552,35 @@ IMPORTANT: 'wrong' doit être le fragment exact de la phrase de l'étudiant, pas
       );
       const parsed = safeParseJSON(raw);
 
+      // Filtrer les éventuelles fausses fautes sur des hésitations orales ou répétitions
+      const safeMistakes = Array.isArray(parsed?.mistakes)
+        ? parsed.mistakes.filter(m => {
+            const wrong = String(m?.wrong || m?.word || "").trim().toLowerCase();
+            const reason = String(m?.reason || m?.explanation || "").toLowerCase();
+            if (/^(\w+)\s+\1$/i.test(wrong)) return false;
+            if (reason.includes("doubler") || reason.includes("répétition inutile") || reason.includes("hésitation")) return false;
+            return true;
+          })
+        : [];
+
       // N'afficher la correction que si les 3 conditions sont réunies :
       // 1. l'IA dit qu'il y a des fautes
       // 2. le texte corrigé est réellement différent de l'original
-      // 3. il y a au moins une faute listée
+      // 3. il y a au moins une vraie faute listée après filtrage
       const hasRealErrors =
-        parsed.hasErrors === true &&
-        parsed.corrected.toLowerCase().trim() !== userText.toLowerCase().trim() &&
-        Array.isArray(parsed.mistakes) && parsed.mistakes.length > 0;
+        parsed?.hasErrors === true &&
+        parsed?.corrected?.toLowerCase().trim() !== cleanedUserText.toLowerCase().trim() &&
+        safeMistakes.length > 0;
 
       if (hasRealErrors) {
-        setPracticeCorrections(prev => [{ original: userText, ...parsed }, ...prev].slice(0, 10));
+        setPracticeCorrections(prev => [{ original: userText, ...parsed, mistakes: safeMistakes }, ...prev].slice(0, 10));
         setPracticeShowCorrection(true);
       } else {
         setPracticeShowCorrection(false);
       }
 
       // Sauvegarder les vraies fautes détectées par l'IA
-      const realMistakes = (parsed.mistakes || []).map(m => ({
+      const realMistakes = safeMistakes.map(m => ({
         word: m.wrong || m.word || "[mot]",
         correction: m.right || m.correction || m.correct || "[correction manquante]",
         reason: m.reason || m.explanation || "",
@@ -1588,21 +1600,27 @@ IMPORTANT: 'wrong' doit être le fragment exact de la phrase de l'étudiant, pas
             e => e.front.toLowerCase().includes(mistake.word.toLowerCase()) && e.category?.includes("Anglais")
           );
           if (!exist) {
-            // Front : la phrase fautive avec le fragment erroné mis en évidence
-            const front = `❌ "${mistake.word}" → comment le dire correctement ?`;
-            // Back : correction + règle + phrase modèle
-            const back = `✅ ${mistake.correction}\n\n📌 ${mistake.reason}`;
+            // Front : la forme anglaise correcte épurée
+            const front = mistake.correction || parsed.corrected;
+            // Back : format optimal d'élite direct avec Vous avez dit
+            const back = `📖 **Vrai sens :** ${parsed.corrected || mistake.correction}\n\n🧩 **La Règle Réflexe :** Vous avez dit : « ${mistake.word} ». ${mistake.reason}\n\n💬 **Mini-dialogue :**\n* **A :** \`${mistake.correction}\`\n  ↳ *${parsed.corrected || mistake.correction}*\n* **B :** \`Understood, thank you!\`\n  ↳ *Compris, merci !*\n\n⚠️ **Attention au piège :** Éviter de dire « ${mistake.word} ».`;
             // Example : phrase modèle générée par l'IA, ou la phrase corrigée en fallback
             const example = mistake.example || parsed.corrected || "";
 
             const newCard = {
-              id: Date.now().toString() + Math.random(),
+              id: `coach-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
               front,
               back,
               example,
               category: englishCategory,
               level: 0, nextReview: localToday(), createdAt: localToday(),
               easeFactor: 2.5, interval: 1, repetitions: 0, reviewHistory: [], imageUrl: null,
+              _agentDetected: true,
+              _source: "user_error",
+              _novaV8: true,
+              _retroEngineered: true,
+              userMistake: mistake.word,
+              origin: "english-view",
             };
             // ✅ FIX : sauvegarde IMMÉDIATE pour éviter la perte en cas d'actualisation
             setExpressions(prev => {
@@ -2071,394 +2089,6 @@ Réponds STRICTEMENT sous forme de JSON valide avec la clé "cards" :
               : `Erreur micro : ${e?.message || e}`;
       showToast("🎤 " + msg, "error");
     }
-  };
-
-  // Mode Débat
-  // FIX BUG CRITIQUE : cette fonction appelait startVoiceConversation(), qui (1)
-  // ne connecte jamais réellement l'agent (customAgent.isConnected ne bascule
-  // QUE via AgentVoiceBar → agent.start()) et (2) met isVoiceChatActive à `true`
-  // pour de bon, sans jamais le remettre à `false` — ce qui bloque ensuite
-  // silencieusement sendDebateMessage ET sendRoleplayMessage ("if (isVoiceChatActive)
-  // return;") pour tout le reste de la session. Résultat concret : cliquer sur
-  // "⚔️ Engage!" ne faisait RIEN, et l'agent semblait absent pour discuter — y
-  // compris ensuite dans l'onglet Roleplay. On lance maintenant une vraie réplique
-  // d'ouverture du débat, comme pour le Roleplay.
-  const startDebate = async (selectedTopic) => {
-    const topic = (typeof selectedTopic === "string" ? selectedTopic : practiceDebateTopic || "").trim();
-    if (!topic) return;
-    if (topic !== practiceDebateTopic) {
-      setPracticeDebateTopic(topic);
-    }
-    switchSubView("debate");
-    setPracticeDebateHistory([]);
-    markInteracted();
-    armIosAudio();
-    setLiveKitTranscriptions([]);
-    setAgentTranscript([]);
-    setAgentError("");
-    agent.start(MODE_CONFIGS.debate({ topic, level: practiceLevel }));
-  };
-
-  const sendDebateVoiceMessage = async () => {
-    stopSpeaking();
-    if (debateListening) return;
-    if (customAgent.isConnected) {
-      showToast("🎙️ Session LiveKit active — ARGOS écoute déjà directement ton micro !", "info");
-      return;
-    }
-    const check = canRecord();
-    if (!check.ok) { showToast("🎤 " + check.reason, "error"); return; }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      activeStreamsRef.current.add(stream);
-      const mimeType = getSupportedMimeType();
-      let mediaRecorder;
-      try { mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream); }
-      catch { mediaRecorder = new MediaRecorder(stream); }
-      const chunks = [];
-      mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
-      mediaRecorder.onstop = async () => {
-        setDebateListening(false);
-        const actualMime = mediaRecorder.mimeType || mimeType || "audio/mp4";
-        const blob = new Blob(chunks, { type: actualMime });
-        try {
-          const raw = await transcribeWithGroq(blob);
-          const transcript = cleanSpeechTranscript(raw || "");
-          if (transcript && !isMeaninglessSpeech(raw || "")) await sendDebateMessage(transcript);
-        } catch (e) { showToast("Erreur transcription", "error"); }
-        stream.getTracks().forEach(t => t.stop());
-        activeStreamsRef.current.delete(stream);
-      };
-      debateRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
-      setDebateListening(true);
-      showToast("🎤 Parle maintenant... (clique ⏹️ pour arrêter)");
-      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 8000);
-    } catch (e) {
-      const msg = e?.name === "NotAllowedError" ? "Permission micro refusée." : e?.name === "NotFoundError" ? "Aucun micro détecté." : `Erreur : ${e?.message || e}`;
-      showToast("🎤 " + msg, "error");
-    }
-  };
-
-  const sendDebateMessage = async (text) => {
-    if (!text.trim() || isVoiceChatActive) return;
-    setPracticeDebateHistory(prev => [...prev, { role: "user", text }]);
-    try {
-      const raw = await callClaude(
-        `Tu es un professeur d'anglais animant un débat. Le sujet est "${practiceDebateTopic}". L'étudiant a dit: "${text}". Contre-argumente et pose une nouvelle question. Reste en anglais.`,
-        text
-      );
-      setPracticeDebateHistory(prev => [...prev, { role: "assistant", text: raw.trim() }]);
-      markInteracted(); speakText(raw.trim());
-      awardXP(20, 5, "Argument de débat 💬");
-    } catch (e) { showToast("Erreur débat", "error"); }
-  };
-
-  // FIX (audit): helper manquant utilisé dans le rendu Débat & Role-Play.
-  // Version no-op sûre : retourne le texte tel quel.
-  const renderDraggableWord = (text) => text;
-
-  // FIX (audit): handler manquant pour l'input texte du mode Role-Play.
-  const sendRoleplayMessage = async (text) => {
-    if (!text.trim() || isVoiceChatActive) return;
-    setPracticeRoleplayHistory(prev => [...prev, { role: "user", text }]);
-    try {
-      const raw = await callClaude(
-        `You are roleplaying as ${practiceRoleplayCharacter || "the other person"} in this scenario: "${practiceRoleplayScenario}". The student just said: "${text}". Respond in character in English, naturally, and keep the scene moving with a question or prompt.`,
-        text
-      );
-      const reply = (raw || "").trim();
-      setPracticeRoleplayHistory(prev => [...prev, { role: "assistant", text: reply }]);
-      markInteracted();
-      speakText(reply);
-      awardXP(15, 4, "Échange role-play 🎭");
-    } catch (e) {
-      console.error("Roleplay error:", e);
-      showToast("Erreur role-play", "error");
-    }
-  };
-
-  // FIX BUG : les cartes de scénario du mode Role-Play appelaient l'ancienne
-  // fonction startRoleplay() (moteur Web Speech API legacy, aujourd'hui
-  // supprimé de l'UI) au lieu de peupler practiceRoleplayScenario /
-  // practiceRoleplayHistory — les états réellement lus par cet écran. Résultat :
-  // cliquer sur un scénario ne faisait RIEN dans cette vue (aucun agent, aucune
-  // réplique d'ouverture). Ce helper démarre correctement la scène ici.
-  const beginRoleplayScenario = async (scenarioText) => {
-    const scenario = (scenarioText || "").trim();
-    if (!scenario) return;
-    setPracticeRoleplayScenario(scenario);
-    setPracticeRoleplayHistory([]);
-    markInteracted();
-    armIosAudio();
-    setLiveKitTranscriptions([]);
-    setAgentTranscript([]);
-    setAgentError("");
-    agent.start(MODE_CONFIGS.roleplay({
-      scenario,
-      character: practiceRoleplayCharacter || "the other person in the scenario",
-      level: practiceLevel,
-    }));
-  };
-
-  // ── Role-Play Vocal (Web Speech API) ─────────────────────────────────────────
-  // 8 scénarios hardcodés
-  const RP_SCENARIOS = [
-    {
-      id: "job_interview",
-      emoji: "💼",
-      title: "Job Interview",
-      subtitle: "Google-style Tech Interview",
-      role: "a senior Google recruiter conducting a technical job interview",
-      opening: "Hello! Thanks for coming in today. I'm Alex, senior recruiter here at Google. Before we dive into the technical side, could you start by telling me a little about yourself?",
-      color: "var(--mm-primary)",
-      tip: "Use formal English, structure your answers with STAR method"
-    },
-    {
-      id: "airport",
-      emoji: "✈️",
-      title: "Airport Immigration",
-      subtitle: "US Customs & Border Protection",
-      role: "a strict US immigration officer at JFK airport",
-      opening: "Next! Passport please. What is the purpose of your visit to the United States?",
-      color: "var(--mm-primary)",
-      tip: "Be concise, direct, and polite. Have your answers ready."
-    },
-    {
-      id: "restaurant",
-      emoji: "🍽️",
-      title: "NYC Restaurant",
-      subtitle: "Busy Manhattan diner",
-      role: "a fast-talking, no-nonsense New York City waiter in a busy diner",
-      opening: "Alright folks, what can I getcha? We got the daily special — pastrami on rye, can't go wrong. You ready to order or you need another minute?",
-      color: "var(--mm-danger)",
-      tip: "Speak fast, use casual expressions, be decisive"
-    },
-    {
-      id: "negotiation",
-      emoji: "🤝",
-      title: "Negotiation",
-      subtitle: "Difficult client wants a discount",
-      role: "a tough business client who wants a significant price reduction and is ready to walk away",
-      opening: "Look, I've been looking at your quote and frankly, it's way over our budget. Your competitor is offering 30% less. What can you do for me?",
-      color: "var(--mm-warning)",
-      tip: "Use persuasive language, justify your value, find middle ground"
-    },
-    {
-      id: "doctor",
-      emoji: "🏥",
-      title: "ER Doctor",
-      subtitle: "US Emergency Room",
-      role: "an efficient American emergency room doctor taking a patient history quickly",
-      opening: "Hi there, I'm Dr. Johnson. What brings you into the ER today? On a scale of 1 to 10, how would you rate your pain?",
-      color: "var(--mm-primary)",
-      tip: "Describe symptoms clearly, use body part names, mention duration"
-    },
-    {
-      id: "first_date",
-      emoji: "💘",
-      title: "First Date",
-      subtitle: "Casual coffee chat",
-      role: "a curious, funny, charming person on a first date at a coffee shop",
-      opening: "Hey, I'm so glad we finally met! I have to ask — your profile said you love adventures. What's the craziest thing you've ever done?",
-      color: "var(--mm-danger)",
-      tip: "Be natural, use humor, ask follow-up questions"
-    },
-    {
-      id: "police_stop",
-      emoji: "🚔",
-      title: "Traffic Stop",
-      subtitle: "US Police Officer",
-      role: "a professional American police officer who has pulled someone over for speeding",
-      opening: "Good evening. License and registration, please. Do you know why I pulled you over today?",
-      color: "var(--mm-primary)",
-      tip: "Stay calm, be respectful, answer clearly and honestly"
-    },
-    {
-      id: "phone_interview",
-      emoji: "📞",
-      title: "Phone Interview",
-      subtitle: "Tricky HR screening",
-      role: "an HR recruiter conducting a 15-minute phone screening, asking behavioral and trick questions",
-      opening: "Hi, this is Sarah from the HR department. Thanks for taking my call! Let's jump right in. Can you tell me — what would your biggest weakness be?",
-      color: "var(--mm-primary)",
-      tip: "Structure answers, be specific, turn weaknesses into growth stories"
-    },
-  ];
-
-  // Speak with LiveKit voice agent
-  const rpSpeak = (text, onEnd) => {
-    if (!text?.trim()) { onEnd?.(); return; }
-    liveKitVoiceBus.say(text);
-    const words = text.split(/\s+/).length;
-    const durationMs = Math.max(1400, (words / 2.6) * 1000);
-    rpSpeakingRef.current = true;
-    setTimeout(() => {
-      rpSpeakingRef.current = false;
-      onEnd?.();
-    }, durationMs);
-  };
-
-  // Start speech capture to get user reply
-  const rpListen = (onResult, onError) => {
-    if (customAgent.isConnected) {
-      const startCount = groupSpeechTurns(liveKitTranscriptions || []).filter(t => t.role === "user").length;
-      let checkTimer = setInterval(() => {
-        const userTurns = groupSpeechTurns(liveKitTranscriptions || []).filter(t => t.role === "user");
-        if (userTurns.length > startCount) {
-          clearInterval(checkTimer);
-          onResult(userTurns[userTurns.length - 1].text);
-        }
-      }, 500);
-      rpRecogRef.current = { abort: () => clearInterval(checkTimer) };
-      return rpRecogRef.current;
-    }
-    // Fallback: enregistreur audio intégré Whisper
-    const check = canRecord();
-    if (!check.ok) { onError?.(check.reason); return null; }
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      activeStreamsRef.current.add(stream);
-      const mimeType = getSupportedMimeType();
-      let mediaRecorder;
-      try { mediaRecorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream); }
-      catch { mediaRecorder = new MediaRecorder(stream); }
-      const chunks = [];
-      mediaRecorder.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
-      mediaRecorder.onstop = async () => {
-        const actualMime = mediaRecorder.mimeType || mimeType || "audio/mp4";
-        const blob = new Blob(chunks, { type: actualMime });
-        try {
-          const raw = await transcribeWithGroq(blob);
-          const transcript = cleanSpeechTranscript(raw || "");
-          onResult(transcript);
-        } catch (err) { onError?.(err.message); }
-        stream.getTracks().forEach(t => t.stop());
-        activeStreamsRef.current.delete(stream);
-      };
-      rpRecogRef.current = mediaRecorder;
-      mediaRecorder.start();
-      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 7000);
-    }).catch(e => onError?.(e.message));
-  };
-
-  // Send one turn to Claude: get reply + inline feedback
-  const rpClaudeTurn = async (scenario, history, userText) => {
-    const historyLines = history.map(h =>
-      `${h.role === "user" ? "Student" : scenario.title}: ${h.text}`
-    ).join("\n");
-    const raw = await callClaude(
-      `You are playing the role of ${scenario.role}. Stay in character at all times. Respond ONLY in English, maximum 2 sentences. After your reply, on a new line write exactly:
-FEEDBACK: [one concrete grammar or vocabulary correction if the student made a mistake, otherwise write 'Perfect!']
-
-Example:
-Here is my reply to the student.
-FEEDBACK: You said 'I am go' → correct form is 'I'm going'.`,
-      `Conversation so far:\n${historyLines}\n\nStudent just said: "${userText}"\n\nRespond in character (2 sentences max), then give feedback.`
-    );
-    // Split reply vs feedback
-    const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
-    const fbIdx = lines.findIndex(l => l.toUpperCase().startsWith("FEEDBACK:"));
-    const reply = fbIdx === -1 ? raw.trim() : lines.slice(0, fbIdx).join(" ").trim();
-    const feedback = fbIdx === -1 ? "" : lines[fbIdx].replace(/^FEEDBACK:/i, "").trim();
-    return { reply, feedback };
-  };
-
-  // Request final scoring from Claude
-  const rpClaudeScore = async (scenario, history) => {
-    const fullTranscript = history.map((h, i) =>
-      `${h.role === "user" ? "Student" : scenario.title}: ${h.text}`
-    ).join("\n");
-    const raw = await callClaude(
-      `You are an expert English language evaluator. Analyze this conversation transcript and return ONLY valid JSON (no markdown, no explanation) in exactly this format:
-{"fluencyScore":78,"grammarScore":65,"vocabularyScore":82,"nativeWordsUsed":["actually","sort of"],"errorsFound":[{"said":"I am go","correct":"I'm going"}],"overallFeedback":"Good fluency overall.","level":"B1-B2"}
-
-Rules:
-- Scores are 0-100 integers
-- nativeWordsUsed: English filler/native words the student used naturally
-- errorsFound: max 5 most important errors
-- overallFeedback: 1-2 sentences in French
-- level: CEFR estimate`,
-      `Scenario: ${scenario.title}\n\nFull transcript:\n${fullTranscript}\n\nEvaluate the student only (not the ${scenario.title} character).`
-    );
-    return safeParseJSON(raw);
-  };
-
-  // Main roleplay entry point: pick scenario → start loop
-  const startRoleplay = async (scenario) => {
-    rpHistoryRef.current = [];
-    rpTurnRef.current = 0;
-    rpScenarioRef.current = scenario;
-    setRpScenario(scenario);
-    setRpHistory([]);
-    setRpScore(null);
-    setRpError("");
-    setRpState("running");
-    markInteracted();
-    switchSubView("roleplay");
-    // Claude/character opens the scene
-    const openingEntry = { role: "assistant", text: scenario.opening, feedback: "" };
-    rpHistoryRef.current = [openingEntry];
-    setRpHistory([openingEntry]);
-    rpSpeak(scenario.opening, () => rpStartListeningTurn());
-  };
-
-  const rpStartListeningTurn = () => {
-    if (rpTurnRef.current >= MAX_RP_TURNS) { rpFinishSession(); return; }
-    setRpState("listening");
-    rpListen(
-      (transcript) => rpOnUserSpeech(transcript),
-      (err) => { setRpError(err); setRpState("running"); }
-    );
-  };
-
-  const rpOnUserSpeech = async (transcript) => {
-    if (!transcript.trim()) { rpStartListeningTurn(); return; }
-    setRpState("thinking");
-    const userEntry = { role: "user", text: transcript, feedback: "" };
-    rpHistoryRef.current = [...rpHistoryRef.current, userEntry];
-    setRpHistory([...rpHistoryRef.current]);
-    rpTurnRef.current += 1;
-    try {
-      const scenario = rpScenarioRef.current;
-      const { reply, feedback } = await rpClaudeTurn(scenario, rpHistoryRef.current, transcript);
-      // Update user entry with feedback
-      rpHistoryRef.current = rpHistoryRef.current.map((h, i) =>
-        i === rpHistoryRef.current.length - 1 ? { ...h, feedback } : h
-      );
-      const assistantEntry = { role: "assistant", text: reply, feedback: "" };
-      rpHistoryRef.current = [...rpHistoryRef.current, assistantEntry];
-      setRpHistory([...rpHistoryRef.current]);
-      setRpState("running");
-      awardXP(12, 3, "Échange role-play");
-      if (rpTurnRef.current >= MAX_RP_TURNS) {
-        rpSpeak(reply, () => rpFinishSession());
-      } else {
-        rpSpeak(reply, () => rpStartListeningTurn());
-      }
-    } catch (e) {
-      setRpError("Erreur Claude: " + e.message);
-      setRpState("running");
-    }
-  };
-
-  const rpFinishSession = async () => {
-    setRpState("scoring");
-    liveKitVoiceBus.interrupt();
-    try {
-      const score = await rpClaudeScore(rpScenarioRef.current, rpHistoryRef.current);
-      setRpScore(score);
-      awardXP(50, 15, "Session Role-Play complète 🎭");
-    } catch (e) {
-      setRpScore({ fluencyScore: "?", grammarScore: "?", vocabularyScore: "?", nativeWordsUsed: [], errorsFound: [], overallFeedback: "Erreur scoring.", level: "?" });
-    }
-    setRpState("done");
-  };
-
-  const rpStopSession = () => {
-    liveKitVoiceBus.interrupt();
-    rpRecogRef.current?.abort?.();
-    if (rpTurnRef.current > 0) { rpFinishSession(); }
-    else { setRpState("picking"); setRpHistory([]); setRpScore(null); }
   };
 
   // Mode Dictée
@@ -3383,14 +3013,13 @@ Réponds UNIQUEMENT en anglais, comme un vrai examinateur IELTS (1-3 phrases max
   // VOCABULARY BRAIN MAP
   // ══════════════════════════════════════════════════════════════════════════════
 
-  // Collect all user words from chat + writing + dictation
+  // Collect all user words from chat + Live Nova + writing + dictation
   const collectUserWords = () => {
     const sources = [
       ...practiceMessages.filter(m => m.role === "user").map(m => m.text),
+      ...(Array.isArray(liveKitTranscriptions) ? liveKitTranscriptions.filter(m => m.role === "user").map(m => m.text) : []),
       practiceWritingText,
       (Array.isArray(practiceDictationInputs) ? practiceDictationInputs.join(" ") : ""),
-      ...practiceDebateHistory.filter(m => m.role === "user").map(m => m.text),
-      ...practiceRoleplayHistory.filter(m => m.role === "user").map(m => m.text),
     ];
     const raw = sources.join(" ").toLowerCase();
     const stopWords = new Set(["i", "a", "an", "the", "is", "it", "to", "of", "and", "or", "in", "on", "at", "for", "with", "that", "this", "my", "me", "you", "we", "he", "she", "they", "was", "are", "be", "do", "did", "have", "has", "had", "not", "but", "so", "if", "as", "by", "up", "out", "go", "can", "will", "its", "been", "were", "from", "him", "her", "our", "your", "his", "their", "all", "get", "got", "just", "like", "what", "how", "when", "who", "some", "than", "then", "about", "said", "one", "two", "more", "no", "yes", "ok", "okay", "yeah", "oh", "well", "really", "very", "too", "also", "there", "would", "could", "should", "want", "need", "make", "made", "see", "know", "think", "come", "use", "way", "time", "day", "here", "which", "any", "other"]);
@@ -4042,9 +3671,9 @@ ${SPEECH_HYGIENE_PROMPT}`,
         {/* ── COMMAND DOCK : BARRE UNIQUE STICKY (toutes les vues) ── */}
         <div style={{
           position: "sticky", top: 0, zIndex: 100,
-          background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 85%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)",
-          backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-          borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`,
+          background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev, #0b0d1e) 82%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev, #ffffff) 88%, transparent)",
+          backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
+          borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-border, #ffffff) 10%, transparent)" : "color-mix(in srgb, var(--mm-border, #0f172a) 10%, transparent)"}`,
           marginLeft: -36, marginRight: -36, paddingLeft: 36, paddingRight: 36,
           paddingTop: 12, paddingBottom: 12,
         }}>
@@ -4082,13 +3711,11 @@ ${SPEECH_HYGIENE_PROMPT}`,
             <span className="ep-tabbar-label">Piliers</span>
             <div className="tabs-scroll english-tabs-cluster ep-tabbar" role="tablist" aria-label="Modes de pratique">
               {[
-                { id: "chat", icon: "🎙️", label: "Live Nova", accent: "var(--mm-primary)" },
-                { id: "reallife", icon: "🌍", label: "RealLife", accent: "var(--mm-warning)" },
-                { id: "wild", icon: "📺", label: "In The Wild", accent: "var(--mm-warning)" },
-                { id: "debate", icon: "⚖️", label: "Débat", accent: "var(--mm-warning)" },
-                { id: "roleplay", icon: "🎭", label: "Roleplay", accent: "var(--mm-primary)" },
-                { id: "writing", icon: "📝", label: "Écriture", accent: "var(--mm-success)" },
-                { id: "dictation", icon: "✍️", label: "Dictée", accent: "var(--mm-primary)" },
+                { id: "chat", icon: "🎙️", label: "Live Nova", accent: "var(--mm-primary, #8B5CF6)" },
+                { id: "reallife", icon: "🌍", label: "RealLife", accent: "#38BDF8" },
+                { id: "wild", icon: "📺", label: "In The Wild", accent: "#F59E0B" },
+                { id: "writing", icon: "📝", label: "Écriture", accent: "#10B981" },
+                { id: "dictation", icon: "✍️", label: "Dictée", accent: "#06B6D4" },
               ].map(tab => {
                 const isActive = practiceSubView === tab.id;
                 return (
@@ -4130,8 +3757,8 @@ ${SPEECH_HYGIENE_PROMPT}`,
           {/* ── CHAT TOP HEADER BAR (Statut + Historique + Profil) ── */}
           <div style={{
             padding: "10px 14px",
-            borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, transparent)"}`,
-            background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 65%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev) 85%, transparent)",
+            borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-border, #ffffff) 10%, transparent)" : "color-mix(in srgb, var(--mm-border, #0f172a) 10%, transparent)"}`,
+            background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev, #0b0f19) 75%, transparent)" : "color-mix(in srgb, var(--mm-bg-elev, #ffffff) 85%, transparent)",
             backdropFilter: "blur(14px)",
             WebkitBackdropFilter: "blur(14px)",
             display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
@@ -4623,12 +4250,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
               <AgentVoiceBar
                 agent={agent}
                 variant="chatgpt"
-                onStart={() => {
-                  armIosAudio();
-                  setAgentTranscript([]);
-                  setAgentError("");
-                  agent.start(MODE_CONFIGS.chat({ topic: practiceTopic || "Free conversation", level: practiceLevel }));
-                }}
+                onStart={handleStartLiveNova}
               />
 
               {/* Bouton Compteur de fiches créées durant la session (48px rond) */}
@@ -6267,345 +5889,6 @@ ${SPEECH_HYGIENE_PROMPT}`,
         )
       }
 
-      {/* ══ DÉBAT ══ */}
-      {
-        practiceSubView === "debate" && (
-          <div
-            className="ep-glass-panel"
-            style={{
-              position: "relative", borderRadius: 24,
-              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "color-mix(in srgb, var(--mm-primary) 35%, transparent)"}`,
-              overflow: "hidden",
-              background: isDarkMode
-                ? "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--mm-primary) 20%, transparent), transparent 70%), var(--mm-bg-elev, var(--mm-bg-card))"
-                : "radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--mm-primary) 12%, transparent), transparent 70%), var(--mm-on-primary)",
-              boxShadow: isDarkMode ? "0 16px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 30px color-mix(in srgb, var(--mm-primary) 8%, transparent)",
-              transition: "background 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)",
-              animation: debateShatter > 0 && Date.now() - debateShatter < 1000 ? "shake-ring 0.4s" : "none"
-            }}
-          >
-
-            {/* Shatter Overlay */}
-            {debateShatter > 0 && (
-              <div key={debateShatter} style={{ position: "absolute", inset: 0, zIndex: 50, pointerEvents: "none", animation: "shatter-flash 1s forwards" }}>
-                <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  <path d="M0,0 L50,50 L100,0 M0,100 L50,50 L100,100 M20,0 L50,50 L80,100 M0,30 L50,50 L100,70 M30,100 L50,50 L70,0" stroke="color-mix(in srgb, var(--mm-bg-elev) 90%, transparent)" strokeWidth="0.5" fill="none" style={{ animation: "shatter-cracks 0.3s forwards" }} />
-                </svg>
-              </div>
-            )}
-
-            {/* LiveKitVoiceAssistant moved to root */}
-            <div style={{
-              position: "relative", zIndex: 1,
-              background: isDarkMode
-                ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 25%, transparent), color-mix(in srgb, var(--mm-primary) 35%, transparent))"
-                : "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 14%, transparent), color-mix(in srgb, var(--mm-primary) 22%, transparent))",
-              padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              backdropFilter: "blur(16px)",
-              borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25%, transparent)"}`
-            }}>
-              <div>
-                <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🌌 Cosmic Arena Debate</div>
-                {practiceDebateTopic && <div style={{ fontSize: 12, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", marginTop: 2, fontWeight: 700 }}>Topic : {practiceDebateTopic}</div>}
-              </div>
-              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeDebateTopic(""); setPracticeDebateHistory([]); setDebateBalance(50); }} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
-            </div>
-            {!practiceDebateTopic && !customAgent.isConnected && (
-              <div style={{ padding: 28, position: "relative", zIndex: 1 }}>
-                <p style={{ color: "var(--mm-fg)", marginTop: 0, marginBottom: 20, fontSize: 14, fontWeight: 700 }}>Choisis un sujet de débat. L'IA va te challenger en anglais. Chaque argument fort fait reculer ton adversaire !</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
-                  {["Social media does more harm than good", "AI will replace human jobs", "Remote work is better than office", "Climate change is the biggest threat", "Video games improve cognitive skills"].map(topic => (
-                    <button
-                      key={topic}
-                      onClick={() => startDebate(topic)}
-                      style={{
-                        padding: "8px 14px",
-                        borderRadius: 20,
-                        border: `2px solid ${practiceDebateTopic === topic ? "var(--mm-primary)" : "var(--mm-border)"}`,
-                        background: practiceDebateTopic === topic ? "var(--mm-primary)" : "var(--mm-bg-card)",
-                        color: practiceDebateTopic === topic ? "white" : "var(--mm-fg)",
-                        fontWeight: 600,
-                        cursor: "pointer",
-                        fontSize: 13,
-                        transition: "all 0.2s ease",
-                        boxShadow: practiceDebateTopic === topic ? "0 4px 15px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none"
-                      }}
-                    >
-                      {topic}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <input
-                    value={practiceDebateTopic}
-                    onChange={e => setPracticeDebateTopic(e.target.value)}
-                    placeholder="Ou tape ton propre sujet…"
-                    style={{ flex: 1, padding: "12px 16px", borderRadius: 12, border: `2px solid var(--mm-border)`, background: "var(--mm-bg-elev)", color: "var(--mm-fg)", fontSize: 14, outline: "none" }}
-                    onKeyDown={e => e.key === "Enter" && startDebate(practiceDebateTopic)}
-                    onFocus={e => e.target.style.borderColor = "var(--mm-primary)"}
-                    onBlur={e => e.target.style.borderColor = "var(--mm-border)"}
-                  />
-                  <button
-                    onClick={() => startDebate(practiceDebateTopic)}
-                    disabled={!practiceDebateTopic.trim()}
-                    style={{
-                      padding: "12px 24px",
-                      background: !practiceDebateTopic.trim()
-                        ? "color-mix(in srgb, var(--mm-primary) 45%, transparent)"
-                        : "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
-                      color: "white",
-                      border: "none",
-                      borderRadius: 12,
-                      fontWeight: 900,
-                      cursor: !practiceDebateTopic.trim() ? "not-allowed" : "pointer",
-                      boxShadow: !practiceDebateTopic.trim() ? "none" : "0 4px 15px color-mix(in srgb, var(--mm-primary) 45%, transparent)",
-                      transition: "all 0.2s ease"
-                    }}
-                  >
-                    ⚔️ Engage!
-                  </button>
-                </div>
-              </div>
-            )}
-            {(practiceDebateTopic || customAgent.isConnected || practiceDebateHistory.length > 0) && (
-              <>
-                <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16, position: "relative", zIndex: 1 }}>
-                  {(customAgent.isConnected && liveKitTranscriptions.length > 0
-                    ? groupSpeechTurns(liveKitTranscriptions).map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
-                    : practiceDebateHistory
-                  ).map((msg, i) => (
-                    <div key={msg.id || i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
-                      {msg.role === "assistant" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px color-mix(in srgb, var(--mm-danger) 40%, transparent)" }}>🤖</div>}
-                      <div style={{ maxWidth: "78%", padding: "14px 18px", borderRadius: msg.role === "user" ? "20px 20px 4px 20px" : "20px 20px 20px 4px", background: msg.role === "user" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : "linear-gradient(135deg,var(--mm-danger),var(--mm-danger))", color: "white", fontSize: 15, lineHeight: 1.6, boxShadow: msg.role === "user" ? "0 4px 15px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "0 4px 15px color-mix(in srgb, var(--mm-danger) 40%, transparent)", opacity: msg.isFinal === false ? 0.7 : 1 }}>
-                        {msg.role === "assistant" ? renderDraggableWord(msg.text) : msg.text}
-                        {msg.isFinal === false && <span style={{ marginLeft: 4, opacity: 0.7, animation: "pulse 1.5s infinite" }}>…</span>}
-                      </div>
-                      {msg.role === "user" && <div style={{ width: 36, height: 36, borderRadius: 12, background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0, boxShadow: "0 4px 10px color-mix(in srgb, var(--mm-primary) 40%, transparent)" }}>🥊</div>}
-                    </div>
-                  ))}
-                  {/* FIX : ancre de scroll manquante — sans elle, practiceEndRef.current
-                      reste null en vue Débat (il n'était placé que dans la vue Chat), donc
-                      le conteneur (overflowY:auto, maxHeight:380) ne descend jamais tout
-                      seul. Résultat : chaque nouvelle réplique de ARGOS/ta réponse arrivait
-                      hors-écran en bas, sans auto-scroll — d'où l'impression que "ce qui
-                      était en bas" disparaissait pendant la conversation vocale. */}
-                  <div ref={practiceEndRef} />
-                </div>
-                <div style={{ padding: "16px 20px", borderTop: "1px solid var(--mm-border-strong)", background: "var(--mm-bg-overlay)", backdropFilter: "var(--mm-blur)", position: "relative", zIndex: 1 }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <div style={{
-                      flex: 1, display: "flex", alignItems: "center", gap: 8,
-                      background: customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 5%, transparent)" : "var(--mm-bg-elev)") : "var(--mm-bg-elev)",
-                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "var(--mm-success)") : "var(--mm-border-strong)"}`,
-                      borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{
-                          width: 8, height: 8, borderRadius: "50%",
-                          background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
-                          boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
-                          animation: customAgent.isConnected ? "pulse 1.5s infinite" : "none"
-                        }} />
-                        {customAgent.isConnected && (
-                          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-success)", whiteSpace: "nowrap" }} className="hide-mobile">
-                            {customAgent.isSpeaking ? "🗣️ ARGOS parle" : "👂 T'écoute"}
-                          </span>
-                        )}
-                      </div>
-                      <input value={customAgent.isConnected ? "" : practiceInput} onChange={e => { if (customAgent.isConnected) return; setPracticeInput(e.target.value); }} onKeyDown={e => { if (customAgent.isConnected || e.key !== "Enter" || !practiceInput.trim()) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} placeholder={customAgent.isConnected ? "Parle directement dans le micro..." : "Tape ton argument en anglais..."} disabled={customAgent.isConnected} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 15, fontWeight: 600, minWidth: 0 }} />
-                      <AgentVoiceBar
-                        agent={agent}
-                        variant="minimal"
-                        onStart={() => {
-                          armIosAudio();
-                          setLiveKitTranscriptions([]);
-                          setAgentTranscript([]);
-                          setAgentError("");
-                          agent.start(MODE_CONFIGS.debate({ topic: practiceDebateTopic || "Free debate", level: practiceLevel }));
-                        }}
-                        theme={theme}
-                        isDarkMode={isDarkMode}
-                      />
-                    </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendDebateMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
-                  </div>
-                  {agentError && (
-                    <div style={{ marginTop: 12, padding: "8px 14px", background: "var(--mm-bg-elev)", color: "var(--mm-danger)", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
-                      {agentError}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )
-      }
-
-      {/* ══ ROLEPLAY ══ */}
-      {
-        practiceSubView === "roleplay" && (
-          <div
-            className="ep-glass-panel"
-            style={{
-              position: "relative", borderRadius: 24,
-              border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18%, transparent)"}`,
-              overflow: "hidden",
-              boxShadow: isDarkMode ? "0 16px 40px color-mix(in srgb, var(--mm-fg) 40%, transparent)" : "0 10px 30px color-mix(in srgb, var(--mm-primary) 6%, transparent)"
-            }}
-          >
-            <div style={{
-              background: isDarkMode
-                ? "linear-gradient(135deg, color-mix(in srgb, var(--mm-primary) 90%, transparent), color-mix(in srgb, var(--mm-primary) 40%, transparent))"
-                : "linear-gradient(135deg, color-mix(in srgb, var(--mm-bg-elev) 95%, transparent), color-mix(in srgb, var(--mm-bg-elev) 90%, transparent))",
-              padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              backdropFilter: "blur(16px)",
-              borderBottom: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-fg) 8%, transparent)"}`
-            }}>
-              <div>
-                <div style={{ fontWeight: 900, fontSize: 20, color: theme.text }}>🎭 Roleplay en anglais</div>
-                {practiceRoleplayScenario && <div style={{ fontSize: 12, color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary-deep)", marginTop: 2, fontWeight: 700 }}>Scénario : {practiceRoleplayScenario}</div>}
-              </div>
-              <button onClick={() => { if (customAgent.isConnected) agent.stop(); setPracticeRoleplayScenario(""); setPracticeRoleplayHistory([]); }} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)", border: "none", borderRadius: 10, padding: "6px 14px", color: theme.text, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>↺ Reset</button>
-            </div>
-            {!practiceRoleplayScenario && !customAgent.isConnected && (
-              <div style={{ padding: 28 }}>
-                <p style={{ color: theme.textMuted, marginTop: 0, marginBottom: 20, fontSize: 14, fontWeight: 600 }}>Choisis un scénario. L'IA joue le rôle de l'autre personnage. Tu pratiques l'anglais en situation réelle.</p>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))", gap: 14, marginBottom: 24 }}>
-                  {[
-                    { scenario: "Job interview at a tech company", icon: "💼", label: "Entretien tech" },
-                    { scenario: "At the doctor's office", icon: "🏥", label: "Chez le médecin" },
-                    { scenario: "Negotiating a salary raise", icon: "💰", label: "Négociation salaire" },
-                    { scenario: "Ordering at a restaurant", icon: "🍽️", label: "Au restaurant" },
-                    { scenario: "Presenting a project to a client", icon: "📊", label: "Présentation client" },
-                    { scenario: "Dealing with a difficult customer", icon: "😤", label: "Client difficile" },
-                  ].map(({ scenario, icon, label }) => {
-                    const isSelected = practiceRoleplayScenario === scenario;
-                    return (
-                      <button
-                        key={scenario}
-                        onClick={() => beginRoleplayScenario(scenario)}
-                        className="ep-glass-panel ep-glass-panel-hover"
-                        style={{
-                          padding: "16px 16px", borderRadius: 16,
-                          border: `2px solid ${isSelected ? "var(--mm-primary)" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 8%, transparent)" : "color-mix(in srgb, var(--mm-fg) 6%, transparent)")}`,
-                          background: isSelected
-                            ? (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 10%, transparent)")
-                            : (isDarkMode ? "color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "var(--mm-on-primary)"),
-                          color: theme.text, fontWeight: 700, cursor: "pointer", textAlign: "left",
-                          display: "flex", flexDirection: "column", gap: 6, transition: "all 0.22s ease",
-                          boxShadow: isSelected ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 25%, transparent)" : "none"
-                        }}
-                      >
-                        <span style={{ fontSize: 26 }}>{icon}</span>
-                        <span style={{ fontSize: 14, fontWeight: 800 }}>{label}</span>
-                        <span style={{ fontSize: 11, color: theme.textMuted, fontWeight: 500, lineHeight: 1.4 }}>{scenario}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <input
-                    value={practiceRoleplayScenario}
-                    onChange={e => setPracticeRoleplayScenario(e.target.value)}
-                    placeholder="Ou décris ton propre scénario…"
-                    style={{
-                      flex: 1, padding: "12px 18px", borderRadius: 14,
-                      border: `1.5px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 12%, transparent)" : "color-mix(in srgb, var(--mm-fg) 12%, transparent)"}`,
-                      background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 60%, transparent)" : "var(--mm-on-primary)",
-                      color: theme.text, fontSize: 14, outline: "none"
-                    }}
-                    onKeyDown={e => e.key === "Enter" && practiceRoleplayScenario.trim() && beginRoleplayScenario(practiceRoleplayScenario)}
-                  />
-                  <button
-                    onClick={() => beginRoleplayScenario(practiceRoleplayScenario)}
-                    disabled={!practiceRoleplayScenario.trim()}
-                    style={{
-                      padding: "12px 24px",
-                      background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))",
-                      color: "white", border: "none", borderRadius: 14, fontWeight: 800, cursor: "pointer",
-                      boxShadow: "0 4px 16px color-mix(in srgb, var(--mm-primary) 35%, transparent)", transition: "all 0.2s"
-                    }}
-                  >
-                    🎭 Lancer
-                  </button>
-                </div>
-              </div>
-            )}
-            {(practiceRoleplayScenario || customAgent.isConnected || practiceRoleplayHistory.length > 0) && (
-              <>
-                <div style={{ maxHeight: 380, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-                  {(customAgent.isConnected && liveKitTranscriptions.length > 0
-                    ? groupSpeechTurns(liveKitTranscriptions).map(m => ({ role: m.role === "user" ? "user" : "assistant", text: m.text, id: m.id, isFinal: m.isFinal }))
-                    : practiceRoleplayHistory
-                  ).map((msg, i) => (
-                    <div key={msg.id || i} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", gap: 10, alignItems: "flex-end" }}>
-                      {msg.role === "assistant" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>🎭</div>}
-                      <div style={{ maxWidth: "78%", padding: "12px 16px", borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "18px 18px 18px 4px", background: msg.role === "user" ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" : theme.inputBg, color: msg.role === "user" ? "white" : theme.text, fontSize: 14, lineHeight: 1.6, opacity: msg.isFinal === false ? 0.7 : 1 }}>
-                        {msg.text}
-                        {msg.isFinal === false && <span style={{ marginLeft: 4, opacity: 0.7, animation: "pulse 1.5s infinite" }}>…</span>}
-                      </div>
-                      {msg.role === "user" && <div style={{ width: 34, height: 34, borderRadius: 10, background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>😊</div>}
-                    </div>
-                  ))}
-                  {/* FIX : même bug que la vue Débat — practiceEndRef n'était jamais posé
-                      ici, donc le conteneur (overflowY:auto, maxHeight:380) ne descendait
-                      jamais automatiquement vers la nouvelle réplique. */}
-                  <div ref={practiceEndRef} />
-                </div>
-                <div style={{ padding: "16px 20px", borderTop: "1px solid var(--mm-border-strong)", background: "var(--mm-bg-overlay)", backdropFilter: "var(--mm-blur)" }}>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <div style={{
-                      flex: 1, display: "flex", alignItems: "center", gap: 8,
-                      background: customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 5%, transparent)" : "var(--mm-bg-elev)") : "var(--mm-bg-elev)",
-                      border: `2px solid ${customAgent.isConnected ? (isDarkMode ? "color-mix(in srgb, var(--mm-success) 30%, transparent)" : "var(--mm-success)") : "var(--mm-border-strong)"}`,
-                      borderRadius: 18, padding: "6px 8px 6px 18px", transition: "all 0.3s"
-                    }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{
-                          width: 8, height: 8, borderRadius: "50%",
-                          background: customAgent.isConnected ? "var(--mm-success)" : (isDarkMode ? "var(--mm-fg)" : "var(--mm-fg-muted)"),
-                          boxShadow: customAgent.isConnected ? "0 0 10px var(--mm-success)" : "none",
-                          animation: customAgent.isConnected ? "pulse 1.5s infinite" : "none"
-                        }} />
-                        {customAgent.isConnected && (
-                          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--mm-success)", whiteSpace: "nowrap" }} className="hide-mobile">
-                            {customAgent.isSpeaking ? "🗣️ Parle" : "👂 T'écoute"}
-                          </span>
-                        )}
-                      </div>
-                      <input value={customAgent.isConnected ? "" : practiceInput} onChange={e => { if (customAgent.isConnected) return; setPracticeInput(e.target.value); }} onKeyDown={e => { if (customAgent.isConnected || e.key !== "Enter" || !practiceInput.trim()) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} placeholder={customAgent.isConnected ? "Parle directement dans le micro..." : "Tape ta réponse…"} disabled={customAgent.isConnected} style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: theme.text, fontSize: 15, fontWeight: 500, minWidth: 0 }} />
-                      <AgentVoiceBar
-                        agent={agent}
-                        variant="minimal"
-                        onStart={() => {
-                          armIosAudio();
-                          setLiveKitTranscriptions([]);
-                          setAgentTranscript([]);
-                          setAgentError("");
-                          agent.start(MODE_CONFIGS.roleplay({
-                            scenario: practiceRoleplayScenario || "Free roleplay",
-                            character: practiceRoleplayCharacter || "the other person in the scenario",
-                            level: practiceLevel,
-                          }));
-                        }}
-                        theme={theme}
-                        isDarkMode={isDarkMode}
-                      />
-                    </div>
-                    <button onClick={() => { if (customAgent.isConnected) return; stopSpeaking(); sendRoleplayMessage(practiceInput); setPracticeInput(""); }} disabled={!practiceInput.trim() || customAgent.isConnected} style={{ width: 50, height: 50, borderRadius: 16, background: (practiceInput.trim() && !customAgent.isConnected) ? "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-deep))" : theme.inputBg, border: `1px solid ${practiceInput.trim() && !customAgent.isConnected ? "transparent" : (isDarkMode ? "color-mix(in srgb, var(--mm-bg-elev) 10%, transparent)" : "color-mix(in srgb, var(--mm-primary) 15%, transparent)")}`, cursor: (practiceInput.trim() && !customAgent.isConnected) ? "pointer" : "default", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: customAgent.isConnected ? 0.3 : 1, transition: "all 0.3s", boxShadow: (practiceInput.trim() && !customAgent.isConnected) ? "0 8px 20px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none", color: (practiceInput.trim() && !customAgent.isConnected) ? "white" : theme.textMuted }}>➤</button>
-                  </div>
-                  {agentError && (
-                    <div style={{ marginTop: 12, padding: "8px 14px", background: "var(--mm-bg-elev)", color: "var(--mm-danger)", borderRadius: 10, fontSize: 13, fontWeight: 600 }}>
-                      {agentError}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )
-      }
-
       {/* ══ DICTÉE ══ */}
       {
         practiceSubView === "dictation" && (
@@ -6835,7 +6118,7 @@ ${SPEECH_HYGIENE_PROMPT}`,
                   <div style={{ textAlign: "center", padding: "48px 24px", color: theme.textMuted }}>
                     <div style={{ fontSize: 60, marginBottom: 16 }}>🧠</div>
                     <div style={{ fontWeight: 700, fontSize: 16, color: theme.text, marginBottom: 8 }}>Ton Brain Map est vide</div>
-                    <div style={{ fontSize: 14 }}>Pratique l'anglais dans le Chat, Débat, Roleplay ou Écriture, puis clique sur <strong>Générer</strong> pour visualiser ton vocabulaire.</div>
+                    <div style={{ fontSize: 14 }}>Pratique l'anglais dans Live Nova ou Écriture, puis clique sur <strong>Générer</strong> pour visualiser ton vocabulaire.</div>
                   </div>
                 )}
 
@@ -7969,57 +7252,85 @@ Analyze pronunciation word by word.`
       {/* ── TAB : RealLife (immersion 3 passes) ───────────────────────────── */}
       {
         practiceSubView === "reallife" && (
-          <RealLife
-            callClaude={callClaude}
-            storage={storage}
-            expressions={expressions}
-            setExpressions={setExpressions}
-            showToast={showToast}
-            today={today}
-            awardXP={awardXP}
-            isDarkMode={isDarkMode}
-          />
+          <Suspense fallback={
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16, color: theme?.textMuted }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${theme?.border || "rgba(255,255,255,0.1)"}`, borderTopColor: theme?.accent || "#6366f1", animation: "mm-spin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Chargement de RealLife...</div>
+            </div>
+          }>
+            <RealLife
+              callClaude={callClaude}
+              storage={storage}
+              expressions={expressions}
+              setExpressions={setExpressions}
+              showToast={showToast}
+              today={today}
+              awardXP={awardXP}
+              isDarkMode={isDarkMode}
+            />
+          </Suspense>
         )
       }
 
       {/* ── TAB : English in the Wild (Vidéos YouTube) ────────────────────── */}
       {
         practiceSubView === "wild" && (
-          <EnglishInTheWild
-            callClaude={callClaude}
-            storage={storage}
-            expressions={expressions}
-            setExpressions={setExpressions}
-            awardXP={awardXP}
-            showToast={showToast}
-            theme={theme}
-            isDarkMode={isDarkMode}
-          />
+          <Suspense fallback={
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16, color: theme?.textMuted }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${theme?.border || "rgba(255,255,255,0.1)"}`, borderTopColor: theme?.accent || "#6366f1", animation: "mm-spin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Chargement d'English in the Wild...</div>
+            </div>
+          }>
+            <EnglishInTheWild
+              callClaude={callClaude}
+              storage={storage}
+              expressions={expressions}
+              setExpressions={setExpressions}
+              awardXP={awardXP}
+              showToast={showToast}
+              theme={theme}
+              isDarkMode={isDarkMode}
+            />
+          </Suspense>
         )
       }
 
       {/* ── TAB : Live News English ─────────────────────────────────────────── */}
       {
         practiceSubView === "news" && (
-          <LiveNewsModule
-            callClaude={callClaude}
-            theme={theme}
-            isDarkMode={isDarkMode}
-          />
+          <Suspense fallback={
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16, color: theme?.textMuted }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${theme?.border || "rgba(255,255,255,0.1)"}`, borderTopColor: theme?.accent || "#6366f1", animation: "mm-spin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Chargement de Live News...</div>
+            </div>
+          }>
+            <LiveNewsModule
+              callClaude={callClaude}
+              theme={theme}
+              isDarkMode={isDarkMode}
+            />
+          </Suspense>
         )
       }
 
       {/* ── TAB : Battle Mode ─────────────────────────────────────────────── */}
       {
         practiceSubView === "battle" && (
-          <BattleMode
-            callClaude={callClaude}
-            storage={storage}
-            showToast={showToast}
-            theme={theme}
-            isDarkMode={isDarkMode}
-            addXP={addXP}
-          />
+          <Suspense fallback={
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 20px", gap: 16, color: theme?.textMuted }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${theme?.border || "rgba(255,255,255,0.1)"}`, borderTopColor: theme?.accent || "#6366f1", animation: "mm-spin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 14, fontWeight: 600 }}>Chargement du Mode Battle...</div>
+            </div>
+          }>
+            <BattleMode
+              callClaude={callClaude}
+              storage={storage}
+              showToast={showToast}
+              theme={theme}
+              isDarkMode={isDarkMode}
+              addXP={addXP}
+            />
+          </Suspense>
         )
       }
 
@@ -8058,6 +7369,7 @@ Analyze pronunciation word by word.`
           onStateChange={setLiveKitState}
           systemPrompt={liveKitSystemPrompt}
           studentName={studentName}
+          level={practiceLevel}
           sessionGoal={effectiveSessionGoal}
           targetExpressions={effectiveTargetExpressions}
           continuityMemory={continuityMemory}

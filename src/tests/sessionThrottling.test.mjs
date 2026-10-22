@@ -17,10 +17,10 @@ test('Couche 2 — petite pile (<50) : aucun plafond', () => {
   assert.equal(composeDailySession(cards, { todayISO: '2026-07-30' }).length, 30);
 });
 
-test('Couche 2 — grosse pile (>150) : session ~30-40 fiches', () => {
+test('Couche 2 — grosse pile (>150) : session 45 fiches (35 générales + 10 Nova)', () => {
   const cards = Array.from({ length: 200 }, (_, i) => mkCard(i));
   const s = composeDailySession(cards, { todayISO: '2026-07-30' });
-  assert.ok(s.length >= 30 && s.length <= 40, `session attendue 30-40, reçue ${s.length}`);
+  assert.equal(s.length, 45, `session attendue 45, reçue ${s.length}`);
   assert.equal(new Set(s.map(c => c.id)).size, s.length, 'pas de doublon');
 });
 

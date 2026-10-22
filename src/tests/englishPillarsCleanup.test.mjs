@@ -30,8 +30,6 @@ test('EnglishPractice — Les 6 seuls Piliers autorisés sont présents dans la 
     { id: 'chat', label: 'Live Nova' },
     { id: 'reallife', label: 'RealLife' },
     { id: 'wild', label: 'In The Wild' },
-    { id: 'debate', label: 'Débat' },
-    { id: 'roleplay', label: 'Roleplay' },
     { id: 'writing', label: 'Écriture' },
     { id: 'dictation', label: 'Dictée' },
   ];
@@ -46,10 +44,12 @@ test('EnglishPractice — Les 6 seuls Piliers autorisés sont présents dans la 
   assert.ok(!src.includes('id: "sprint"'), 'Sprint ne doit plus être dans les onglets');
   assert.ok(!src.includes('id: "accent"'), 'Dojo Phonétique ne doit plus être dans les onglets');
   assert.ok(!src.includes('id: "cefr"'), 'CEFR ne doit plus être dans les onglets');
+  assert.ok(!src.includes('id: "debate"'), 'Débat ne doit plus être dans les onglets');
+  assert.ok(!src.includes('id: "roleplay"'), 'Roleplay ne doit plus être dans les onglets');
 
   // VALID_VIEWS contient les piliers autorisés
   assert.ok(
-    src.includes('const VALID_VIEWS = ["chat", "wild", "debate", "roleplay", "writing", "dictation"];'),
+    src.includes('const VALID_VIEWS = ["chat", "wild", "writing", "dictation"];'),
     'VALID_VIEWS doit contenir exactement les piliers autorisés'
   );
 });

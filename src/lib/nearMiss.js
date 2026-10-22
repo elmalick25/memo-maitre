@@ -40,19 +40,6 @@ export function computeNearMiss(input = {}) {
   const out = [];
   const avgXP = Math.max(1, Math.round(Number(input.avgXPPerReview) || 10));
 
-  // 1. Niveau
-  const lvl = xpToNextLevel(input.totalXP);
-  if (lvl && lvl.remaining > 0 && lvl.remaining <= Math.max(120, avgXP * 12)) {
-    out.push({
-      id: "level",
-      icon: "🎚️",
-      text: `Encore ${lvl.remaining} XP pour le niveau ${lvl.nextLevel}`,
-      hint: `≈ ${Math.ceil(lvl.remaining / avgXP)} carte(s)`,
-      remaining: Math.ceil(lvl.remaining / avgXP),
-      unit: "cartes",
-      priority: 1,
-    });
-  }
 
   // 2. Quêtes du jour / hebdo
   if (input.questState) {

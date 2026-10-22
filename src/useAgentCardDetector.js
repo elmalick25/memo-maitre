@@ -1,3 +1,4 @@
+import { stripJsonWrapper } from "./lib/cardOptimizer.js";
 // useAgentCardDetector.js — v3 (2026-07-07)
 // ─────────────────────────────────────────────────────────────────────────────
 // Détecte les expressions à mémoriser dans une conversation avec l'agent
@@ -18,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useRef, useCallback, useState } from "react";
+import { curateNovaBatch, scheduleNovaCards, addDaysISO } from "./lib/novaReserve.js";
 
 const MIN_AGENT_WORDS = 5;
 const MIN_USER_WORDS = 1;
@@ -49,7 +51,7 @@ function dgroup(label, fn) {
 
 function robustJsonParse(raw) {
   if (!raw) return null;
-  let text = String(raw).replace(/```json|```/gi, "").trim();
+  let text = stripJsonWrapper(String(raw));
   try { return JSON.parse(text); } catch (_) { }
   const start = text.indexOf("{");
   if (start === -1) return null;
@@ -84,19 +86,22 @@ BRANCHE 2 — EXPRESSION DU COACH OU INCOMPRÉHENSION ("source": "coach_input" o
 - "front" : L'expression ou le phrasal verb en anglais (forme canonique, ex: "to hit the ground running").
 
 EXCLUSION STRICTE :
+- DISFLUENCES ET HÉSITATIONS ORALES INTERDITES : Les répétitions de mots consécutifs ("I can I can", "I... I think", "the the"), les faux-départs, bégaiements ou lapsus oraux d'un élève qui cherche ses mots NE SONT PAS des fautes de langue. INTERDICTION FORMELLE de créer une fiche d'erreur pour dire "ne répétez pas ce mot" ou "le cerveau double ce mot".
+- Ne créer de fiche d'erreur ("user_error") QUE pour de véritables fautes d'anglais (calques du français, mauvaises prépositions, faux-amis, ordre syntaxique bancal, grammaire).
+- Si la phrase de l'élève est correcte au fond et ne comporte qu'une hésitation orale (ex: "I can I can have more doors open" -> la structure "have doors open" est correcte), NE CRÉE AUCUNE FICHE D'ERREUR ("cards": [] ou fiche vocabulaire/idiome si Nova introduit une expression remarquable).
 - Ne crée JAMAIS de fiche pour du vocabulaire ultra-basique (A1: "water", "like", "house"), ou du small talk sans aucune pépite linguistique.
 - Si le message utilisateur était correct ET que Nova n'a utilisé aucune expression remarquable -> RENVOIE STRICTEMENT {"cards": []}.
 - Maximum 1 fiche par tour de parole pour privilégier l'excellence.
 
 RÈGLE DU VERSO ("back") :
 Pour "user_error" :
-### 🎙️ Contexte Live Nova
-* 🔴 **Tu as dit :** "<ce que l'utilisateur a dit>" ❌
-* 🟢 **En réalité, on dit :** "<la forme correcte>" ✅
-* 📖 **Traduction :** <traduction française naturelle>
+🏷️ **<badge de catégorie : ⚠️ Faux-ami | 🔄 Temps verbal | 🎯 Préposition piège | 🧱 Structure | 🗣️ Prononciation | 📚 Choix du mot>**
 
-💡 **Le réflexe natif :**
-<explication limpide en 1-2 phrases de la logique native, Transition Métaphorique si idiom/phrasal verb>
+💡 **Le déclic :** <UNE phrase courte qui explique la cause racine francophone, ex: « En français on "prend" une décision, en anglais on la "make" : make a decision. »>
+
+📖 **Vrai sens :** <traduction française naturelle et vivante, sans anglais>
+
+🧩 **La Règle Réflexe :** Vous avez dit : « <ce que l'utilisateur a dit> ». <explication limpide en 1-2 phrases de pourquoi on ne dit pas cela, Transition Métaphorique si idiom/phrasal verb, logique native et bon réflexe mental à adopter>
 
 💬 **Mini-dialogue :**
 * **A :** \`<réplique A en anglais>\`  
@@ -104,8 +109,9 @@ Pour "user_error" :
 * **B :** \`<réplique B en anglais>\`  
   ↳ *<traduction française de la réplique B>*
 
-⚠️ **Attention au piège :**
-<le calque du français à bannir>.
+⚠️ **Attention au piège & Exception :**
+* 🚫 **Le piège :** <le calque du français à bannir ou confusion courante>
+* ⚡ **L'exception / Nuance native :** <la nuance essentielle ou le cas précis où la règle change (ex: « the more... the more... »), ou la tournure spontanée des natifs>.
 
 Pour "coach_input" ou "comprehension_request" :
 ### 🎙️ Découvert avec Coach Nova
@@ -122,8 +128,9 @@ Pour "coach_input" ou "comprehension_request" :
 * **B :** \`<réplique B en anglais>\`  
   ↳ *<traduction française de la réplique B>*
 
-⚠️ **Attention au piège :**
-<nuance de registre ou piège fréquent>.
+⚠️ **Attention au piège & Exception :**
+* 🚫 **Le piège :** <nuance de registre ou piège fréquent à éviter>
+* ⚡ **L'exception / Nuance native :** <le cas d'usage privilégié par les natifs ou l'exception à garder en tête>.
 
 RÉPONSE : UNIQUEMENT JSON valide, sans texte autour, sans markdown.
 INTERDIT : sauts de ligne réels dans une valeur JSON. Utiliser "\\n".
@@ -136,6 +143,9 @@ Schéma :
       "type": "idiom" | "phrasal_verb" | "vocabulary" | "correction" | "grammar",
       "difficulty": "A2" | "B1" | "B2" | "C1" | "C2",
       "source": "user_error" | "coach_input" | "comprehension_request",
+      "trapCategory": "false_friend" | "tense" | "preposition" | "structure" | "pronunciation" | "word_choice" | null,
+      "frenchRootCause": "<pour user_error : une phrase en français sur le calque à l'origine de l'erreur, sinon null>",
+      "userMistake": "<pour user_error : la phrase exacte (courte) dite par l'élève, sinon null>",
       "back": "...",
       "example": "She hit the ground running on her first day at the startup."
     }
@@ -143,6 +153,8 @@ Schéma :
 }
 
 Phonétique ("ipa") : LISIBLE par un francophone qui ne connaît PAS l'IPA ("the" → "ze").`;
+
+const TRAP_CATEGORIES = new Set(["false_friend", "tense", "preposition", "structure", "pronunciation", "word_choice"]);
 
 // Compteurs de session (utiles pour debug rapide dans la console)
 let __analyzedCount = 0;
@@ -161,6 +173,7 @@ export function useAgentCardDetector({
   enabled,
 }) {
   const lastAnalyzedIndexRef = useRef(-1);
+  const sessionVocabKeptRef = useRef(0);
   const isAnalyzingRef = useRef(false);
   // File d'attente sérialisée : avant, une paire arrivant pendant une analyse
   // en cours était purement jetée (et jamais réanalysée) → des corrections
@@ -189,7 +202,9 @@ export function useAgentCardDetector({
     isAnalyzingRef.current = true;
     const t0 = Date.now();
     try {
-      const userPrompt = `UTILISATEUR: "${userMsg}"\n\nAGENT: "${agentMsg}"`;
+      // Nettoyer les bégaiements oraux / hésitations naturelles (ex: "I can I can" -> "I can")
+      const cleanUserMsg = userMsg.replace(/\b(\w+)\s+\1\b/gi, "$1");
+      const userPrompt = `UTILISATEUR: "${cleanUserMsg}"\n\nAGENT: "${agentMsg}"`;
       const raw = await callClaude(SYSTEM_PROMPT, userPrompt, {
         maxTokens: 1100,
         grounding: false,
@@ -244,6 +259,14 @@ export function useAgentCardDetector({
         const validSources = new Set(["user_error", "coach_input", "comprehension_request"]);
         if (c.source && !validSources.has(c.source)) { rejected.push([c.front, "source non reconnue: " + c.source]); return false; }
         if (!isComplete(c)) { rejected.push([c.front, "fiche incomplète (verso manquant/trop court)"]); return false; }
+        // Rejet strict des fiches basées sur un bégaiement ou une simple hésitation orale humaine
+        if (c.source === "user_error") {
+          const b = String(c.back || "");
+          if (/évite les répétitions inutiles|tendance à doubler|ne répétez pas|doubler «/i.test(b)) {
+            rejected.push([c.front, "rejet: fausse erreur (bégaiement/hésitation orale humaine)"]);
+            return false;
+          }
+        }
         if (batchFronts.has(f)) { rejected.push([c.front, "doublon dans le même lot"]); return false; }
         if (overlaps(f, existingFronts)) { rejected.push([c.front, "déjà en base"]); return false; }
         batchFronts.add(f);
@@ -251,6 +274,12 @@ export function useAgentCardDetector({
       });
       if (rejected.length) dlog("Cartes rejetées:", rejected);
       if (!newCards.length) { dlog("rejet: toutes les cartes dédoublonnées ou invalides"); return; }
+      // Pilier 1 — curation : vocabulaire du coach plafonné par session
+      const { kept: curated, dropped } = curateNovaBatch(newCards, sessionVocabKeptRef.current);
+      if (dropped.length) dlog("Vocabulaire coach écarté (plafond session):", dropped.map(c => c.front));
+      sessionVocabKeptRef.current += curated.filter(c => c.source !== "user_error").length;
+      newCards.length = 0; newCards.push(...curated);
+      if (!newCards.length) return;
 
       const nowIso = new Date().toISOString();
       const enriched = newCards.map(c => {
@@ -265,7 +294,7 @@ export function useAgentCardDetector({
           ipa: c.ipa?.trim() || null,
           category: englishCategory || "🇬🇧 Anglais",
           level: 0,
-          nextReview: localToday(),
+          nextReview: addDaysISO(localToday(), 1),
           createdAt: localToday(),
           updatedAt: nowIso,
           easeFactor: 2.5,
@@ -274,12 +303,15 @@ export function useAgentCardDetector({
           reviewHistory: [],
           imageUrl: null,
           _agentDetected: true,
-          // Les fiches produites par le prompt v9 sont déjà au bon format :
-          _novaV8: (back.includes("Contexte Live Nova") && back.includes("Tu as dit") && back.includes("En réalité, on dit"))
-            || (back.includes("Découvert avec Coach Nova") && back.includes("Expression")),
+          // Les fiches d'erreurs et de vocabulaire sont directement optimales :
+          _novaV8: true,
+          _retroEngineered: true,
+          userMistake: c.userMistake || (back.match(/Vous avez dit\s*:\s*[«"']([^»"']+)?[»"']/i)?.[1]) || (back.match(/Tu as dit\s*:\s*[«"']([^»"']+)?[»"']/i)?.[1]) || null,
           _type: c.type || (c.source === "user_error" ? "correction" : "idiom"),
           _difficulty: c.difficulty || "B1",
           _source: c.source || "user_error",
+          _trapCategory: TRAP_CATEGORIES.has(c.trapCategory) ? c.trapCategory : null,
+          _frenchRootCause: c.frenchRootCause ? String(c.frenchRootCause).trim() : null,
           _pairIndex: pairIndex,
         };
       });
@@ -298,6 +330,9 @@ export function useAgentCardDetector({
           toAdd.push(c);
         }
         if (!toAdd.length) { dlog("rejet final: race — déjà ajoutées"); return list; }
+        // Piliers 2+3 — réserve : étalement à partir de J+1 selon les places quotidiennes
+        const scheduled = scheduleNovaCards(toAdd, list, localToday());
+        toAdd.splice(0, toAdd.length, ...scheduled);
         actuallyAdded = toAdd;
         __createdCount += toAdd.length;
         try {

@@ -1,3 +1,4 @@
+import { stripJsonWrapper } from "./cardOptimizer.js";
 import { isNovaCard } from "./novaCardMigrator.js";
 import { safeParseJSON } from "./jsonRepair.js";
 import { runCardMigration } from "./migrationRunner.js";
@@ -12,7 +13,7 @@ function toText(raw) {
 
 function parseJSONSafely(raw) {
   if (!raw) return null;
-  const cleaned = String(raw).replace(/```json|```/gi, "").trim();
+  const cleaned = stripJsonWrapper(String(raw));
   try { return JSON.parse(cleaned); } catch { }
   if (safeParseJSON) {
     try { return safeParseJSON(cleaned); } catch { }

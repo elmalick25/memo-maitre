@@ -38,7 +38,7 @@ export default function AppOverlays({
     { icon: "🍅", label: "Lancer une session 25 min", action: () => navigate("lab/pomodoro") },
     {
       icon: "🤖",
-      label: "Ouvrir l'assistant IA",
+      label: "Parler à Maodo",
       shortcut: "J",
       action: () => {
         const isMobile = typeof window !== "undefined" && window.matchMedia(MOBILE_MQ).matches;

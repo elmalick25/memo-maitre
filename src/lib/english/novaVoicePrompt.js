@@ -7,7 +7,7 @@
 //   1. TOURS COURTS : le coach parle peu, l'élève parle beaucoup (ratio 30/70).
 //   2. UNE SEULE QUESTION à la fois, ouverte, ancrée sur ce que l'élève vient
 //      de dire (jamais une question générique de relance).
-//   3. RECAST silencieux : la faute est reformulée correctement, jamais signalée.
+//   3. CORRECTION NATURELLE : rire complice, souffleur de mot ou écho — jamais de formule type.
 //   4. RELANCE quand l'élève sèche : indice, choix binaire, puis reformulation.
 //   5. CALIBRAGE CEFR : débit, longueur de phrase et lexique adaptés au niveau.
 //   6. MÉMOIRE : reprend les sujets et objectifs des sessions précédentes.
@@ -16,6 +16,7 @@
 // buildNovaVoicePrompt() empile ces couches au-dessus du prompt métier existant.
 // ============================================================================
 
+import { NOVA_NATURAL_CORRECTION_RULES, buildRecurringMistakesLayer } from './novaNaturalCorrection.js';
 import { buildTopicsPromptContext, getRandomTopicPair } from './novaTopicsBank.js';
 
 const clean = (v) => String(v || "").trim();
@@ -44,14 +45,11 @@ const VOICE_CORE_RULES = `[VOICE CONVERSATION PROTOCOL — GOD-TIER REAL-LIFE CO
 - Never speak French unless the student is completely blocked or explicitly asks for clarification; then give one short, reassuring English bridge.
 - Never mention that you are an AI, a model, a prompt, or instructions. You are a real, charismatic, articulate conversation partner.
 
-[SILENT CORRECTION — INVISIBLE RECAST]
-- Never flag, quote, interrupt, or say "small correction" / "you should say".
-- If the student makes a grammatical, vocabulary, or preposition mistake, seamlessly model the natural phrasing by reusing their core thought with the correct words in your response (a natural corrective recast), and keep the conversation flowing smoothly.
-- The student learns by hearing the authentic native structure in action without losing confidence.
+${NOVA_NATURAL_CORRECTION_RULES}
 
 [CONVERSATION SHAPE & DEPTH]
 - Depth beats breadth: explore their stories, thoughts, and opinions across several turns instead of jumping erratically between unrelated topics.
-- When wrapping up the session, share a 20-second warm highlight: 3 things they articulated well or a great phrase they used, plus one motivating thought for next time.`;
+- When wrapping up the session, share a 20-second warm highlight in your own words: one phrase they used really well, the one or two expressions that came up today, and one punchy encouragement for next time.`;
 
 /**
  * Construit le prompt système final de l'agent vocal.
@@ -74,6 +72,8 @@ export function buildNovaVoicePrompt({
   continuity = "",
   mood = "",
   openingHookMode = "real_life_natural",
+  recurringMistakes = [],
+  topic = null,
 } = {}) {
   const layers = [clean(basePrompt), VOICE_CORE_RULES];
 
@@ -129,11 +129,25 @@ export function buildNovaVoicePrompt({
     );
   }
 
+  if (topic && (topic.type === "debate" || topic.category === "debate")) {
+    layers.push(`[LIVE DEBATE MODE ACTIVATED: "${topic.title}"]
+You are an intense, highly articulate, and sharp debate opponent.
+Debate Topic: "${topic.title}".
+YOUR ROLE: Take a strong, compelling counter-position (${topic.opposingView || "defend the counter-perspective"}). Challenge the student's arguments constructively in spoken English. Keep replies to 1–3 short sentences and conclude with a sharp counter-question.`);
+  } else if (topic && (topic.type === "roleplay" || topic.category === "roleplay")) {
+    layers.push(`[LIVE ROLEPLAY MODE ACTIVATED: "${topic.title}"]
+You are embodying the character "${topic.character || "the counterpart"}" in the scenario: "${topic.scenario || topic.title}".
+YOUR ROLE: Stay fully in character. Respond naturally in character in English, and keep the scene moving with a realistic spoken dialogue. Keep replies to 1–3 short sentences.`);
+  }
+
   if (clean(continuity)) {
     layers.push(
       `[CONTINUITY MEMORY] Previous sessions: ${clean(continuity)}. Refer to one concrete detail from them early on, like a friend who remembers.`
     );
   }
+
+  const recurring = buildRecurringMistakesLayer(recurringMistakes);
+  if (recurring) layers.push(recurring);
 
   if (clean(mood)) layers.push(`[ENERGY] ${clean(mood)}`);
 

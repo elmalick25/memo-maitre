@@ -1,3 +1,4 @@
+import { stripJsonWrapper } from "../cardOptimizer.js";
 // ============================================================================
 // novaMemory.js — Mémoire épisodique & profil apprenant de Coach NOVA
 // ============================================================================
@@ -146,7 +147,7 @@ Réponds STRICTEMENT sous forme de JSON valide avec ce schéma :
       prompt
     );
 
-    const cleanJson = String(rawResponse || "").replace(/```json|```/gi, "").trim();
+    const cleanJson = stripJsonWrapper(String(rawResponse || ""));
     const data = JSON.parse(cleanJson);
 
     const now = new Date();

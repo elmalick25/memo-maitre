@@ -2,7 +2,7 @@ import { sanitizeInput } from "./textUtils.js";
 import { callGeminiGenerateContent as defaultGeminiCall, getGeminiKeyCount as defaultKeyCount, isGeminiLikelyUnavailable as defaultGeminiUnavailable } from "./geminiClient.js";
 import { aiCall as defaultAiCall } from "./aiRouter.js";
 
-const GEMINI_MODEL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) || "gemini-flash-latest";
+const GEMINI_MODEL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_MODEL) || (typeof process !== "undefined" && process.env?.VITE_GEMINI_MODEL) || "gemini-flash-latest";
 
 function parseDataUrl(dataUrl) {
   if (typeof dataUrl !== "string") return null;
@@ -12,12 +12,14 @@ function parseDataUrl(dataUrl) {
 }
 
 export async function callClaude(systemPrompt, userMessage, isVisionOrOptions = false, imageUrl = null, deps = {}) {
-  const isVision = isVisionOrOptions === true;
+  const isVisionFlag = isVisionOrOptions === true;
   const opts = (isVisionOrOptions && typeof isVisionOrOptions === "object") ? isVisionOrOptions : {};
+  const effectiveImageUrl = imageUrl || opts.imageUrl || null;
+  const isVision = isVisionFlag || Boolean(effectiveImageUrl);
   const maxTokens = opts.maxTokens || 4096;
   const wantsGrounding = Boolean(opts.grounding);
   const temperature = opts.temperature !== undefined ? opts.temperature : 0.7;
-  const task = opts.task || (isVision ? "vision" : "chat");
+  const task = opts.task || (opts.fast ? "fast" : (isVision ? "vision" : "chat"));
 
   const aiCallFn = deps.aiCall || defaultAiCall;
   const geminiCallFn = deps.callGeminiGenerateContent || defaultGeminiCall;
@@ -32,7 +34,7 @@ export async function callClaude(systemPrompt, userMessage, isVisionOrOptions = 
   // ─── 1. MODE VISION : Google Gemini avec support natif inlineData ────────
   if (isVision && getKeyCountFn() > 0 && !isGeminiUnavailableFn()) {
     try {
-      const parsedImg = imageUrl ? parseDataUrl(imageUrl) : null;
+      const parsedImg = effectiveImageUrl ? parseDataUrl(effectiveImageUrl) : null;
       const parts = [];
       if (parsedImg) {
         parts.push({ inlineData: { mimeType: parsedImg.mimeType, data: parsedImg.data } });
@@ -94,46 +96,56 @@ export async function callClaude(systemPrompt, userMessage, isVisionOrOptions = 
     }
   }
 
-  // ─── 3. AI ROUTER (Mistral / Cerebras / Groq / OpenRouter) ───────────────
-  const taskChain = isVision
-    ? ["vision"]
-    : [...new Set([task, "chat", "fast-json", "pedagogy"].filter(Boolean))];
+  // ─── 3. AI ROUTER (OpenRouter / Cohere / Groq / Mistral) ─────────────────
+  if (!opts.directGemini) {
+    const taskChain = isVision
+      ? ["vision"]
+      : [...new Set([task, "chat"].filter(Boolean))];
 
-  for (const t of taskChain) {
-    try {
-      const { text } = await aiCallFn({
-        task: t,
-        system: systemPrompt,
-        user: safeUser,
-        imageUrl: isVision ? imageUrl : undefined,
-        maxTokens,
-        temperature,
-        json: opts.json || t === "fast-json",
-      });
-      return wrapReturn(text, []);
-    } catch (err) {
-      console.warn(`aiRouter task '${t}' failed:`, err?.message || err);
+    for (const t of taskChain) {
+      try {
+        const res = await aiCallFn({
+          task: t,
+          system: systemPrompt,
+          user: safeUser,
+          imageUrl: isVision ? effectiveImageUrl : undefined,
+          maxTokens,
+          temperature,
+          json: opts.json || t === "fast-json",
+          callerContext: opts.callerContext || opts.context,
+        });
+        const text = res?.text;
+        if (typeof text === "string" && text.trim().length > 0) {
+          return wrapReturn(text, []);
+        }
+      } catch (err) {
+        console.warn(`aiRouter task '${t}' failed:`, err?.message || err);
+      }
     }
   }
 
-  // ─── 4. Filet de sécurité ultime (Gemini standard texte) ─────────────────
+  // ─── 4. Filet de sécurité ultime (Gemini standard texte / JSON) ───────────
   if (!isVision && getKeyCountFn() > 0 && !isGeminiUnavailableFn()) {
     try {
+      const generationConfig = { maxOutputTokens: maxTokens, temperature };
+      if (opts.json) {
+        generationConfig.responseMimeType = "application/json";
+      }
       const data = await geminiCallFn({
         model: GEMINI_MODEL,
         body: {
-          systemInstruction: { parts: [{ text: systemPrompt }] },
+          systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: { maxOutputTokens: maxTokens, temperature }
+          generationConfig
         }
       });
       const candidate = data?.candidates?.[0];
       const text = candidate?.content?.parts?.[0]?.text;
-      if (text) {
+      if (typeof text === "string" && text.trim().length > 0) {
         return wrapReturn(text, []);
       }
     } catch (gErr) {
-      console.warn("Gemini ultimate fallback error:", gErr?.message || gErr);
+      console.warn("[callClaude] Gemini ultimate fallback error:", gErr?.message || gErr);
     }
   }
 

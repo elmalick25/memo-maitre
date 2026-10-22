@@ -1,3 +1,4 @@
+import { stripJsonWrapper } from "./cardOptimizer.js";
 // src/lib/novaCardMigrator.js — Détection et migration des fiches Nova vers le format neuro-cognitif v8
 import { safeParseJSON } from "./jsonRepair.js";
 import { runCardMigration } from "./migrationRunner.js";
@@ -15,7 +16,7 @@ function toText(raw) {
 
 function parseJSONSafely(raw) {
   if (!raw) return null;
-  const cleaned = String(raw).replace(/```json|```/gi, "").trim();
+  const cleaned = stripJsonWrapper(String(raw));
   try { return JSON.parse(cleaned); } catch { }
   if (safeParseJSON) {
     try { return safeParseJSON(cleaned); } catch { }

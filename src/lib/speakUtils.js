@@ -1,5 +1,6 @@
 // src/lib/speakUtils.js — Helper TTS pour prononciation d'expressions et d'exemples
 import { speakWithGroq, stopCurrent } from "./groqTTS.js";
+import { resolveAll, KNOWN_KEY_NAMES } from "./security/apiKeys.js";
 
 /**
  * Nettoie un texte pour ne garder que l'expression / phrase en anglais.
@@ -15,7 +16,7 @@ export function extractEnglishSpeechText(text) {
     .trim();
 
   // 1. REJET STRICT : Si la ligne est une section explicative en français
-  if (/(?:mini[- ]dialogue|dialogue|vrai\s+sens|traduction|attention(?:\s+au\s+piège)?|le\s+piège|la\s+règle(?:\s+réflexe)?|anti-pattern|comparatif|option\s+[ab]|erreur|problème)\s*:/i.test(clean)) {
+  if (/(?:mini[- ]dialogue|dialogue|vrai\s+sens|traduction|attention(?:\s+au\s+piège)?|le\s+piège|la\s+règle(?:\s+réflexe)?|anti-pattern|comparatif|option\s+[ab]|erreur|problème|l'exception|exception|nuance(?:\s+native)?)\s*:/i.test(clean)) {
     return "";
   }
 
@@ -51,8 +52,8 @@ export function extractEnglishSpeechText(text) {
   // 9. Rejet strict si le texte est du français
   if (detectLanguage(clean) === "fr-FR") return "";
 
-  // 10. Rejet strict si le texte ressemble à du code informatique ou un opérateur
-  if (/[()\[\]{};$=><+\/*_]/.test(clean) || /^(cond|nil|t|car|cdr|cons|defun|setq|setf|let|lambda|if|when|unless|return|def|var|val|function|expr|test)$/i.test(clean)) {
+  // 10. Rejet strict si le texte ressemble à du code informatique ou un opérateur technique
+  if (/[{}\[\]$=><+\\^~`#@*]/.test(clean) || /^(cond|nil|t|car|cdr|cons|defun|setq|setf|let|lambda|return|def|var|val|function|expr)$/i.test(clean)) {
     return "";
   }
 
@@ -137,18 +138,22 @@ export function getBestVoice(voices, lang = "en-US", isOffline = false) {
  */
 export function playEnglishAudio(rawText, options = {}) {
   if (typeof window === "undefined") return false;
-  const englishText = options.raw ? rawText.trim() : extractEnglishSpeechText(rawText);
+  const englishText = options.raw ? rawText.trim() : (extractEnglishSpeechText(rawText) || rawText.trim());
   if (!englishText) return false;
 
   const isOffline = typeof navigator !== "undefined" && !navigator.onLine;
 
-  // Groq TTS uniquement si l'utilisateur est EN LIGNE et a configuré une clé
-  const groqKey = options.groqApiKey || (typeof localStorage !== "undefined" ? localStorage.getItem("groq_api_key") : null);
-  if (groqKey && !isOffline) {
+  // Groq TTS haute fidélité uniquement si l'utilisateur est EN LIGNE
+  // Clés résolues automatiquement depuis le gestionnaire central (env, coffre sécurisé, localStorage)
+  const candidateKeys = options.groqApiKey
+    ? [options.groqApiKey]
+    : resolveAll(KNOWN_KEY_NAMES?.groq || ["VITE_GROQ_API_KEY", "VITE_GROQ_API_KEY_5", "VITE_GROQ_API_KEY_6", "VITE_GROQ_API_KEY_7", "VITE_GROQ_API_KEY_8", "VITE_GROQ_API_KEY_9", "VITE_GROQ_API_KEY_2"]);
+
+  if (candidateKeys.length > 0 && !isOffline) {
     speakWithGroq(englishText, {
-      apiKey: groqKey,
+      apiKeys: candidateKeys,
       lang: options.lang || detectLanguage(englishText),
-      voice: "tara",
+      voice: options.voice || "hannah", // Voix neuronale Orpheus valide (autumn|diana|hannah|austin|daniel|troy)
       onStart: options.onStart,
       onEnd: options.onEnd,
       onError: () => fallbackWebSpeech(englishText, options),
@@ -159,6 +164,8 @@ export function playEnglishAudio(rawText, options = {}) {
   // En mode hors ligne ou sans clé Groq : Web Speech local immédiat
   return fallbackWebSpeech(englishText, options);
 }
+
+export const speakExpression = playEnglishAudio;
 
 export function stopEnglishAudio() {
   activeUtterance = null;

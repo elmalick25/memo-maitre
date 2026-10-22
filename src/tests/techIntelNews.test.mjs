@@ -212,3 +212,11 @@ test('TechIntel — une traduction n’est complète que si le titre et la descr
   assert.equal(needsFrenchTranslation(complete), false);
 });
 
+
+test('Hacker News : 80 « Top » + 40 « Best »', async () => {
+  const fs = await import('node:fs');
+  const jsx = fs.readFileSync('src/components/TechIntelView.jsx', 'utf8');
+  assert.ok(jsx.includes('export const HN_TOP_LIMIT = 80;'));
+  assert.ok(jsx.includes('export const HN_BEST_LIMIT = 40;'));
+  assert.ok(jsx.includes('v0/beststories.json'));
+});

@@ -10,9 +10,9 @@ import { colorMix } from "../lib/colorMix";
 import {
   getUnmigratedNovaCards,
   migrateNovaCardsBatch,
-  isNovaCard,
   isNovaV8Format,
 } from "../lib/novaCardMigrator";
+import { isNovaCard, isNovaMistakeCard } from "../lib/memoryLab";
 import {
   getUnmodernizedEnglishCards,
   migrateEnglishCardsBatch,
@@ -1178,9 +1178,27 @@ export default function CardListView({
                         </button>
                       )}
                       <div style={{ padding: "20px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: colorMix(catColor, 13), color: catColor, marginLeft: selectionMode ? 30 : 0 }}>
-                          {exp.category}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginLeft: selectionMode ? 30 : 0 }}>
+                          <span style={{ padding: "4px 12px", borderRadius: 8, fontSize: 11, fontWeight: 800, background: colorMix(catColor, 13), color: catColor }}>
+                            {exp.category}
+                          </span>
+                          {isNovaMistakeCard(exp) && (
+                            <span style={{
+                              padding: "3px 9px",
+                              borderRadius: 8,
+                              fontSize: 10.5,
+                              fontWeight: 800,
+                              background: "color-mix(in srgb, #3b82f6 14%, transparent)",
+                              color: "#2563eb",
+                              border: "1px solid color-mix(in srgb, #3b82f6 28%, transparent)",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4
+                            }}>
+                              🎙️ Erreur Nova
+                            </span>
+                          )}
+                        </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ background: colorMix(tag.color, 13), color: tag.color, padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700 }}>
                             {tag.icon} {tag.label}
@@ -1318,9 +1336,27 @@ export default function CardListView({
             <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 640 }}>
               <HoloCard theme={theme} glowColor={catColor} style={{ background: isDarkMode ? "rgba(15,23,42,0.8)" : "rgba(255,255,255,0.9)", border: `1px solid ${colorMix(catColor, 31)}`, borderRadius: 32, padding: "36px", boxShadow: `0 30px 80px rgba(0,0,0,0.4)` }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24 }}>
-                  <span style={{ padding: "6px 14px", borderRadius: 10, fontSize: 12, fontWeight: 800, background: colorMix(catColor, 13), color: catColor, textTransform: "uppercase", letterSpacing: 1 }}>
-                    {expandedCard.category}
-                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ padding: "6px 14px", borderRadius: 10, fontSize: 12, fontWeight: 800, background: colorMix(catColor, 13), color: catColor, textTransform: "uppercase", letterSpacing: 1 }}>
+                      {expandedCard.category}
+                    </span>
+                    {isNovaMistakeCard(expandedCard) && (
+                      <span style={{
+                        padding: "6px 14px",
+                        borderRadius: 10,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        background: "color-mix(in srgb, #3b82f6 14%, transparent)",
+                        color: "#2563eb",
+                        border: "1px solid color-mix(in srgb, #3b82f6 28%, transparent)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5
+                      }}>
+                        🎙️ Erreur Nova
+                      </span>
+                    )}
+                  </div>
                   <button onClick={() => setExpandedCard?.(null)} style={{ background: "none", border: "none", color: theme?.textMuted || "#64748B", fontSize: 24, cursor: "pointer" }}>✕</button>
                 </div>
 

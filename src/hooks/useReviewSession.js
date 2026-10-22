@@ -184,21 +184,29 @@ export default function useReviewSession({
     // Reprise silencieuse si une session est déjà en cours sur ce module aujourd'hui
     const existingSession = mode === "module" && catFilter ? moduleSessions[catFilter] : null;
     if (existingSession && !opts.restart && Array.isArray(existingSession.queue) && existingSession.queue.length > 0 && existingSession.index < existingSession.queue.length) {
-      setReviewMode("module");
-      setReviewCategory(catFilter);
-      setReviewQueue(existingSession.queue);
-      setReviewIndex(existingSession.index);
-      setRevealed(false);
-      setUserAnswer("");
-      setSocraticHint("");
-      setSocraticMode(false);
-      setRabbitHoleOpen(false);
-      setMnemonicText("");
-      setCardStartTime(Date.now());
-      setShowSessionSummary(false);
-      setSessionTimer(0);
-      setView("review");
-      return;
+      // Filtrer les cartes supprimées ou mises en pause et synchroniser le contenu à jour
+      const expMap = new Map((expressions || []).map((e) => [e.id, e]));
+      const refreshedQueue = existingSession.queue
+        .filter((c) => expMap.has(c.id) && !expMap.get(c.id).paused)
+        .map((c) => ({ ...c, ...expMap.get(c.id) }));
+
+      if (refreshedQueue.length > 0 && existingSession.index < refreshedQueue.length) {
+        setReviewMode("module");
+        setReviewCategory(catFilter);
+        setReviewQueue(refreshedQueue);
+        setReviewIndex(existingSession.index);
+        setRevealed(false);
+        setUserAnswer("");
+        setSocraticHint("");
+        setSocraticMode(false);
+        setRabbitHoleOpen(false);
+        setMnemonicText("");
+        setCardStartTime(Date.now());
+        setShowSessionSummary(false);
+        setSessionTimer(0);
+        setView("review");
+        return;
+      }
     }
 
     let queue;
@@ -392,5 +400,6 @@ export default function useReviewSession({
     saveModuleSession,
     clearModuleSession,
     moduleSessions,
+    setModuleSessions,
   };
 }

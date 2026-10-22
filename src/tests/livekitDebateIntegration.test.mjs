@@ -7,29 +7,42 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const readSrc = (p) => fs.readFileSync(path.resolve(__dirname, '..', p), 'utf8');
 
-test('EnglishPractice : buildLiveKitSystemPrompt prend en compte les vues debate, roleplay et ielts', () => {
+test('EnglishPractice : Coach Nova intègre les modes Débat et Roleplay directement dans son prompt système', () => {
   const src = readSrc('EnglishPractice.jsx');
-  assert.match(src, /practiceSubView\s*===\s*"debate"/, "System prompt doit gérer le mode debate");
-  assert.match(src, /practiceSubView\s*===\s*"roleplay"/, "System prompt doit gérer le mode roleplay");
+  assert.match(src, /\[DYNAMIC ROLEPLAY & DEBATE MODES EMBEDDED\]/, "System prompt doit intégrer nativement les modes Débat et Roleplay");
+  assert.match(src, /DEBATE/, "System prompt doit instruire Nova sur la tenue des débats");
+  assert.match(src, /ROLEPLAY/, "System prompt doit instruire Nova sur l'incarnation de personnages en roleplay");
   assert.match(src, /practiceSubView\s*===\s*"ielts"/, "System prompt doit gérer le mode ielts");
 });
 
-test('EnglishPractice : Les vues debate, roleplay et ielts ne se masquent pas entièrement quand LiveKit est connecté', () => {
-  const src = readSrc('EnglishPractice.jsx');
-  assert.doesNotMatch(src, /practiceSubView\s*===\s*"debate"[\s\S]*?className="ep-glass-panel"[\s\S]*?\{!customAgent\.isConnected\s*&&\s*\(/, "Le conteneur racine debate ne doit pas être enveloppé dans !customAgent.isConnected");
-  assert.doesNotMatch(src, /practiceSubView\s*===\s*"roleplay"[\s\S]*?className="ep-glass-panel"[\s\S]*?\{customAgent\.isConnected\s*\?\s*null/, "Le conteneur racine roleplay ne doit pas être enveloppé dans customAgent.isConnected ? null");
-  assert.doesNotMatch(src, /practiceSubView\s*===\s*"ielts"[\s\S]*?\{customAgent\.isConnected\s*\?\s*null/, "Le conteneur racine ielts ne doit pas être enveloppé dans customAgent.isConnected ? null");
+test('novaTopicsBank : La banque de 100 sujets intègre nativement Débats et Roleplays avec leurs getters', async () => {
+  const { REAL_LIFE_100_TOPICS, getDebateTopics, getRoleplayTopics, buildTopicsPromptContext } = await import('../lib/english/novaTopicsBank.js');
+  assert.equal(REAL_LIFE_100_TOPICS.length, 100, "La banque doit contenir exactement 100 sujets");
+
+  const debates = getDebateTopics();
+  assert.ok(debates.length >= 10, "Il doit y avoir au moins 10 sujets de débat");
+  assert.ok(debates.some(t => t.id === "debate-66"), "Doit inclure le débat sur l'IA et l'emploi");
+
+  const roleplays = getRoleplayTopics();
+  assert.ok(roleplays.length >= 8, "Il doit y avoir au moins 8 scénarios de roleplay");
+  assert.ok(roleplays.some(t => t.id === "roleplay-56"), "Doit inclure le roleplay tech job interview");
+
+  const promptContext = buildTopicsPromptContext();
+  assert.match(promptContext, /DEBATES & ROLEPLAYS/i, "Le prompt context des 100 sujets doit mentionner débats et roleplays");
 });
 
-test('EnglishPractice : startDebate lance directement la session agent LiveKit avec le sujet passé', () => {
-  const src = readSrc('EnglishPractice.jsx');
-  assert.match(src, /const startDebate\s*=\s*async\s*\(\s*\w*Topic/, "startDebate doit accepter un argument de sujet override");
-  assert.match(src, /onClick=\{\(\)\s*=>\s*startDebate\(\s*topic\s*\)\}/, "Les boutons de sujet doivent transmettre topic à startDebate");
-});
+test('novaVoicePrompt : buildNovaVoicePrompt prend en charge les modes débat et roleplay à la demande', async () => {
+  const { buildNovaVoicePrompt } = await import('../lib/english/novaVoicePrompt.js');
 
-test('EnglishPractice : beginRoleplayScenario lance directement la session agent LiveKit', () => {
-  const src = readSrc('EnglishPractice.jsx');
-  assert.match(src, /beginRoleplayScenario[\s\S]*?agent\.start\s*\(\s*MODE_CONFIGS\.roleplay/, "beginRoleplayScenario doit démarrer agent.start(MODE_CONFIGS.roleplay...)");
+  const debatePrompt = buildNovaVoicePrompt({
+    topic: { id: "debate-66", title: "AI vs Human Jobs", type: "debate", opposingView: "AI creates new leverage" }
+  });
+  assert.match(debatePrompt, /LIVE DEBATE MODE ACTIVATED/i, "buildNovaVoicePrompt doit activer le mode débat pour un sujet de débat");
+
+  const roleplayPrompt = buildNovaVoicePrompt({
+    topic: { id: "roleplay-56", title: "Job Interview", type: "roleplay", character: "Alex Google Recruiter" }
+  });
+  assert.match(roleplayPrompt, /LIVE ROLEPLAY MODE ACTIVATED/i, "buildNovaVoicePrompt doit activer le mode roleplay pour un scénario de roleplay");
 });
 
 test('LiveKitVoiceAssistant : Transmet metadata au niveau racine du JWT', () => {
@@ -50,4 +63,3 @@ test('LiveKitVoiceAssistant : Supporte l\'override de l\'agent name et nettoie l
   assert.match(src, /VITE_LIVEKIT_AGENT_NAME/, "Doit utiliser VITE_LIVEKIT_AGENT_NAME de l'environnement");
   assert.match(src, /let active = true;[\s\S]*?if\s*\(active\)\s*\{\s*setToken/, "Doit utiliser un drapeau active pour éviter de mettre à jour l'état si démonté");
 });
-

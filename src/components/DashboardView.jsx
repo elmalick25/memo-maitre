@@ -7,6 +7,7 @@ import { countPromotable, bestStudyHour } from "../lib/smartTiming";
 import { streakIcon as unlockedStreakIcon } from "../lib/unlocks";
 import { today } from "../utils/dateUtils";
 import { YearHeatmap, ResumeCarousel, getSmartSessionRecommendation } from "../MemoMasterUpgrades";
+import { computeDailyProgress } from "../lib/reviewStats";
 
 const MOBILE_MQ = "(max-width: 768px)";
 
@@ -52,6 +53,7 @@ export default function DashboardView({
   isDarkMode = false,
   showToast,
   holoLevel = 1,
+  onOpenExtraSession,
 }) {
   const totalCards = expressions.length;
   const dueCount = sessionRemainingCount;
@@ -86,7 +88,6 @@ export default function DashboardView({
         xp={getArchetype(powerLevel).xp - getArchetype(powerLevel).currentLevelXp}
         xpToNext={getArchetype(powerLevel).nextLevelXp - getArchetype(powerLevel).currentLevelXp || 1}
         streak={stats?.streak || 0}
-        energy={stamina}
         dueCount={dueCount}
         estMinutes={estMinutes}
         dueModules={dueModules}
@@ -110,6 +111,7 @@ export default function DashboardView({
         nearMissInput={memoNearMissInput}
         onOpenVeille={() => setView?.("veille")}
         onOpenPractice={() => setView?.("practice")}
+        onOpenExtraSession={onOpenExtraSession}
         shortcuts={[]}
       />
     );
@@ -243,13 +245,18 @@ export default function DashboardView({
         </div>
       </HoloCard>
 
-      {/* Heatmap & Recommandations */}
-      <YearHeatmap
-        sessionHistory={sessions}
-        onClickDay={(d) => showToast?.(`📅 ${d}`)}
-        theme={theme}
-        isDarkMode={isDarkMode}
-      />
+      {/* Heatmap & Recommandations (Reconciliation sessions + reviewHistory sur 365 jours) */}
+      {(() => {
+        const heatmapHistory = computeDailyProgress(sessions, expressions, 365);
+        return (
+          <YearHeatmap
+            sessionHistory={heatmapHistory}
+            onClickDay={(d) => showToast?.(`📅 ${d}`)}
+            theme={theme}
+            isDarkMode={isDarkMode}
+          />
+        );
+      })()}
       <ResumeCarousel
         theme={theme}
         items={[
@@ -335,9 +342,14 @@ export default function DashboardView({
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
                 <div style={{ width: 10, height: 10, borderRadius: "50%", background: canReview ? "var(--mm-primary-glow)" : "#4ADE80", animation: "pulse 2s infinite" }} />
                 <span style={{ fontSize: 12, fontWeight: 800, color: theme?.textMuted || "#64748B", textTransform: "uppercase", letterSpacing: 1.5 }}>Mission du jour</span>
-                <button onClick={() => setDashFocusMode?.(true)} style={{ marginLeft: "auto", background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, white)", border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, white)"}`, borderRadius: 8, padding: "4px 12px", color: "var(--mm-primary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                  🎯 Focus
-                </button>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <button onClick={() => onOpenExtraSession?.()} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 6%, white)", border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 32.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, white)"}`, borderRadius: 8, padding: "4px 12px", color: "var(--mm-primary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    ⚡ Extra
+                  </button>
+                  <button onClick={() => setDashFocusMode?.(true)} style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 4%, white)", border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, white)"}`, borderRadius: 8, padding: "4px 12px", color: "var(--mm-primary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    🎯 Focus
+                  </button>
+                </div>
               </div>
 
               {/* Stats principales */}
@@ -364,7 +376,8 @@ export default function DashboardView({
                   className="dash-flow-btn"
                   style={{
                     width: "100%", padding: "20px",
-                    background: canReview ? "linear-gradient(270deg, var(--mm-primary), var(--mm-primary), #EC4899, var(--mm-primary))" : (theme?.inputBg || "#F8FAFC"),
+                    backgroundImage: canReview ? "linear-gradient(270deg, var(--mm-primary), var(--mm-primary), #EC4899, var(--mm-primary))" : "none",
+                    backgroundColor: canReview ? "transparent" : (theme?.inputBg || "#F8FAFC"),
                     backgroundSize: "300% 300%",
                     animation: canReview ? "gradientPulseFlow 4s ease infinite" : "none",
                     color: canReview ? "white" : (theme?.textMuted || "#64748B"),
@@ -379,12 +392,15 @@ export default function DashboardView({
                   <span style={{ fontSize: 13, fontWeight: 600, opacity: 0.9 }}>L'IA a préparé ta playlist optimale (FSRS + Interleaving)</span>
                 </button>
 
-                <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                   <button onClick={() => startReview?.(null, "standard")} disabled={!canReview} className="hov" style={{ background: "transparent", border: `1px solid ${theme?.border || "#E2E8F0"}`, color: theme?.textMuted || "#64748B", padding: "8px 16px", borderRadius: 12, fontSize: 12, fontWeight: 700, cursor: canReview ? "pointer" : "default", opacity: canReview ? 1 : 0.45 }}>
                     📚 Standard
                   </button>
                   <button onClick={() => startReview?.(null, "vocal")} disabled={!canReview} className="hov" style={{ background: "transparent", border: `1px solid ${theme?.border || "#E2E8F0"}`, color: theme?.textMuted || "#64748B", padding: "8px 16px", borderRadius: 12, fontSize: 12, fontWeight: 700, cursor: canReview ? "pointer" : "default", opacity: canReview ? 1 : 0.45 }}>
                     🎤 Vocal
+                  </button>
+                  <button onClick={() => onOpenExtraSession?.()} className="hov" style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 12%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8%, white)", border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 32%, transparent)" : "color-mix(in srgb, var(--mm-primary) 22%, transparent)"}`, color: "var(--mm-primary)", padding: "8px 16px", borderRadius: 12, fontSize: 12, fontWeight: 800, cursor: "pointer" }}>
+                    ⚡ Session Extra
                   </button>
                 </div>
               </div>

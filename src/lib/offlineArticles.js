@@ -141,17 +141,62 @@ export async function cacheStats() {
   };
 }
 
+// ── Compression binaire native GZIP (God-Tier I/O & Empreinte mémoire minimale) ──
+async function compressPayload(obj) {
+  if (typeof CompressionStream === "undefined" || !obj) return obj;
+  try {
+    const jsonStr = JSON.stringify(obj);
+    const stream = new Blob([jsonStr]).stream().pipeThrough(new CompressionStream("gzip"));
+    const buffer = await new Response(stream).arrayBuffer();
+    return { __compressedGzip: true, buffer };
+  } catch {
+    return obj;
+  }
+}
+
+async function decompressPayload(val) {
+  if (!val) return null;
+  if (val && val.__compressedGzip && val.buffer && typeof DecompressionStream !== "undefined") {
+    try {
+      const stream = new Blob([val.buffer]).stream().pipeThrough(new DecompressionStream("gzip"));
+      const text = await new Response(stream).text();
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  return val;
+}
+
 // ── Corps complets des articles pour consultation hors-ligne intégrale ────
 export async function saveArticleBodies(bodiesMap) {
   if (!bodiesMap || typeof bodiesMap !== "object") return;
+  const payload = await compressPayload(bodiesMap);
   return withStore(STORE_META, "readwrite", store => {
-    store.put(bodiesMap, "allArticleBodies");
+    store.put(payload, "allArticleBodies");
     store.put(Date.now(), "allArticleBodiesAt");
   });
 }
 
 export async function loadArticleBodies() {
-  const bodies = await withStore(STORE_META, "readonly", store => reqToPromise(store.get("allArticleBodies")));
+  const raw = await withStore(STORE_META, "readonly", store => reqToPromise(store.get("allArticleBodies")));
+  const bodies = await decompressPayload(raw);
   return (bodies && typeof bodies === "object") ? bodies : {};
 }
+
+// ── Résumés & explications IA pour consultation hors-ligne ────────────────
+export async function saveAiSummariesMap(summariesMap) {
+  if (!summariesMap || typeof summariesMap !== "object") return;
+  const payload = await compressPayload(summariesMap);
+  return withStore(STORE_META, "readwrite", store => {
+    store.put(payload, "allAiSummaries");
+  });
+}
+
+export async function loadAiSummariesMap() {
+  const raw = await withStore(STORE_META, "readonly", store => reqToPromise(store.get("allAiSummaries")));
+  const summaries = await decompressPayload(raw);
+  return (summaries && typeof summaries === "object") ? summaries : {};
+}
+
 

@@ -39,7 +39,7 @@ test('Nova Real-Life God Mode — buildNovaVoicePrompt privilégie la conversati
 
   // Règle 70/30 et recast silencieux
   assert.ok(prompt.includes('70/30 ratio'));
-  assert.ok(prompt.includes('SILENT CORRECTION — INVISIBLE RECAST'));
+  assert.ok(prompt.includes('NATURAL HUMAN CORRECTION — ANTI-TEMPLATE'));
   assert.ok(prompt.includes('ACTIVE LISTENING & HUMAN RESONANCE'));
 });
 

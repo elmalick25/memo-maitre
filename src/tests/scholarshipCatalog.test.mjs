@@ -10,6 +10,7 @@ import {
   computeScholarshipDeadlineInfo,
   filterScholarships,
   getScholarshipStats,
+  resolveNextDeadline,
 } from '../lib/scholarshipCatalog.js';
 
 test('ScholarshipCatalog — Intégrité de la base de données officielle des bourses de Master (God Tier)', () => {
@@ -165,13 +166,18 @@ test('ScholarshipCatalog — Filtrage multicritères (Catégorie, Pays, 100% fin
   assert.ok(wbSearch.length >= 1);
 });
 
-test('ScholarshipCatalog — Calcul des statistiques globales', () => {
-  const stats = getScholarshipStats(MASTER_SCHOLARSHIPS_DATABASE);
-  assert.ok(stats.total >= 25);
-  assert.ok(stats.senegalCount >= 7);
-  assert.ok(stats.multilateralCount >= 7);
-  assert.ok(stats.europeCount >= 8);
-  assert.ok(stats.americasAsiaCount >= 6);
-  assert.ok(stats.fullRideCount >= 20);
-  assert.ok(stats.countriesCount >= 10);
+test('ScholarshipCatalog — Statistics exclude closed campaigns', () => {
+  const stats = getScholarshipStats([
+    { nextDeadline: '2025-01-31', recurrence: 'annual', categoryGroup: 'europe', fundingType: 'full_ride', countryCode: 'FR' },
+    { nextDeadline: '2099-01-31', categoryGroup: 'europe', fundingType: 'full_ride', countryCode: 'DE' },
+  ]);
+  assert.equal(stats.total, 1);
+  assert.equal(stats.europeCount, 1);
+  assert.equal(stats.fullRideCount, 1);
+  assert.equal(stats.countriesCount, 1);
+});
+
+ test("Expired annual scholarship deadlines remain the published date", () => {
+  assert.equal(resolveNextDeadline({ nextDeadline: "2025-01-31", recurrence: "annual" }), "2025-01-31");
+  assert.equal(resolveNextDeadline({ nextDeadline: null, recurrence: "annual" }), null);
 });

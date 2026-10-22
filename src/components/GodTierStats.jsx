@@ -5,10 +5,11 @@ import {
   LineElement, PointElement, Filler, ArcElement, RadialLinearScale,
   Title, Tooltip, Legend
 } from 'chart.js';
-import { Bar, Line, Doughnut, PolarArea, Radar } from 'react-chartjs-2';
+import { Bar, Line, Doughnut } from 'react-chartjs-2';
 import { FsrsForecastChart, ComparisonVs30Days } from "../MemoMasterUpgrades";
 import StatsInsights from "./StatsInsights";
 import BacklogRetentionCard from "./BacklogRetentionCard";
+import FsrsBrainCalibrationCard from "./FsrsBrainCalibrationCard";
 import { englishCategoryFilter } from "../hooks/useProductiveUse";
 import { colorMix } from "../lib/colorMix";
 
@@ -308,6 +309,16 @@ export default function GodTierStats({
         />
       </motion.div>
 
+      {/* ─── CALIBRATION CÉRÉBRALE FSRS MACHINE LEARNING ─── */}
+      <motion.div variants={itemVars}>
+        <FsrsBrainCalibrationCard
+          expressions={expressions}
+          isDarkMode={isDarkMode}
+          theme={theme}
+          showToast={showToast}
+        />
+      </motion.div>
+
       {/* ─── INSIGHTS NARRATIFS + PRODUCTION ACTIVE (Phase 5) ─── */}
       <motion.div variants={itemVars}>
         <StatsInsights
@@ -411,51 +422,20 @@ export default function GodTierStats({
             </div>
           </div>
 
-          {/* KPI 3 : Révisions & Activité Récente */}
+          {/* KPI 3 : Ancrées (stabilité FSRS ≥ 21 j) */}
           <div style={{ background: isDarkMode ? "var(--mm-bg-elev, #110e22)" : "color-mix(in srgb, var(--mm-primary) 3%, white)", borderRadius: 18, padding: "14px 12px", border: `1px solid var(--mm-border)` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Révisions</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: theme.text, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>
-              {stats.totalReviews}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: cognitiveMetrics.todayReviews > 0 ? "var(--mm-primary-glow)" : theme.textMuted, marginTop: 4 }}>
-              {cognitiveMetrics.todayReviews > 0 ? `+${cognitiveMetrics.todayReviews} aujourd'hui` : "Volume optimisé"}
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Ancrées</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: chartPrimary, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{cognitiveMetrics.anchoredCards}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, marginTop: 4 }}>mémoire stable ≥ 21 j</div>
           </div>
-
-          {/* KPI 4 : Cartes IA & Part Deck */}
+          {/* KPI 4 : Régularité réelle sur 30 jours */}
           <div style={{ background: isDarkMode ? "var(--mm-bg-elev, #110e22)" : "color-mix(in srgb, var(--mm-primary) 3%, white)", borderRadius: 18, padding: "14px 12px", border: `1px solid var(--mm-border)` }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Générées IA</div>
-            <div style={{ fontSize: 28, fontWeight: 900, color: chartPrimary, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>
-              {stats.aiGenerated || 0}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, marginTop: 4 }}>
-              {cognitiveMetrics.aiSharePct > 0 ? `${cognitiveMetrics.aiSharePct}% du deck actif` : "Second Cerveau"}
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Régularité</div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: theme.text, fontVariantNumeric: "tabular-nums", lineHeight: 1.1 }}>{active30dDays}<span style={{ fontSize: 14, fontWeight: 700 }}>/30 j</span></div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, marginTop: 4 }}>jours réellement travaillés</div>
           </div>
         </div>
         
-        {/* Power Level Bar Sublimée */}
-        <div style={{ marginTop: 18, paddingTop: 16, borderTop: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)"}` }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 800, color: chartPrimary, background: colorWithAlpha(chartPrimary, 0.15), padding: "2px 8px", borderRadius: 6 }}>
-                Niv. {Math.floor(powerLevel / 1000) + 1}
-              </span>
-              <span style={{ fontWeight: 700, color: theme.textMuted, fontSize: 12 }}>POWER LEVEL</span>
-            </div>
-            <span style={{ fontWeight: 900, color: theme.text, fontSize: 14, fontVariantNumeric: "tabular-nums" }}>
-              {powerLevel} <span style={{ fontSize: 11, color: theme.textMuted }}>XP</span>
-            </span>
-          </div>
-          <div style={{ height: 8, background: isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)", borderRadius: 999, overflow: "hidden", position: "relative" }}>
-            <motion.div 
-              initial={{ width: 0 }}
-              animate={{ width: `${Math.min(100, ((powerLevel % 1000) / 1000) * 100)}%` }}
-              transition={{ duration: 1.2, ease: [0.16, 1, 0.3, 1] }}
-              style={{ height: "100%", background: `linear-gradient(90deg, ${chartPrimary}, ${chartPrimaryLight})`, borderRadius: 999, boxShadow: `0 0 10px ${colorWithAlpha(chartPrimary, 0.6)}` }} 
-            />
-          </div>
-        </div>
       </motion.div>
 
         {/* ─── ACTIVITÉ (30 JOURS) AVEC RÉGULARITÉ FSRS ─── */}
@@ -564,112 +544,66 @@ export default function GodTierStats({
             </span>
           </div>
 
-          {/* Toggle d'affichage */}
-          <div style={{ display: "inline-flex", background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)", borderRadius: 12, padding: 3, border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"}` }}>
-            <button
-              onClick={() => setModuleViewMode("list")}
-              style={{ padding: "6px 12px", borderRadius: 9, border: "none", background: moduleViewMode === "list" ? chartPrimary : "transparent", color: moduleViewMode === "list" ? "#fff" : theme.textMuted, fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}
-            >
-              📊 Liste
-            </button>
-            <button
-              onClick={() => setModuleViewMode("radar")}
-              style={{ padding: "6px 12px", borderRadius: 9, border: "none", background: moduleViewMode === "radar" ? chartPrimary : "transparent", color: moduleViewMode === "radar" ? "#fff" : theme.textMuted, fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}
-            >
-              🕸️ Radar (Top 6)
-            </button>
-          </div>
         </div>
 
-        {moduleViewMode === "list" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {(showAllModules ? sortedModules : sortedModules.slice(0, 5)).map(mod => {
-              const pct = mod.total > 0 ? Math.round((mod.mastered / mod.total) * 100) : 0;
-              const color = pct >= 80 ? "var(--mm-primary-glow)" : pct >= 50 ? chartPrimary : "var(--mm-warning, #b3822f)";
-              const statusLabel = pct >= 80 ? "Maîtrisé" : pct >= 50 ? "En cours" : "À consolider";
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {(showAllModules ? sortedModules : sortedModules.slice(0, 5)).map(mod => {
+            const pct = mod.total > 0 ? Math.round((mod.mastered / mod.total) * 100) : 0;
+            const color = pct >= 80 ? "var(--mm-primary-glow)" : pct >= 50 ? chartPrimary : "var(--mm-warning, #b3822f)";
+            const statusLabel = pct >= 80 ? "Maîtrisé" : pct >= 50 ? "En cours" : "À consolider";
 
-              return (
-                <div 
-                  key={mod.name} 
-                  style={{ 
-                    background: isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.7)", 
-                    borderRadius: 16, 
-                    padding: "12px 14px", 
-                    border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)"}`,
-                    transition: "transform 0.15s ease"
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                    <span style={{ fontWeight: 800, color: theme.text, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                      {mod.name}
-                      {mod.due > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 800, color: "#EF4444", background: "rgba(239, 68, 68, 0.12)", padding: "1px 6px", borderRadius: 6 }}>
-                          {mod.due} due{mod.due > 1 ? "s" : ""}
-                        </span>
-                      )}
+            return (
+              <div 
+                key={mod.name} 
+                style={{ 
+                  background: isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.7)", 
+                  borderRadius: 16, 
+                  padding: "12px 14px", 
+                  border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)"}`,
+                  transition: "transform 0.15s ease"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontWeight: 800, color: theme.text, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                    {mod.name}
+                    {mod.due > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 800, color: "#EF4444", background: "rgba(239, 68, 68, 0.12)", padding: "1px 6px", borderRadius: 6 }}>
+                        {mod.due} due{mod.due > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color, background: colorWithAlpha(color, 0.12), padding: "2px 8px", borderRadius: 6 }}>
+                      {statusLabel}
                     </span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color, background: colorWithAlpha(color, 0.12), padding: "2px 8px", borderRadius: 6 }}>
-                        {statusLabel}
-                      </span>
-                      <span style={{ fontWeight: 900, fontSize: 13, color: theme.text, fontVariantNumeric: "tabular-nums" }}>
-                        {pct}%
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Jauge FSRS fluide */}
-                  <div style={{ height: 6, width: "100%", background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", borderRadius: 999, overflow: "hidden", marginBottom: 6 }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 999, transition: "width 0.8s cubic-bezier(0.16, 1, 0.3, 1)" }} />
-                  </div>
-
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>
-                    <span>{mod.mastered} sur {mod.total} fiches</span>
-                    {mod.avgDiff && <span>Diff. moy. : {Number(mod.avgDiff).toFixed(1)}/10</span>}
+                    <span style={{ fontWeight: 900, fontSize: 13, color: theme.text, fontVariantNumeric: "tabular-nums" }}>
+                      {pct}%
+                    </span>
                   </div>
                 </div>
-              );
-            })}
 
-            {sortedModules.length > 5 && (
-              <button
-                onClick={() => setShowAllModules(!showAllModules)}
-                style={{ marginTop: 6, padding: "10px", background: "transparent", border: `1px dashed ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"}`, borderRadius: 12, color: chartPrimary, fontWeight: 800, fontSize: 12, cursor: "pointer" }}
-              >
-                {showAllModules ? "▲ Réduire l'affichage" : `▼ Afficher tous les modules (${sortedModules.length})`}
-              </button>
-            )}
-          </div>
-        ) : (
-          <div style={{ height: 300, width: "100%", display: "flex", justifyContent: "center" }}>
-            <Radar 
-              data={{
-                labels: top6Modules.map(mod => mod.name),
-                datasets: [{
-                  label: 'Maîtrisées',
-                  data: top6Modules.map(mod => mod.total > 0 ? (mod.mastered / mod.total) * 100 : 0),
-                  backgroundColor: colorWithAlpha(chartPrimary, 0.33),
-                  borderColor: chartPrimary,
-                  pointBackgroundColor: chartPrimaryLight,
-                  pointBorderColor: "#fff",
-                  borderWidth: 2,
-                }]
-              }}
-              options={{
-                responsive: true, maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                  r: {
-                    angleLines: { color: chartBorderColor },
-                    grid: { color: chartBorderColor },
-                    pointLabels: { color: chartTextMuted, font: { weight: 'bold', size: 11 } },
-                    ticks: { display: false, min: 0, max: 100, stepSize: 25 }
-                  }
-                }
-              }}
-            />
-          </div>
-        )}
+                {/* Jauge FSRS fluide */}
+                <div style={{ height: 6, width: "100%", background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)", borderRadius: 999, overflow: "hidden", marginBottom: 6 }}>
+                  <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 999, transition: "width 0.8s cubic-bezier(0.16, 1, 0.3, 1)" }} />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: theme.textMuted, fontWeight: 600 }}>
+                  <span>{mod.mastered} sur {mod.total} fiches</span>
+                  {mod.avgDiff && <span>Diff. moy. : {Number(mod.avgDiff).toFixed(1)}/10</span>}
+                </div>
+              </div>
+            );
+          })}
+
+          {sortedModules.length > 5 && (
+            <button
+              onClick={() => setShowAllModules(!showAllModules)}
+              style={{ marginTop: 6, padding: "10px", background: "transparent", border: `1px dashed ${isDarkMode ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.15)"}`, borderRadius: 12, color: chartPrimary, fontWeight: 800, fontSize: 12, cursor: "pointer" }}
+            >
+              {showAllModules ? "▲ Réduire l'affichage" : `▼ Afficher tous les modules (${sortedModules.length})`}
+            </button>
+          )}
+        </div>
       </motion.div>
 
       {/* ─── SPECTRE DE DIFFICULTÉ DES NIVEAUX (0-7) ─── */}
@@ -677,14 +611,11 @@ export default function GodTierStats({
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
           <div>
             <h3 style={{ margin: 0, color: theme.text, fontWeight: 900, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>💀</span> Spectre de Difficulté (Niveaux 0-7)
+              <span>🧱</span> Solidité de tes fiches
             </h3>
             <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600 }}>
-              Répartition de la charge mentale par palier de rétention
+              Niv 0 = fragile, Niv 7 = solidement ancrée. Le but : déplacer les barres vers la droite.
             </span>
-          </div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: "var(--mm-primary-glow)", background: colorWithAlpha(chartPrimary, 0.15), padding: "3px 8px", borderRadius: 8 }}>
-            Stabilisation continue
           </div>
         </div>
 
@@ -736,79 +667,9 @@ export default function GodTierStats({
         </div>
       </motion.div>
 
-      {/* ─── RYTHME HEBDOMADAIRE (POLAR AREA) ─── */}
-      <motion.div variants={itemVars} style={{ ...glassCardStyle, marginBottom: 24, padding: "22px 18px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, color: theme.text, fontWeight: 900, fontSize: 17, display: "flex", alignItems: "center", gap: 8 }}>
-            <span>📅</span> Rythme Hebdomadaire
-          </h3>
-          <span style={{ fontSize: 11, fontWeight: 700, color: theme.textMuted }}>
-            Répartition par jour
-          </span>
-        </div>
-        <div style={{ height: 320, width: "100%", display: "flex", justifyContent: "center" }}>
-          <PolarArea 
-            data={{
-              labels: statsDayOfWeekPerformance.map(d => d.name),
-              datasets: [{
-                label: 'Révisions',
-                data: statsDayOfWeekPerformance.map(d => d.reviews),
-                backgroundColor: [
-                  colorWithAlpha(chartPrimary, 0.75), 
-                  colorWithAlpha(chartPrimaryLight, 0.75), 
-                  "#EC4899CC", 
-                  "#F43F5ECC", 
-                  "#F59E0BCC", 
-                  colorWithAlpha(chartPrimary, 0.55), 
-                  "#14B8A6CC"
-                ],
-                borderWidth: 1.5,
-                borderColor: isDarkMode ? "var(--mm-bg, #07060f)" : "#FFFFFF",
-              }]
-            }}
-            options={{
-              responsive: true, 
-              maintainAspectRatio: false,
-              plugins: {
-                legend: { 
-                  position: 'bottom', 
-                  labels: { 
-                    color: chartTextMuted, 
-                    font: { weight: 'bold', size: 11 }, 
-                    boxWidth: 12, 
-                    padding: 10 
-                  } 
-                },
-                tooltip: {
-                  backgroundColor: chartTooltipBg, 
-                  titleColor: chartTextColor, 
-                  bodyColor: chartTextColor,
-                  borderColor: chartBorderColor, 
-                  borderWidth: 1, 
-                  padding: 12, 
-                  displayColors: false,
-                  cornerRadius: 12,
-                  callbacks: { label: (ctx) => `📅 ${ctx.raw} révisions ce jour` }
-                }
-              },
-              scales: {
-                r: {
-                  grid: { color: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)" },
-                  ticks: { display: false },
-                  angleLines: { color: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)" }
-                }
-              }
-            }}
-          />
-        </div>
-      </motion.div>
-
 {/* ─── CHARTS EXPERTS ─── */}
       <motion.div variants={itemVars} style={{ marginBottom: 20 }}>
         <FsrsForecastChart expressions={expressions} theme={theme} isDarkMode={isDarkMode} />
-      </motion.div>
-      <motion.div variants={itemVars} style={{ marginBottom: 20 }}>
-        <ComparisonVs30Days sessionHistory={statsSessionHistory} expressions={expressions} theme={theme} isDarkMode={isDarkMode} />
       </motion.div>
 
         

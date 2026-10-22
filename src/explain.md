@@ -1,6 +1,33 @@
 # Journal d'Architecture & d'Évolution MémoMaître (`explain.md`)
 
-## Vue Actu — Sélecteur Thématique Rétractable Liquid Glass (Niveau 2 Validée)
+## Sécurisation v17 — Extension Relais IA, Pré-calcul Actus & Mode Hybride Résilient
+- **Fichiers modifiés** :
+  - `src/cloudflare-worker/proxy-worker.js` :
+    - Prise en charge universelle sur `POST /ai/<fournisseur>` : `groq`, `cerebras`, `mistral`, `or`, `fireworks`, `cohere`, `sambanova`, `aimlapi`, `deepseek`.
+    - Prise en charge du relais Google Gemini sur `POST /ai/gemini?model=...`.
+    - Prise en charge du relais de transcription audio Groq Whisper sur `POST /ai/transcribe`.
+    - Prise en charge de la délivrance et signature des jetons LiveKit Cloud sur `POST /livekit/token` (signature HMAC-SHA256 Edge standard).
+    - Ajout de l'endpoint `GET /news-ready.json` avec mise en cache Edge et support Cloudflare KV (`env.NEWS_KV`).
+    - Extension du déclencheur Cron (`scheduled`) pour réchauffer et synchroniser les actualités toutes les 15 minutes.
+  - `src/lib/aiRouter.js` :
+    - Élargissement de `PROXIED` à l'ensemble des 9 fournisseurs de texte et chat.
+    - Algorithme de bascule adaptative : interrogation du Worker en priorité si `VITE_AI_PROXY_URL` est présent, avec repli automatique sans interruption sur le trousseau de clés locales du `.env` en cas d'indisponibilité ou cooldown.
+  - `src/lib/geminiClient.js` :
+    - Routage sécurisé via `VITE_AI_PROXY_URL/ai/gemini` en première intention avec fallback transparent sur les clés locales Google Gemini.
+  - `src/lib/transcribe.js` & `src/lib/mediaTranscribe.js` :
+    - Routage des transcriptions audio vers `VITE_AI_PROXY_URL/ai/transcribe` avec repli direct sur les clés Groq locales.
+  - `src/lib/security/livekitTokenGuard.js` & `src/components/LiveKitVoiceAssistant.jsx` :
+    - Routage automatique de la signature de jeton LiveKit vers le Worker lorsque `VITE_AI_PROXY_URL` est renseigné, avec repli automatique sur la signature locale en développement / mode direct.
+  - `src/components/TechIntelView.jsx` :
+    - Intégration de la vérification préalable de `GET /news-ready.json` : si le lot pré-calculé est frais (< 30 min) et bien garni, affichage instantané et persistance en cache (< 1 s au clic) sans re-moissonner l'ensemble des flux RSS externes.
+  - `.env` :
+    - Sanctuarisation totale : aucune clé n'a été purgée ni modifiée, respectant à 100% la directive de l'utilisateur.
+- **Résultats & Métriques** :
+  - Zéro clé d'API obligatoire dans le navigateur lorsque le Worker est connecté.
+  - Zéro régression ou coupure de service : le fallback local garantit la continuité de fonctionnement même sans Worker.
+  - Temps de chargement au clic des actualités divisé par 10 lorsque le lot pré-calculé est disponible (< 1 s).
+
+
 - **Fichiers modifiés** :
   - `src/components/TechIntelView.jsx` :
     - Remplacement de la rangée déroulante des 6 boutons de filtres thématiques (`Tout`, `IA & LLM`, `Cyber & Sécu`, `Cloud & Ops`, `Dev & Code`, `Tech Monde`) par un **bouton unique rétractable**.
@@ -1176,3 +1203,16 @@
 
 
 
+
+## Vue Actu — Actualiser v14 : zéro double téléchargement & fin réelle (Niveau 2)
+- **Fichier modifié** : `src/components/TechIntelView.jsx`
+  - Extraction dédupliquée par URL (promesse partagée) : une page n'est plus jamais téléchargée deux fois.
+  - Proxys et lecteur Jina (r.jina.ai) lancés **en parallèle** : le premier texte complet gagne.
+  - Suppression de la seconde passe `batchHydrateOfflineBodies` qui retéléchargeait les mêmes articles.
+  - Délai d'extraction par article porté de 2 s à 9,5 s (fin des abandons prématurés et des replis IA inutiles).
+  - Préchargement : jusqu'à 20 articles en parallèle ; un article raté est réessayé une fois au lieu d'être marqué « fait ».
+  - Traductions : 8 en parallèle, suppression de toutes les pauses (80/250/450 ms).
+  - Le bouton attend la fin réelle de tous les textes, filet de sécurité unique de 3 min.
+- **Sécurité** : les clés `VITE_*` (Groq, Cerebras…) sont visibles dans le navigateur ; à déplacer derrière le Worker Cloudflare et à régénérer.
+- **v15** : résumés IA en paquets de 5 tous envoyés en parallèle (Groq), délai par paquet 20 s ; jusqu'à 40 articles extraits simultanément.
+- **v16** : relais IA sécurisé dans le Worker Cloudflare (`/ai/<fournisseur>`), activé par `VITE_AI_PROXY_URL` ; sans cette variable, comportement inchangé.

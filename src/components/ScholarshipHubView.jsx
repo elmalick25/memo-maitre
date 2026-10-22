@@ -9,7 +9,7 @@
 // - Typographie et boutons 100% responsives pour smartphones et écrans larges
 // ============================================================================
 
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   MASTER_SCHOLARSHIPS_DATABASE,
@@ -24,6 +24,11 @@ import {
 } from "../lib/scholarshipCatalog.js";
 import { verifyScholarshipTruth } from "../lib/scholarshipVerifier.js";
 import { resolveScholarshipLinks, auditScholarshipLinks } from "../lib/scholarshipLinks.js";
+import { parseStudyLevel, matchesStudyLevel, STUDY_LEVEL_SUGGESTIONS } from "../lib/studyLevel.js";
+const STUDY_LEVEL_KEY = "memomaitre_study_level";
+import { isOfficialScholarshipCandidate, preserveOfficialDeadline } from "../lib/scholarshipRefresh.js";
+import ModuleButton from "./modules/ModuleButton.jsx";
+import "../styles/news-experience.css";
 import { safeStorage } from "../lib/safeStorage.js";
 
 const SAVED_SCHOLARSHIPS_KEY = "memo_saved_scholarships_v1";
@@ -57,21 +62,6 @@ function formatRelativeTime(ts) {
   return `il y a ${d} j`;
 }
 
-/** Fait rouler une échéance passée vers sa prochaine occurrence annuelle. */
-function rollDeadlineForward(deadline) {
-  if (!deadline?.nextDate) return deadline;
-  const date = new Date(`${deadline.nextDate}T23:59:59`);
-  if (Number.isNaN(date.getTime())) return deadline;
-  const now = new Date();
-  if (date >= now) return deadline;
-  let year = now.getFullYear();
-  let rolled = new Date(date);
-  rolled.setFullYear(year);
-  if (rolled < now) rolled.setFullYear(year + 1);
-  const iso = rolled.toISOString().slice(0, 10);
-  return { ...deadline, nextDate: iso, rolledFrom: deadline.nextDate };
-}
-
 export default function ScholarshipHubView({
   callClaude = null,
   theme = {},
@@ -87,15 +77,12 @@ export default function ScholarshipHubView({
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   
-  // Option "Pour moi" (L3 Informatique / Sciences & Technologies • Sénégal)
-  const [forMeOnly, setForMeOnly] = useState(() => {
-    try {
-      const stored = safeStorage.get(FOR_ME_FILTER_KEY);
-      return stored !== null ? JSON.parse(stored) : true; // Activé par défaut pour l'étudiant
-    } catch {
-      return true;
-    }
+  // Niveau d'études saisi librement (remplace l'ancien filtre fixe L3)
+  const [studyLevelText, setStudyLevelText] = useState(() => {
+    try { return safeStorage.get(STUDY_LEVEL_KEY) || ""; } catch { return ""; }
   });
+  const studyLevel = useMemo(() => parseStudyLevel(studyLevelText), [studyLevelText]);
+  const forMeOnly = Boolean(studyLevel);
 
   // Modal Guide de Candidature L3 Info Sénégal
   const [showGuideModal, setShowGuideModal] = useState(false);
@@ -157,6 +144,7 @@ export default function ScholarshipHubView({
     }
   });
   const [isScanning, setIsScanning] = useState(false);
+  const scanInFlightRef = useRef(false);
 
   // 🧭 Tri intelligent du catalogue (persistant)
   const [sortMode, setSortMode] = useState(() => safeStorage.get(SCHOLARSHIP_SORT_KEY) || "urgency");
@@ -272,8 +260,9 @@ export default function ScholarshipHubView({
       field: selectedField,
       status: selectedStatus,
       searchQuery,
-      forMeOnly,
+      forMeOnly: false,
     });
+    if (studyLevel) list = list.filter((item) => matchesStudyLevel(item, studyLevel.rank));
 
     // Exclure les bourses masquées par défaut
     list = list.filter((item) => !hiddenIds.has(item.id));
@@ -285,7 +274,7 @@ export default function ScholarshipHubView({
       list = list.filter((item) => newIds.has(item.id));
     }
     return list;
-  }, [allScholarships, newIds, selectedCategoryGroup, selectedCountry, selectedFunding, selectedField, selectedStatus, searchQuery, savedIds, hiddenIds, forMeOnly]);
+  }, [allScholarships, newIds, selectedCategoryGroup, selectedCountry, selectedFunding, selectedField, selectedStatus, searchQuery, savedIds, hiddenIds, studyLevel]);
 
   // 🧭 Tri appliqué à la liste filtrée
   const sortedList = useMemo(() => {
@@ -343,8 +332,8 @@ export default function ScholarshipHubView({
     searchQuery.trim() !== "";
 
   const resetAllFilters = () => {
-    setForMeOnly(false);
-    safeStorage.set(FOR_ME_FILTER_KEY, JSON.stringify(false));
+    setStudyLevelText("");
+    safeStorage.set(STUDY_LEVEL_KEY, "");
     setSelectedCategoryGroup("all");
     setSelectedCountry("all");
     setSelectedFunding("all");
@@ -355,7 +344,8 @@ export default function ScholarshipHubView({
 
   // 📡 SCAN INTELLIGENT & ACTUALISATION DYNAMIQUE DES BOURSES
   const handleScanNewScholarships = async () => {
-    if (isScanning) return;
+    if (scanInFlightRef.current) return;
+    scanInFlightRef.current = true;
     setIsScanning(true);
     showToast?.("📡 Radar activé : recherche d'appels à candidatures officiels...", "info");
 
@@ -407,7 +397,11 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
   }
 ]`;
 
-          const response = await callClaude(systemPrompt, userPrompt, { temperature: 0.2 });
+          let scanTimeout;
+          const response = await Promise.race([
+            callClaude(systemPrompt + " Tous les champs descriptifs doivent être en français. Ne prétends pas avoir vérifié une ouverture en temps réel sans source consultée.", userPrompt, { temperature: 0.2 }),
+            new Promise((_, reject) => { scanTimeout = setTimeout(() => reject(new Error("Délai du radar dépassé")), 25000); }),
+          ]).finally(() => clearTimeout(scanTimeout));
           if (response) {
             const rawText = typeof response === "string" ? response : response.text || "";
             const jsonMatch = rawText.match(/\[[\s\S]*\]/);
@@ -669,7 +663,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
       // roulées vers leur prochaine session officielle.
       let refreshedCount = 0;
       const refreshedDynamic = dynamicScholarships.map((item) => {
-        const rolled = rollDeadlineForward(item.deadline);
+        const rolled = preserveOfficialDeadline(item.deadline);
         if (rolled !== item.deadline && rolled?.nextDate !== item.deadline?.nextDate) {
           refreshedCount++;
           return { ...item, deadline: rolled, updatedAt: scanStartedAt };
@@ -683,7 +677,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
 
       for (const item of combinedCandidates) {
         if (!item || typeof item !== "object") continue;
-        if (!item.title || !item.provider || !item.country) continue;
+        if (!isOfficialScholarshipCandidate(item)) continue;
         
         // Validation stricte de l'URL officielle (commençant impérativement par https://)
         if (!item.officialUrl || typeof item.officialUrl !== "string" || !item.officialUrl.startsWith("https://")) {
@@ -711,9 +705,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
           monthlyStipend: item.monthlyStipend || "Allocation mensuelle + Prise en charge intégrale",
           duration: item.duration || "2 ans (Cycle Master complet)",
           deadline: {
-            nextDate: item.deadline?.nextDate || "2027-01-31",
+            nextDate: item.deadline?.nextDate || null,
             season: item.deadline?.season || "Session annuelle officielle",
-            isStrict: Boolean(item.deadline?.isStrict ?? true),
+            isStrict: Boolean(item.deadline?.nextDate && (item.deadline?.isStrict ?? true)),
           },
           eligibility: {
             academicLevel: item.eligibility?.academicLevel || "Licence / Bachelor (Bac+3) validé ou en cours",
@@ -765,7 +759,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               ]
         };
 
-        cleanItem.deadline = rollDeadlineForward(cleanItem.deadline);
+        cleanItem.deadline = preserveOfficialDeadline(cleanItem.deadline);
         cleanItem.discoveredAt = scanStartedAt;
         existingIds.add(cleanItem.id);
         existingTitles.add(normTitle);
@@ -797,9 +791,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
 
       if (validNewScholarships.length > 0) {
         applySortMode("newest");
-        setSelectedStatus("new");
+        setSelectedStatus("all");
         showToast?.(
-          `✨ ${validNewScholarships.length} nouvelle(s) bourse(s) officielle(s) détectée(s) — affichées en tête du catalogue !`,
+          `✨ ${validNewScholarships.length} nouvelle(s) bourse(s) répertoriée(s) — affichées en tête du catalogue !`,
           "success"
         );
       } else if (refreshedCount > 0) {
@@ -809,7 +803,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
         );
       } else {
         showToast?.(
-          `✅ Catalogue officiel 100% synchronisé : les ${MASTER_SCHOLARSHIPS_DATABASE.length + updated.length} bourses répertoriées sont déjà à jour.`,
+          `✅ Catalogue actualisé : ${MASTER_SCHOLARSHIPS_DATABASE.length + updated.length} bourses répertoriées. Vérifiez les dates et les conditions sur les sites officiels.`,
           "info"
         );
       }
@@ -817,6 +811,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
       console.error("[ScholarshipHub] Error during scan:", err);
       showToast?.("⚠️ Erreur lors de la synchronisation. Veuillez réessayer.", "warning");
     } finally {
+      scanInFlightRef.current = false;
       setIsScanning(false);
     }
   };
@@ -885,11 +880,12 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
 
   return (
     <div
+      className="scholarship-experience"
       style={{
         width: "100%",
         minHeight: "100%",
         padding: "4px 2px 120px",
-        color: isDarkMode ? "#F8FAFC" : "#0F172A",
+        color: "var(--mm-fg)",
         fontFamily: "'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       }}
     >
@@ -1109,7 +1105,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
           >
             {/* Bouton Retour + Fil d'Ariane */}
             <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-              <button
+              <ModuleButton
                 onClick={() => setSelectedScholarshipId(null)}
                 className="god-pill-btn"
                 style={{
@@ -1128,20 +1124,20 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               >
                 <span>←</span>
                 <span>Retour</span>
-              </button>
+              </ModuleButton>
 
               <div style={{ fontSize: "12px", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", display: "flex", alignItems: "center", gap: "5px" }}>
                 <span>Bourses</span>
                 <span>›</span>
                 <span>{currentScholarship.country}</span>
                 <span>›</span>
-                <strong style={{ color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>{currentScholarship.title.slice(0, 24)}{currentScholarship.title.length > 24 ? "..." : ""}</strong>
+                <strong style={{ color: "var(--mm-fg)" }}>{currentScholarship.title.slice(0, 24)}{currentScholarship.title.length > 24 ? "..." : ""}</strong>
               </div>
             </div>
 
             {/* Actions Rapides Haut de Page */}
             <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-              <button
+              <ModuleButton
                 onClick={() => toggleSaveScholarship(currentScholarship.id)}
                 className="god-pill-btn"
                 style={{
@@ -1159,9 +1155,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 <span>{savedIds.has(currentScholarship.id) ? "⭐ Suivie" : "☆ Suivre"}</span>
-              </button>
+              </ModuleButton>
 
-              <button
+              <ModuleButton
                 onClick={() => hideScholarship(currentScholarship.id, currentScholarship.title)}
                 className="god-pill-btn"
                 title="Masquer / Retirer cette bourse du catalogue"
@@ -1180,10 +1176,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 <span>🗑️ Masquer</span>
-              </button>
+              </ModuleButton>
 
               {onCreateCard && (
-                <button
+                <ModuleButton
                   onClick={() => {
                     const docsSummary = currentScholarship.requiredDocuments ? currentScholarship.requiredDocuments.map((d) => `• ${d.name}`).join("\n") : "";
                     onCreateCard({
@@ -1209,7 +1205,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   }}
                 >
                   <span>🧠 Fiche Mémo</span>
-                </button>
+                </ModuleButton>
               )}
 
               <a
@@ -1283,7 +1279,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       ✓ 100% Tout Compris (Full Ride)
                     </span>
                   </div>
-                  <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A", lineHeight: "1.25" }}>
+                  <h1 style={{ margin: 0, fontSize: "20px", fontWeight: "900", color: "var(--mm-fg)", lineHeight: "1.25" }}>
                     {currentScholarship.title}
                   </h1>
                   <div style={{ fontSize: "12px", color: isDarkMode ? "#93C5FD" : "var(--mm-primary-deep)", fontWeight: "700", marginTop: "3px" }}>
@@ -1343,7 +1339,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   <div className="god-hero-metric-title" style={{ fontSize: "10.5px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", letterSpacing: "0.5px" }}>
                     Dossier
                   </div>
-                  <div className="god-hero-metric-val" style={{ fontSize: "13px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A", marginTop: "2px" }}>
+                  <div className="god-hero-metric-val" style={{ fontSize: "13px", fontWeight: "900", color: "var(--mm-fg)", marginTop: "2px" }}>
                     {docsProgress.count}/{docsProgress.total} ({docsProgress.percent}%)
                   </div>
                 </div>
@@ -1366,7 +1362,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               borderRadius: "14px",
             }}
           >
-            <button
+            <ModuleButton
               onClick={() => setActiveTab("eligibility")}
               className="god-tab-btn"
               style={{
@@ -1389,9 +1385,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             >
               <span>🎯</span>
               <span>Éligibilité</span>
-            </button>
+            </ModuleButton>
 
-            <button
+            <ModuleButton
               onClick={() => setActiveTab("documents")}
               className="god-tab-btn"
               style={{
@@ -1426,9 +1422,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               >
                 {docsProgress.count}/{docsProgress.total}
               </span>
-            </button>
+            </ModuleButton>
 
-            <button
+            <ModuleButton
               onClick={() => setActiveTab("roadmap")}
               className="god-tab-btn"
               style={{
@@ -1451,9 +1447,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             >
               <span>🗺️</span>
               <span>Calendrier</span>
-            </button>
+            </ModuleButton>
 
-            <button
+            <ModuleButton
               onClick={() => setActiveTab("strategy")}
               className="god-tab-btn"
               style={{
@@ -1476,9 +1472,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             >
               <span>💡</span>
               <span>Conseils Jury</span>
-            </button>
+            </ModuleButton>
 
-            <button
+            <ModuleButton
               onClick={() => setActiveTab("verification")}
               className="god-tab-btn"
               style={{
@@ -1501,7 +1497,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             >
               <span>🛡️</span>
               <span>Véracité & Légal</span>
-            </button>
+            </ModuleButton>
           </div>
 
           {/* ─── CORPS PLEINE PAGE SELON L'ONGLET ACTIF ───────────────────────── */}
@@ -1537,7 +1533,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       🎓 Diplôme Requis & GPA
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.academicLevel}
                     </div>
                     {currentScholarship.eligibility.minGpa && (
@@ -1551,7 +1547,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       🎂 Limite d'Âge & Date Pivot
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.maxAge}
                     </div>
                   </div>
@@ -1560,7 +1556,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       🗣️ Prérequis Linguistiques
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.languageReq}
                     </div>
                   </div>
@@ -1569,7 +1565,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       🌍 Nationalités Éligibles
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.nationality}
                     </div>
                   </div>
@@ -1578,7 +1574,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       💼 Expérience Professionnelle
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.workExperience || "Non requise (stages et engagements valorisés)"}
                     </div>
                   </div>
@@ -1587,7 +1583,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     <div style={{ fontSize: "11px", fontWeight: "900", textTransform: "uppercase", color: "var(--mm-primary)", marginBottom: "4px" }}>
                       🏛️ Modalité de Dépôt
                     </div>
-                    <div style={{ fontSize: "13px", fontWeight: "700", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "13px", fontWeight: "700", color: "var(--mm-fg)" }}>
                       {currentScholarship.eligibility.nominationMode}
                     </div>
                   </div>
@@ -1624,14 +1620,14 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexWrap: "wrap", gap: "8px" }}>
-                    <div style={{ fontSize: "12px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <div style={{ fontSize: "12px", fontWeight: "800", color: "var(--mm-fg)" }}>
                       Progression du dossier : {docsProgress.count}/{docsProgress.total} pièces prêtes
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                       <span style={{ fontSize: "12px", fontWeight: "900", color: "#2563EB" }}>
                         {docsProgress.percent}% prêt
                       </span>
-                      <button
+                      <ModuleButton
                         onClick={copyDocumentChecklist}
                         className="god-pill-btn"
                         style={{
@@ -1646,7 +1642,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                         }}
                       >
                         📋 Copier la liste
-                      </button>
+                      </ModuleButton>
                     </div>
                   </div>
                   <div style={{ height: "6px", width: "100%", background: isDarkMode ? "rgba(0,0,0,0.4)" : "#E9D5FF", borderRadius: "999px", overflow: "hidden" }}>
@@ -1795,7 +1791,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px", marginBottom: "4px" }}>
-                        <div style={{ fontSize: "14px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                        <div style={{ fontSize: "14px", fontWeight: "800", color: "var(--mm-fg)" }}>
                           {step.title}
                         </div>
                         <span style={{ background: "rgba(37, 99, 235, 0.12)", color: "#2563EB", padding: "2px 7px", borderRadius: "5px", fontSize: "11px", fontWeight: "800" }}>
@@ -1830,7 +1826,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                         }}
                       >
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                          <div style={{ fontSize: "13px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                          <div style={{ fontSize: "13px", fontWeight: "800", color: "var(--mm-fg)" }}>
                             {sc.criterion}
                           </div>
                           <span style={{ background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-deep))", color: "#FFFFFF", padding: "1px 6px", borderRadius: "5px", fontSize: "11px", fontWeight: "900" }}>
@@ -1902,14 +1898,14 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px", marginTop: "14px" }}>
                     <div style={{ background: isDarkMode ? "rgba(0,0,0,0.3)" : "#FFFFFF", borderRadius: "12px", padding: "14px", border: isDarkMode ? "1px solid rgba(255,255,255,0.06)" : "1px solid #BFDBFE" }}>
                       <div style={{ fontSize: "11px", fontWeight: "900", color: "#2563EB", textTransform: "uppercase" }}>🏛️ Organisme d'État Émetteur</div>
-                      <div style={{ fontSize: "13px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A", marginTop: "3px" }}>
+                      <div style={{ fontSize: "13px", fontWeight: "800", color: "var(--mm-fg)", marginTop: "3px" }}>
                         {currentScholarship.verifiedOrg}
                       </div>
                     </div>
 
                     <div style={{ background: isDarkMode ? "rgba(0,0,0,0.3)" : "#FFFFFF", borderRadius: "12px", padding: "14px", border: isDarkMode ? "1px solid rgba(255,255,255,0.06)" : "1px solid #BFDBFE" }}>
                       <div style={{ fontSize: "11px", fontWeight: "900", color: "#2563EB", textTransform: "uppercase" }}>🌐 Portail Officiel d'Autorité</div>
-                      <div style={{ fontSize: "13px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A", marginTop: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      <div style={{ fontSize: "13px", fontWeight: "800", color: "var(--mm-fg)", marginTop: "3px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {currentLinks.infoUrl}
                       </div>
                     </div>
@@ -1964,7 +1960,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             }}
           >
             {currentScholarshipIndex > 0 ? (
-              <button
+              <ModuleButton
                 onClick={() => setSelectedScholarshipId(allScholarships[currentScholarshipIndex - 1].id)}
                 className="god-pill-btn"
                 style={{
@@ -1979,7 +1975,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 ← Précédente
-              </button>
+              </ModuleButton>
             ) : <div />}
 
             <a
@@ -2006,7 +2002,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             </a>
 
             {currentScholarshipIndex < allScholarships.length - 1 ? (
-              <button
+              <ModuleButton
                 onClick={() => setSelectedScholarshipId(allScholarships[currentScholarshipIndex + 1].id)}
                 className="god-pill-btn"
                 style={{
@@ -2021,7 +2017,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 Suivante →
-              </button>
+              </ModuleButton>
             ) : <div />}
           </div>
         </div>
@@ -2061,7 +2057,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       fontSize: "20px",
                       fontWeight: "900",
                       letterSpacing: "-0.4px",
-                      color: isDarkMode ? "#FFFFFF" : "#0F172A",
+                      color: "var(--mm-fg)",
                     }}
                   >
                     Hub Bourses Master Internationales
@@ -2080,7 +2076,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     ✓ OFFICIEL & VÉRIFIÉ
                   </span>
 
-                  <button
+                  <ModuleButton
                     onClick={handleScanNewScholarships}
                     disabled={isScanning}
                     className="god-pill-btn"
@@ -2107,7 +2103,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       {isScanning ? "⏳" : "⚡"}
                     </span>
                     <span>{isScanning ? "Radar en cours..." : "Scanner & Actualiser"}</span>
-                  </button>
+                  </ModuleButton>
                 </div>
 
                 <p style={{ margin: 0, fontSize: "12.5px", color: isDarkMode ? "#93C5FD" : "#1D4ED8", lineHeight: "1.55" }}>
@@ -2158,158 +2154,59 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   <div style={{ fontSize: "11px", color: isDarkMode ? "#FDE68A" : "#B45309", fontWeight: "700" }}>Pays</div>
                 </div>
 
-                <div
-                  onClick={() => {
-                    const next = !forMeOnly;
-                    setForMeOnly(next);
-                    if (next) {
-                      setSelectedCategoryGroup("all");
-                      setSelectedFunding("all");
-                      setSelectedCountry("all");
-                      setSelectedStatus("all");
-                      setSelectedField("all");
-                      setSearchQuery("");
-                    }
-                    safeStorage.set(FOR_ME_FILTER_KEY, JSON.stringify(next));
-                    showToast?.(
-                      next
-                        ? `🎯 Option 'Pour moi' activée : ${stats.forMeCount} bourses d'élite mondiales accessibles (Entrée Master 1 sans diplôme physique immédiat)`
-                        : "🌐 Affichage de toutes les bourses mondiales",
-                      "info"
-                    );
-                  }}
-                  className="god-pill-btn"
-                  title="Cliquer pour activer/désactiver le filtre Pour moi"
-                  style={{
-                    background: forMeOnly
-                      ? "linear-gradient(135deg, rgba(37, 99, 235, 0.25), rgba(5, 150, 105, 0.2))"
-                      : isDarkMode ? "rgba(255, 255, 255, 0.04)" : "#F8FAFC",
-                    border: forMeOnly
-                      ? "2px solid #2563EB"
-                      : isDarkMode ? "1px solid color-mix(in srgb, var(--mm-primary) 20.0%, transparent)" : "1px solid #E2E8F0",
-                    padding: "6px 12px",
-                    borderRadius: "12px",
-                    textAlign: "center",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontSize: "16px", fontWeight: "900", color: forMeOnly ? "#2563EB" : "var(--mm-primary)" }}>
-                    🎯 {stats.forMeCount}
-                  </div>
-                  <div style={{ fontSize: "11px", color: forMeOnly ? "#1D4ED8" : (isDarkMode ? "#94A3B8" : "#64748B"), fontWeight: "800" }}>
-                    Pour moi
-                  </div>
-                </div>
               </div>
             </div>
           </div>
 
-          {/* 🎯 Bannière de Profil Interactif "Pour moi" (L3 Informatique • Sénégal) & Accès au Guide */}
-          <div
-            className="god-profile-banner"
-            style={{
-              background: forMeOnly
-                ? (isDarkMode
-                  ? "linear-gradient(135deg, rgba(37, 99, 235, 0.15) 0%, rgba(59, 130, 246, 0.12) 100%)"
-                  : "linear-gradient(135deg, #EFF6FF 0%, #EFF6FF 100%)")
-                : (isDarkMode ? "rgba(255, 255, 255, 0.03)" : "color-mix(in srgb, var(--mm-primary) 4%, white)"),
-              border: isDarkMode
-                ? (forMeOnly ? "2px solid #60A5FA" : "1.5px solid rgba(96, 165, 250, 0.4)")
-                : (forMeOnly ? "2px solid #2563EB" : "1.5px solid #3B82F6"),
-              boxShadow: forMeOnly
-                ? (isDarkMode ? "0 8px 24px rgba(37, 99, 235, 0.2)" : "0 4px 16px rgba(37, 99, 235, 0.12)")
-                : "none",
-            }}
-          >
-            <div className="god-profile-banner-left">
-              <button
-                onClick={() => {
-                  const next = !forMeOnly;
-                  setForMeOnly(next);
-                  if (next) {
-                    setSelectedCategoryGroup("all");
-                    setSelectedFunding("all");
-                    setSelectedCountry("all");
-                    setSelectedStatus("all");
-                    setSelectedField("all");
-                    setSearchQuery("");
-                  }
-                  safeStorage.set(FOR_ME_FILTER_KEY, JSON.stringify(next));
-                  showToast?.(
-                    next
-                      ? `🎯 Option 'Pour moi' activée : ${stats.forMeCount} bourses d'élite mondiales accessibles (Entrée Master 1 sans diplôme physique immédiat)`
-                      : "🌐 Affichage de toutes les bourses mondiales",
-                    "info"
-                  );
-                }}
-                className="god-pill-btn god-profile-toggle-btn"
-                style={{
-                  padding: "9px 16px",
-                  borderRadius: "12px",
-                  border: "none",
-                  background: forMeOnly
-                    ? "linear-gradient(135deg, #2563EB, #1D4ED8)"
-                    : (isDarkMode ? "rgba(255, 255, 255, 0.08)" : "#E2E8F0"),
-                  color: forMeOnly ? "#FFFFFF" : (isDarkMode ? "#CBD5E1" : "#475569"),
-                  fontSize: "12px",
-                  fontWeight: "900",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "7px",
-                  flexShrink: 0,
-                  boxShadow: forMeOnly ? "0 4px 14px rgba(37, 99, 235, 0.35)" : "none",
-                }}
-              >
-                <span>{forMeOnly ? "✓ Activé" : "○ Filtrer"}</span>
-                <span>🎯 Option Pour moi</span>
-                <span style={{
-                  background: forMeOnly ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.1)",
-                  padding: "2px 7px",
-                  borderRadius: "999px",
-                  fontSize: "11px",
-                  fontWeight: "900",
-                }}>
-                  {stats.forMeCount}
-                </span>
-              </button>
-
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div className="god-profile-chips">
-                  <span style={{ fontSize: "12.5px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A", marginRight: "2px" }}>
-                    Mon profil :
-                  </span>
-                  <span className="god-profile-pill" style={{ background: isDarkMode ? "rgba(37, 99, 235, 0.2)" : "#DBEAFE", color: "#2563EB" }}>
-                    Licence 3 (L3)
-                  </span>
-                  <span className="god-profile-pill" style={{ background: isDarkMode ? "rgba(255,255,255,0.06)" : "#F1F5F9", color: isDarkMode ? "#E2E8F0" : "#334155" }}>
-                    🇸🇳 Sénégal
-                  </span>
-                  <span className="god-profile-pill" style={{ background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 20%, transparent)" : "color-mix(in srgb, var(--mm-primary) 12%, white)", color: "var(--mm-primary)" }}>
-                    Informatique & Tech
-                  </span>
-                </div>
-                <div style={{ fontSize: "11.5px", color: isDarkMode ? "#94A3B8" : "#64748B", marginTop: "4px", lineHeight: "1.45" }}>
-                  {forMeOnly
-                    ? "✓ Filtrage actif : opportunités sans condition de diplôme définitif immédiat et sans 2-3 ans d'expérience préalable."
-                    : "Catalogue mondial complet (tous profils, tous niveaux). Activez l'option pour cibler votre profil."}
-                </div>
-              </div>
+          {/* 🎓 Niveau d'études saisi librement → bourses personnalisées */}
+          <div className="god-profile-banner" style={{ border: "1.5px solid var(--mm-primary)", background: "color-mix(in srgb, var(--mm-primary) 6%, transparent)", flexDirection: "column", alignItems: "stretch", gap: "8px" }}>
+            <label htmlFor="study-level-input" style={{ fontSize: "13px", fontWeight: 900, color: "var(--mm-fg)" }}>
+              🎓 Mon niveau d'études
+            </label>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                id="study-level-input"
+                list="study-level-options"
+                value={studyLevelText}
+                onChange={(e) => { setStudyLevelText(e.target.value); safeStorage.set(STUDY_LEVEL_KEY, e.target.value); }}
+                placeholder="Ex. : L3, Licence 2, Master 1, Doctorat…"
+                style={{ flex: "1 1 200px", minHeight: "44px", padding: "10px 12px", borderRadius: "12px", border: "1px solid var(--mm-border, #CBD5E1)", background: "var(--mm-surface, transparent)", color: "var(--mm-fg)", fontSize: "14px" }}
+              />
+              <datalist id="study-level-options">
+                {STUDY_LEVEL_SUGGESTIONS.map((l) => <option key={l} value={l} />)}
+              </datalist>
+              {studyLevelText && (
+                <ModuleButton className="god-pill-btn" onClick={() => { setStudyLevelText(""); safeStorage.set(STUDY_LEVEL_KEY, ""); }} style={{ minHeight: "44px", padding: "0 14px", borderRadius: "12px", border: "1px solid var(--mm-border, #CBD5E1)", background: "transparent", color: "var(--mm-fg)", fontWeight: 800 }}>
+                  Effacer
+                </ModuleButton>
+              )}
             </div>
+            <div style={{ fontSize: "12px", color: "var(--mm-fg-muted)" }}>
+              {studyLevel
+                ? `✓ ${studyLevel.label} : ${filteredList.length} bourse(s) accessibles à votre niveau.`
+                : studyLevelText
+                  ? "Niveau non reconnu — essayez L1, L2, L3, M1, M2 ou Doctorat."
+                  : "Tapez votre niveau pour ne voir que les bourses auxquelles vous pouvez candidater."}
+            </div>
+          </div>
 
-            <button
-              onClick={() => setShowGuideModal(true)}
-              className="god-pill-btn god-guide-btn"
-              style={{
-                border: isDarkMode ? "1px solid rgba(59, 130, 246, 0.45)" : "1px solid #BFDBFE",
-                background: isDarkMode ? "linear-gradient(135deg, rgba(59, 130, 246, 0.2), color-mix(in srgb, var(--mm-primary) 15.0%, transparent))" : "#EFF6FF",
-                color: isDarkMode ? "#BFDBFE" : "#1D4ED8",
-                boxShadow: "0 2px 10px rgba(59, 130, 246, 0.15)",
-              }}
-            >
-              <span>📘 Guide Candidature L3 Info</span>
-              <span>➔</span>
-            </button>
+          {/* 🇫🇷 Campus France & Parcoursup — accès directs officiels */}
+          <div className="god-profile-banner" style={{ border: "1px solid var(--mm-border, #CBD5E1)", flexDirection: "column", alignItems: "stretch", gap: "6px" }}>
+            <div style={{ fontSize: "13px", fontWeight: 900, color: "var(--mm-fg)" }}>🇫🇷 Études en France</div>
+            <div style={{ fontSize: "12px", color: "var(--mm-fg-muted)" }}>
+              Les nouvelles de Campus France et Parcoursup arrivent dans les Actus à chaque actualisation.
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              {[
+                ["Campus France Sénégal — Études en France", "https://www.senegal.campusfrance.org/"],
+                ["Plateforme Études en France", "https://pastel.diplomatie.gouv.fr/etudesenfrance/"],
+                ["Parcoursup — calendrier", "https://www.parcoursup.gouv.fr/calendrier"],
+              ].map(([label, href]) => (
+                <a key={href} href={href} target="_blank" rel="noopener noreferrer" className="god-pill-btn" style={{ minHeight: "44px", display: "inline-flex", alignItems: "center", padding: "0 12px", borderRadius: "12px", border: "1px solid var(--mm-primary)", color: "var(--mm-primary)", fontSize: "12.5px", fontWeight: 800, textDecoration: "none" }}>
+                  {label} ↗
+                </a>
+              ))}
+            </div>
           </div>
 
           {/* Filtres & Recherche */}
@@ -2327,7 +2224,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     borderRadius: "12px",
                     background: isDarkMode ? "#151233" : "#FFFFFF",
                     border: isDarkMode ? "1px solid color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "1px solid color-mix(in srgb, var(--mm-primary) 22%, white)",
-                    color: isDarkMode ? "#FFFFFF" : "#0F172A",
+                    color: "var(--mm-fg)",
                     fontSize: "13px",
                     fontWeight: "600",
                     outline: "none",
@@ -2338,16 +2235,16 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   🔍
                 </span>
                 {searchQuery && (
-                  <button
+                  <ModuleButton
                     onClick={() => setSearchQuery("")}
                     style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#94A3B8", fontSize: "12px" }}
                   >
                     ✕
-                  </button>
+                  </ModuleButton>
                 )}
               </div>
 
-              <button
+              <ModuleButton
                 onClick={() => setIsFiltersOpen((prev) => !prev)}
                 className="god-pill-btn"
                 style={{
@@ -2366,9 +2263,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               >
                 <span>⚙️ Filtres</span>
                 <span style={{ fontSize: "10.5px" }}>{isFiltersOpen ? "▲" : "▼"}</span>
-              </button>
+              </ModuleButton>
 
-              <button
+              <ModuleButton
                 onClick={handleScanNewScholarships}
                 disabled={isScanning}
                 className="god-pill-btn"
@@ -2396,10 +2293,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   {isScanning ? "⏳" : "🔄"}
                 </span>
                 <span>{isScanning ? "Radar actif..." : "Actualiser"}</span>
-              </button>
+              </ModuleButton>
 
               {dynamicScholarships.length > 0 && (
-                <button
+                <ModuleButton
                   onClick={handleClearDynamicScholarships}
                   className="god-pill-btn"
                   title="Revenir au catalogue initial de 28 bourses officielles de référence"
@@ -2422,7 +2319,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   <span style={{ background: "rgba(239, 68, 68, 0.2)", padding: "1px 5px", borderRadius: "999px", fontSize: "10px" }}>
                     +{dynamicScholarships.length}
                   </span>
-                </button>
+                </ModuleButton>
               )}
             </div>
 
@@ -2445,8 +2342,8 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     🎯 Catégories & Financements
                   </div>
                   <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                    <button
-                      onClick={() => { setSelectedCategoryGroup("all"); setSelectedFunding("all"); setSelectedStatus("all"); setForMeOnly(false); }}
+                    <ModuleButton
+                      onClick={() => { setSelectedCategoryGroup("all"); setSelectedFunding("all"); setSelectedStatus("all"); setStudyLevelText(""); safeStorage.set(STUDY_LEVEL_KEY, ""); }}
                       className="god-pill-btn"
                       style={{
                         padding: "5px 10px",
@@ -2460,36 +2357,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       Toutes ({allScholarships.length})
-                    </button>
+                    </ModuleButton>
 
-                    <button
-                      onClick={() => {
-                        setForMeOnly(true);
-                        setSelectedCategoryGroup("all");
-                        setSelectedFunding("all");
-                        setSelectedCountry("all");
-                        setSelectedStatus("all");
-                        setSelectedField("all");
-                        setSearchQuery("");
-                        safeStorage.set(FOR_ME_FILTER_KEY, JSON.stringify(true));
-                      }}
-                      className="god-pill-btn"
-                      style={{
-                        padding: "5px 10px",
-                        borderRadius: "8px",
-                        border: forMeOnly ? "1.5px solid #2563EB" : "none",
-                        background: forMeOnly ? "linear-gradient(135deg, #2563EB, #1D4ED8)" : (isDarkMode ? "rgba(37, 99, 235, 0.15)" : "#EFF6FF"),
-                        color: forMeOnly ? "#FFFFFF" : "#1D4ED8",
-                        fontSize: "11px",
-                        fontWeight: "900",
-                        cursor: "pointer",
-                        boxShadow: forMeOnly ? "0 2px 8px rgba(37, 99, 235, 0.3)" : "none",
-                      }}
-                    >
-                      🎯 Pour moi ({stats.forMeCount})
-                    </button>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedCategoryGroup("senegal"); setSelectedFunding("all"); setSelectedStatus("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2504,9 +2375,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       🇸🇳 Sénégal & Coopération ({stats.senegalCount})
-                    </button>
+                    </ModuleButton>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedCategoryGroup("multilateral"); setSelectedFunding("all"); setSelectedStatus("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2521,9 +2392,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       🌍 Multilatéral & Afrique ({stats.multilateralCount})
-                    </button>
+                    </ModuleButton>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedCategoryGroup("europe"); setSelectedFunding("all"); setSelectedStatus("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2538,9 +2409,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       🇪🇺 Europe & UK ({stats.europeCount})
-                    </button>
+                    </ModuleButton>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedCategoryGroup("americas_asia"); setSelectedFunding("all"); setSelectedStatus("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2555,9 +2426,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       🌎 Amériques & Asie ({stats.americasAsiaCount})
-                    </button>
+                    </ModuleButton>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedFunding("full_ride"); setSelectedStatus("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2572,9 +2443,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       👑 100% Tout Compris ({stats.fullRideCount})
-                    </button>
+                    </ModuleButton>
 
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedStatus("saved"); setSelectedFunding("all"); }}
                       className="god-pill-btn"
                       style={{
@@ -2589,10 +2460,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       ⭐ Suivies ({savedIds.size})
-                    </button>
+                    </ModuleButton>
 
                     {hiddenIds.size > 0 && (
-                      <button
+                      <ModuleButton
                         onClick={() => unhideAllScholarships()}
                         className="god-pill-btn"
                         style={{
@@ -2610,7 +2481,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                         }}
                       >
                         <span>🔄 Restaurer {hiddenIds.size} masquée{hiddenIds.size > 1 ? "s" : ""}</span>
-                      </button>
+                      </ModuleButton>
                     )}
                   </div>
                 </div>
@@ -2622,17 +2493,17 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       🌍 Filtrer par Pays Spécifique
                     </span>
                     {selectedCountry !== "all" && (
-                      <button
+                      <ModuleButton
                         onClick={() => setSelectedCountry("all")}
                         style={{ background: "none", border: "none", color: "#EF4444", fontSize: "11px", fontWeight: "700", cursor: "pointer" }}
                       >
                         Réinitialiser pays
-                      </button>
+                      </ModuleButton>
                     )}
                   </div>
 
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: "6px" }}>
-                    <button
+                    <ModuleButton
                       onClick={() => { setSelectedCountry("all"); setIsFiltersOpen(false); }}
                       className="god-pill-btn"
                       style={{
@@ -2647,12 +2518,12 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       🌐 Tous les pays
-                    </button>
+                    </ModuleButton>
 
                     {availableCountries.map((c) => {
                       const isSel = selectedCountry === c.code;
                       return (
-                        <button
+                        <ModuleButton
                           key={c.code}
                           onClick={() => { setSelectedCountry(c.code); setIsFiltersOpen(false); }}
                           className="god-pill-btn"
@@ -2672,7 +2543,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                         >
                           <span>{c.flag}</span>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                        </button>
+                        </ModuleButton>
                       );
                     })}
                   </div>
@@ -2695,13 +2566,13 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "12px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+              <span style={{ fontSize: "12px", fontWeight: "900", color: "var(--mm-fg)" }}>
                 {sortedList.length} bourse{sortedList.length > 1 ? "s" : ""} affichée{sortedList.length > 1 ? "s" : ""}
               </span>
-              <span style={{ fontSize: "10.5px", fontWeight: "700", color: isDarkMode ? "#94A3B8" : "#64748B" }}>
+              <span style={{ fontSize: "10.5px", fontWeight: "700", color: "var(--mm-fg-muted)" }}>
                 🔗 {linkAudit.direct}/{linkAudit.total} liens directs vérifiés
               </span>
-              <span style={{ fontSize: "10.5px", fontWeight: "700", color: isDarkMode ? "#94A3B8" : "#64748B" }}>
+              <span style={{ fontSize: "10.5px", fontWeight: "700", color: "var(--mm-fg-muted)" }}>
                 • Dernière synchro : {formatRelativeTime(lastScanAt)}
               </span>
             </div>
@@ -2716,7 +2587,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               ].map((chip) => {
                 const active = selectedStatus === chip.id;
                 return (
-                  <button
+                  <ModuleButton
                     key={chip.id}
                     onClick={() => setSelectedStatus(chip.id)}
                     className="god-pill-btn"
@@ -2734,18 +2605,18 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     }}
                   >
                     {chip.label}
-                  </button>
+                  </ModuleButton>
                 );
               })}
             </div>
 
             {/* Tri intelligent */}
             <div style={{ display: "flex", gap: "6px", alignItems: "center", overflowX: "auto" }}>
-              <span style={{ fontSize: "10.5px", fontWeight: "900", color: isDarkMode ? "#94A3B8" : "#64748B", flexShrink: 0 }}>
+              <span style={{ fontSize: "10.5px", fontWeight: "900", color: "var(--mm-fg-muted)", flexShrink: 0 }}>
                 TRIER PAR
               </span>
               {SORT_MODES.map((mode) => (
-                <button
+                <ModuleButton
                   key={mode.id}
                   onClick={() => applySortMode(mode.id)}
                   title={mode.hint}
@@ -2764,10 +2635,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   }}
                 >
                   {mode.label}
-                </button>
+                </ModuleButton>
               ))}
               {hasActiveFilters && (
-                <button
+                <ModuleButton
                   onClick={resetAllFilters}
                   className="god-pill-btn"
                   style={{
@@ -2785,7 +2656,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   }}
                 >
                   ✕ Effacer les filtres
-                </button>
+                </ModuleButton>
               )}
             </div>
           </div>
@@ -2809,15 +2680,15 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     ? `✨ ${scanReport.added.length} nouvelle(s) bourse(s) ajoutée(s) au catalogue`
                     : "✅ Aucune nouvelle bourse — votre catalogue est déjà à jour"}
                 </div>
-                <button
+                <ModuleButton
                   onClick={() => setScanReport(null)}
-                  style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "13px", color: isDarkMode ? "#94A3B8" : "#64748B", fontWeight: "900" }}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: "13px", color: "var(--mm-fg-muted)", fontWeight: "900" }}
                   aria-label="Fermer le rapport"
                 >
                   ✕
-                </button>
+                </ModuleButton>
               </div>
-              <div style={{ fontSize: "11px", fontWeight: "700", color: isDarkMode ? "#94A3B8" : "#64748B", marginTop: "3px" }}>
+              <div style={{ fontSize: "11px", fontWeight: "700", color: "var(--mm-fg-muted)", marginTop: "3px" }}>
                 {scanReport.refreshed > 0
                   ? `${scanReport.refreshed} échéance(s) actualisée(s) vers la prochaine session • `
                   : ""}
@@ -2826,7 +2697,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               {scanReport.added.length > 0 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" }}>
                   {scanReport.added.map((added) => (
-                    <button
+                    <ModuleButton
                       key={added.id}
                       onClick={() => setSelectedScholarshipId(added.id)}
                       className="god-pill-btn"
@@ -2842,7 +2713,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       }}
                     >
                       {added.flag} {added.title.slice(0, 42)}{added.title.length > 42 ? "…" : ""} ➔
-                    </button>
+                    </ModuleButton>
                   ))}
                 </div>
               )}
@@ -2864,15 +2735,13 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   className="god-scholarship-card"
                   onClick={() => setSelectedScholarshipId(item.id)}
                   style={{
-                    background: isDarkMode
-                      ? "linear-gradient(135deg, rgba(22, 18, 51, 0.8) 0%, rgba(15, 13, 36, 0.95) 100%)"
-                      : "linear-gradient(135deg, #FFFFFF 0%, color-mix(in srgb, var(--mm-primary) 4%, white) 100%)",
+                    background: "var(--mm-bg-card)",
                     backdropFilter: "blur(16px)",
                     border: isDarkMode
                       ? (isSaved ? "2px solid #60A5FA" : "1.5px solid rgba(96, 165, 250, 0.4)")
                       : (isSaved ? "2px solid #2563EB" : "1.5px solid #3B82F6"),
-                    borderRadius: "16px",
-                    padding: "14px",
+                    borderRadius: "8px",
+                    padding: "18px",
                     display: "flex",
                     flexDirection: "column",
                     justifyContent: "space-between",
@@ -2913,7 +2782,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
-                        <button
+                        <ModuleButton
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleSaveScholarship(item.id);
@@ -2937,9 +2806,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                         >
                           <span>{isSaved ? "⭐" : "☆"}</span>
                           <span>{isSaved ? "Suivie" : "Suivre"}</span>
-                        </button>
+                        </ModuleButton>
 
-                        <button
+                        <ModuleButton
                           onClick={(e) => {
                             e.stopPropagation();
                             hideScholarship(item.id, item.title);
@@ -2961,7 +2830,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                           }}
                         >
                           🗑️
-                        </button>
+                        </ModuleButton>
                       </div>
                     </div>
 
@@ -2971,7 +2840,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                     </div>
 
                     {/* Titre & Diplôme cible flex-safe */}
-                    <h3 style={{ margin: "0 0 3px 0", fontSize: "14px", fontWeight: "800", lineHeight: "1.3", color: isDarkMode ? "#FFFFFF" : "#0F172A", wordBreak: "break-word", overflowWrap: "break-word" }}>
+                    <h3 style={{ margin: "0 0 3px 0", fontSize: "14px", fontWeight: "800", lineHeight: "1.3", color: "var(--mm-fg)", wordBreak: "break-word", overflowWrap: "break-word" }}>
                       {item.title}
                     </h3>
                     <div style={{ fontSize: "11px", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", fontWeight: "700", marginBottom: "8px", wordBreak: "break-word", overflowWrap: "break-word" }}>
@@ -3062,7 +2931,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
 
                     {/* Grille 50/50 stricte pour les boutons d'action */}
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", width: "100%", boxSizing: "border-box" }}>
-                      <button
+                      <ModuleButton
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedScholarshipId(item.id);
@@ -3089,7 +2958,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                       >
                         <span>Dossier</span>
                         <span>➔</span>
-                      </button>
+                      </ModuleButton>
 
                       <a
                         href={itemLinks.applyUrl}
@@ -3160,7 +3029,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               background: isDarkMode ? "#0F0D24" : "#FFFFFF",
               border: isDarkMode ? "1.5px solid color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "1.5px solid color-mix(in srgb, var(--mm-primary) 22%, white)",
               boxShadow: "0 24px 60px rgba(0, 0, 0, 0.6)",
-              color: isDarkMode ? "#F8FAFC" : "#0F172A",
+              color: "var(--mm-fg)",
               padding: "24px",
               display: "flex",
               flexDirection: "column",
@@ -3168,7 +3037,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
             }}
           >
             {/* Bouton Fermer Absolu Ancré en Haut à Droite */}
-            <button
+            <ModuleButton
               onClick={() => setShowGuideModal(false)}
               aria-label="Fermer le guide"
               style={{
@@ -3192,7 +3061,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               }}
             >
               ✕
-            </button>
+            </ModuleButton>
 
             {/* Header du Guide */}
             <div style={{ display: "flex", alignItems: "center", gap: "12px", borderBottom: isDarkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid color-mix(in srgb, var(--mm-primary) 10%, white)", paddingBottom: "16px", paddingRight: "44px" }}>
@@ -3200,7 +3069,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 📘
               </div>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <h2 style={{ margin: 0, fontSize: "17.5px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A", lineHeight: "1.3" }}>
+                <h2 style={{ margin: 0, fontSize: "17.5px", fontWeight: "900", color: "var(--mm-fg)", lineHeight: "1.3" }}>
                   Guide Officiel de Candidature — Master International
                 </h2>
                 <div style={{ fontSize: "12px", color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary-deep)", marginTop: "2px", fontWeight: "700" }}>
@@ -3250,7 +3119,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               {SENEGAL_L3_CS_APPLICATION_GUIDE.sections.map((sec) => {
                 const isActive = guideActiveSection === sec.id;
                 return (
-                  <button
+                  <ModuleButton
                     key={sec.id}
                     onClick={() => setGuideActiveSection(sec.id)}
                     className="god-pill-btn"
@@ -3271,11 +3140,11 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                   >
                     <span>{sec.icon}</span>
                     <span>{sec.title.split(". ")[1] || sec.title}</span>
-                  </button>
+                  </ModuleButton>
                 );
               })}
 
-              <button
+              <ModuleButton
                 onClick={() => setGuideActiveSection("direct_links")}
                 className="god-pill-btn"
                 style={{
@@ -3295,7 +3164,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               >
                 <span>🌐</span>
                 <span>Portails & Liens Directs</span>
-              </button>
+              </ModuleButton>
             </div>
 
             {/* Contenu de la section active */}
@@ -3303,10 +3172,10 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
               {guideActiveSection === "direct_links" ? (
                 <div>
                   <div style={{ marginBottom: "12px" }}>
-                    <h3 style={{ margin: 0, fontSize: "15px", fontWeight: "900", color: isDarkMode ? "#FFFFFF" : "#0F172A" }}>
+                    <h3 style={{ margin: 0, fontSize: "15px", fontWeight: "900", color: "var(--mm-fg)" }}>
                       🌐 Répertoire des Portails Officiels Directs de Candidature
                     </h3>
-                    <p style={{ margin: "4px 0 0", fontSize: "12px", color: isDarkMode ? "#94A3B8" : "#64748B" }}>
+                    <p style={{ margin: "4px 0 0", fontSize: "12px", color: "var(--mm-fg-muted)" }}>
                       Accès direct aux plateformes officielles des bourses mondiales 100% financées adaptées à ton profil. Aucun intermédiaire.
                     </p>
                   </div>
@@ -3331,7 +3200,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                             <span>{s.flag}</span>
                             <span style={{ fontSize: "11px", fontWeight: "900", color: "var(--mm-primary)" }}>{s.country}</span>
                           </div>
-                          <div style={{ fontSize: "13px", fontWeight: "800", color: isDarkMode ? "#FFFFFF" : "#0F172A", lineHeight: "1.3" }}>
+                          <div style={{ fontSize: "13px", fontWeight: "800", color: "var(--mm-fg)", lineHeight: "1.3" }}>
                             {s.title}
                           </div>
                           <div style={{ fontSize: "11px", color: "#2563EB", fontWeight: "700", marginTop: "2px" }}>
@@ -3404,7 +3273,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                               <span>✓</span>
                               <span>{step.label}</span>
                             </div>
-                            <div style={{ fontSize: "12px", color: isDarkMode ? "#CBD5E1" : "#334155", lineHeight: "1.6" }}>
+                            <div style={{ fontSize: "12px", color: "var(--mm-fg-muted)", lineHeight: "1.6" }}>
                               {step.detail}
                             </div>
                           </div>
@@ -3418,7 +3287,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
 
             {/* Footer du Guide */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", borderTop: isDarkMode ? "1px solid rgba(255,255,255,0.08)" : "1px solid color-mix(in srgb, var(--mm-primary) 10%, white)", paddingTop: "14px", marginTop: "8px" }}>
-              <button
+              <ModuleButton
                 onClick={() => {
                   const fullGuideText = [
                     `📘 ${SENEGAL_L3_CS_APPLICATION_GUIDE.title}`,
@@ -3437,7 +3306,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 className="god-pill-btn"
                 style={{
                   background: isDarkMode ? "rgba(255,255,255,0.08)" : "#F1F5F9",
-                  color: isDarkMode ? "#FFFFFF" : "#0F172A",
+                  color: "var(--mm-fg)",
                   padding: "9px 16px",
                   borderRadius: "10px",
                   border: "none",
@@ -3450,9 +3319,9 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 <span>📋 Copier le guide complet</span>
-              </button>
+              </ModuleButton>
 
-              <button
+              <ModuleButton
                 onClick={() => setShowGuideModal(false)}
                 className="god-pill-btn"
                 style={{
@@ -3467,7 +3336,7 @@ RÈGLE ABSOLUE DE ROBUSTESSE :
                 }}
               >
                 Fermer
-              </button>
+              </ModuleButton>
             </div>
           </div>
         </div>,

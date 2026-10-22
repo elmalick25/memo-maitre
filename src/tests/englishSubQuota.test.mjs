@@ -79,11 +79,11 @@ test('les leeches anglais restent prioritaires DANS le sous-quota', () => {
   assert.ok(ids.has('leech1') && ids.has('leech2'), 'les leeches anglais doivent passer en premier');
 });
 
-test('le plan du jour reste à 35 avec le sous-quota actif', () => {
+test('le plan du jour est à 45 avec le sous-quota actif', () => {
   const due = [...englishCards(150), ...otherCards(150)];
   const r = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
-  assert.equal(r.target, 35);
-  assert.equal(r.remainingCount, 35);
+  assert.equal(r.target, 45);
+  assert.equal(r.remainingCount, 45);
   const eng = r.remaining.filter((c) => isEnglishIntensive(c));
-  assert.ok(eng.length <= 10, `anglais dans le plan ≤ 10, reçu ${eng.length}`);
+  assert.ok(eng.length <= 15, `anglais dans le plan ≤ 15, reçu ${eng.length}`);
 });

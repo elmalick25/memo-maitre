@@ -43,3 +43,26 @@ test('useAgentCardDetector — filtre client-side valide les sources autorisées
     'Le filtre client-side doit autoriser user_error, coach_input et comprehension_request'
   );
 });
+
+test('useAgentCardDetector — interdiction stricte des fiches d\'hésitation orale et bégaiement', () => {
+  // Vérifie l'exclusion dans SYSTEM_PROMPT
+  assert.equal(
+    fileContent.includes('DISFLUENCES ET HÉSITATIONS ORALES INTERDITES'),
+    true,
+    'Le SYSTEM_PROMPT doit interdire formellement les fiches sur les hésitations orales'
+  );
+
+  // Vérifie le rejet client-side
+  assert.equal(
+    fileContent.includes('rejet: fausse erreur (bégaiement/hésitation orale humaine)'),
+    true,
+    'Le filtre client-side doit rejeter toute carte basée sur une hésitation ou bégaiement'
+  );
+
+  // Vérifie le nettoyage amont du message utilisateur
+  assert.equal(
+    fileContent.includes('cleanUserMsg = userMsg.replace(/\\b(\\w+)\\s+\\1\\b/gi, "$1")'),
+    true,
+    'Les bégaiements oraux doivent être nettoyés avant envoi au LLM'
+  );
+});

@@ -396,182 +396,243 @@ export const REAL_LIFE_100_TOPICS = [
     hook: "Thoughtful gifts leave a deep mark on our memory.",
     question: "What's a gift that meant the world to you or made someone else cry with joy?"
   },
+  // ── CATEGORY 4: HIGH-STAKES REAL-WORLD ROLEPLAYS (56–65) ────────────────────
   {
-    id: "daily-56",
-    category: "daily",
-    title: "A skill your parents or grandparents had that we lost",
-    hook: "Fixing things with your hands, gardening, or memorizing dozens of phone numbers.",
-    question: "What is something older generations did naturally that our generation struggles with?"
+    id: "roleplay-56",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Job Interview: Senior Silicon Valley Tech Recruiter",
+    character: "Alex, Senior Technical Recruiter at Google",
+    scenario: "You are interviewing for a software engineering position. Alex is testing your background, problem-solving mindset, and cultural fit.",
+    hook: "The classic high-stakes tech interview with behavioral and technical questions.",
+    question: "Walk me through your journey into tech: what is the most challenging technical problem you solved, and what made it hard?"
   },
   {
-    id: "daily-57",
-    category: "daily",
-    title: "Your favorite holiday and family traditions",
-    hook: "Festive meals, cultural celebrations, and shared moments with people we love.",
-    question: "What holiday or celebration brings you the best memories every year?"
+    id: "roleplay-57",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Salary & Promotion Negotiation with Engineering Manager",
+    character: "Jordan, Senior Engineering Manager",
+    scenario: "Annual performance review. You are requesting a 20% salary increase based on your impactful contributions over the past year.",
+    hook: "A delicate corporate negotiation where you must defend your value persuasively.",
+    question: "I see your request for a promotion and raise. Budgets are tight this quarter—pitch me why you've earned it right now."
   },
   {
-    id: "daily-58",
-    category: "daily",
-    title: "How tidy is your desk right now?",
-    hook: "Organized chaos versus surgical minimalism in workspaces.",
-    question: "Is your workspace right now spotless and organized, or wonderfully cluttered?"
+    id: "roleplay-58",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Pitching a Project to a Skeptical Client",
+    character: "Marcus, VP of Digital at a major retail corporation",
+    scenario: "Presenting a software architecture redesign to a corporate client who worries about downtime, security, and migration costs.",
+    hook: "Handling executive pushback and turning a skeptical client into a partner.",
+    question: "Your proposal looks ambitious, but our legacy system works. Why should I risk downtime and spend money to migrate?"
   },
   {
-    id: "daily-59",
-    category: "daily",
-    title: "A funny misunderstanding caused by language",
-    hook: "Learning a new language always produces hilarious mix-ups and false friends.",
-    question: "Have you ever had a funny mix-up trying to speak English or another language?"
+    id: "roleplay-59",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Fast-Paced NYC Diner Order",
+    character: "Tony, Fast-talking, no-nonsense Manhattan waiter",
+    scenario: "A busy lunchtime rush in New York City. Tony needs your order fast, with side dishes and drinks.",
+    hook: "Mastering conversational agility, ordering food, and handling quick banter under pressure.",
+    question: "Alright folks, place is packed! What can I getcha started with today—pastrami on rye, daily soup, or you need another minute?"
   },
   {
-    id: "daily-60",
-    category: "daily",
-    title: "The best compliment someone ever gave you",
-    hook: "Some compliments stick with you for years because they felt so genuine.",
-    question: "What is a compliment someone gave you that you still remember warmly?"
+    id: "roleplay-60",
+    category: "roleplay",
+    type: "roleplay",
+    title: "ER Doctor & Medical Consultation",
+    character: "Dr. Johnson, ER Physician at Chicago General Hospital",
+    scenario: "You are describing unexpected severe symptoms to an urgent care physician.",
+    hook: "Describing physical sensations, medical history, and pain levels accurately in English.",
+    question: "Hello there, I'm Dr. Johnson. What brings you into urgent care today, and on a scale of 1 to 10, how is your pain?"
+  },
+  {
+    id: "roleplay-61",
+    category: "roleplay",
+    type: "roleplay",
+    title: "De-escalating an Irate, Disappointed Customer",
+    character: "Taylor, Furious VIP client whose production database went down",
+    scenario: "Taylor's business lost thousands of dollars during an unexpected system outage. You are the customer success lead calming them down.",
+    hook: "Diplomacy, high EQ, active listening, and proposing concrete remediation steps.",
+    question: "Our entire checkout platform was down for four hours during Black Friday! What are you personally going to do to fix this?"
+  },
+  {
+    id: "roleplay-62",
+    category: "roleplay",
+    type: "roleplay",
+    title: "US Customs & Border Protection Immigration Check",
+    character: "Officer Miller, Stern Border Control Officer at JFK Airport",
+    scenario: "Going through international passport control. The officer asks about travel purpose, duration, and accommodation.",
+    hook: "Speaking clearly, concisely, and calmly in formal official settings.",
+    question: "Next in line! Passport and customs declaration please. What is the official purpose of your visit to the United States?"
+  },
+  {
+    id: "roleplay-63",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Pitching an AI Startup to an Angel Investor",
+    character: "Sophia, Partner at a top Tier-1 Silicon Valley VC firm",
+    scenario: "You have 3 minutes in an elevator/coffee meeting to convince Sophia to invest in your new tech startup.",
+    hook: "Pithy value propositions, market size, moat, and compelling founder energy.",
+    question: "Everyone is building an AI wrapper this year. Tell me in 60 seconds: what's your unfair advantage and why do you win?"
+  },
+  {
+    id: "roleplay-64",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Negotiating an Apartment Lease with a Tough Landlord",
+    character: "Arthur, Brooklyn Landlord with multiple rental applicants",
+    scenario: "You want to negotiate a lower rent, pet permission, and faster repairs on an apartment lease.",
+    hook: "Everyday bargaining, polite assertiveness, and contract clarity.",
+    question: "I have three other people offering full deposit today. Why should I lower the monthly rent and allow a dog for you?"
+  },
+  {
+    id: "roleplay-65",
+    category: "roleplay",
+    type: "roleplay",
+    title: "Networking at an International Tech Mixer",
+    character: "Chloe, Lead Open-Source Engineer from London",
+    scenario: "A bustling after-party at a global tech conference. Breaking the ice, sharing side projects, and building connections.",
+    hook: "Casual professional networking, small talk, and finding common passions.",
+    question: "Hey! Loved the keynote earlier. Are you building with local LLMs or cloud infra? What got you into tech initially?"
   },
 
-  // ── CATEGORY 4: DILEMMAS, OPINIONS & WOULD-YOU-RATHERS (61–80) ───────────────
+  // ── CATEGORY 5: STIMULATING DEBATES & DILEMMAS (66–80) ──────────────────────
   {
-    id: "dilemma-61",
+    id: "debate-66",
     category: "dilemma",
-    title: "Time travel: Past or Future?",
-    hook: "A classic dilemma: meeting historical legends or seeing the galaxy in 3000.",
-    question: "If you had a one-way ticket, would you travel 200 years back or 500 years forward?"
+    type: "debate",
+    title: "AI will replace most human knowledge workers",
+    opposingView: "AI is fundamentally a cognitive amplifier that will create more net new professions and human leverage than it destroys.",
+    hook: "The central economic and intellectual debate of the 21st century.",
+    question: "Do you believe generative AI will destroy millions of knowledge jobs, or will it simply augment workers into super-creators?"
   },
   {
-    id: "dilemma-62",
+    id: "debate-67",
     category: "dilemma",
-    title: "Infinite money vs. Infinite time",
-    hook: "Having unlimited resources without time to enjoy them versus living forever with modest means.",
-    question: "Would you rather have billions of dollars right now or guarantee yourself 150 healthy years?"
+    type: "debate",
+    title: "Remote work is strictly superior to office work",
+    opposingView: "Physical co-location builds trust, creative serendipity, and company culture that digital tools can never duplicate.",
+    hook: "Autonomy and freedom versus spontaneous collaboration and team cohesion.",
+    question: "Is remote work genuinely the future of productive humanity, or does it slowly erode company culture and mentorship?"
   },
   {
-    id: "dilemma-63",
+    id: "debate-68",
     category: "dilemma",
-    title: "Never eat sugar again or never eat salt again?",
-    hook: "A culinary nightmare test that forces you to choose between savory and sweet.",
-    question: "Would you rather give up sugar forever or give up salt forever?"
+    type: "debate",
+    title: "Social media has caused more net harm than good",
+    opposingView: "Social platforms gave a voice to marginalized groups, democratized education, and connected isolated people worldwide.",
+    hook: "Mental health crisis and algorithmic polarization versus global community and free expression.",
+    question: "Taking everything into account, has social media been a net positive or a net negative for human civilization?"
   },
   {
-    id: "dilemma-64",
+    id: "debate-69",
     category: "dilemma",
-    title: "Always know when someone is lying vs. Never get caught lying",
-    hook: "A superpower that either reveals brutal truths or makes you the ultimate trickster.",
-    question: "Would you prefer a 100% accurate lie detector in your mind, or the power of perfect disguise?"
+    type: "debate",
+    title: "A university degree is obsolete for modern tech careers",
+    opposingView: "Foundational mathematics, algorithmic rigor, and university networks provide a lifelong advantage over quick bootcamps.",
+    hook: "Self-taught portfolio builders versus formal academic credentials.",
+    question: "Should ambitious 18-year-olds skip university and build real projects, or is a degree still the safest foundation?"
   },
   {
-    id: "dilemma-65",
+    id: "debate-70",
     category: "dilemma",
-    title: "Be famous and scrutinized vs. Be completely anonymous and rich",
-    hook: "Celebrity status with zero privacy versus living in total peaceful obscurity.",
-    question: "Would you want worldwide fame or total wealth in absolute anonymity?"
+    type: "debate",
+    title: "Video games improve cognitive reflexes and problem solving",
+    opposingView: "Excessive video gaming induces dopamine desensitization, sedentary habits, and chronic procrastination.",
+    hook: "Strategic mental gym versus addictive time sink.",
+    question: "Do you view gaming as a legitimate cognitive workout and art form, or mostly as an unproductive distraction?"
   },
   {
-    id: "dilemma-66",
+    id: "debate-71",
     category: "dilemma",
-    title: "Should pineapple be on pizza?",
-    hook: "The most passionately fought culinary war in modern history.",
-    question: "Where do you stand on the controversial topic of pineapple on pizza?"
+    type: "debate",
+    title: "Climate action: Personal lifestyle vs. Systemic corporate regulation",
+    opposingView: "Without grassroots consumer sacrifice and lifestyle change, top-down corporate laws will fail to shift culture.",
+    hook: "Recycling straws and turning off lights versus holding 100 mega-corporations accountable.",
+    question: "Does individual lifestyle change actually move the needle on climate, or is it pure corporate distraction from systemic policy?"
   },
   {
-    id: "dilemma-67",
+    id: "debate-72",
     category: "dilemma",
-    title: "Hard truth vs. Comforting lie",
-    hook: "When a friend is making a mistake, should you be brutally honest or protect their feelings?",
-    question: "Do you prefer friends who tell you the harsh truth or who soften the blow?"
+    type: "debate",
+    title: "Cash should be completely abolished in favor of digital currency",
+    opposingView: "Cash is the ultimate safeguard of personal privacy, resilience during blackouts, and financial autonomy from surveillance.",
+    hook: "Convenience and anti-fraud versus total state surveillance and exclusion of the unbanked.",
+    question: "Would a 100% cashless society be a technological triumph or a terrifying loss of personal freedom?"
   },
   {
-    id: "dilemma-68",
+    id: "debate-73",
     category: "dilemma",
-    title: "Teleportation vs. Flight",
-    hook: "The eternal superhero debate about how you'd like to get around.",
-    question: "Would you rather be able to fly at 100 km/h or instantly teleport anywhere?"
+    type: "debate",
+    title: "Universal Basic Income is inevitable with automation",
+    opposingView: "UBI destroys work ethic, drives severe currency inflation, and fails to address the deep human need for purposeful contribution.",
+    hook: "Preventing poverty in an automated economy versus the risk of fiscal catastrophe.",
+    question: "If machines do 80% of routine work, should governments guarantee every citizen a monthly unconditional paycheck?"
   },
   {
-    id: "dilemma-69",
+    id: "debate-74",
     category: "dilemma",
-    title: "Work 4 long days or 5 short days?",
-    hook: "The 4-day work week experiment is gaining traction all around the globe.",
-    question: "Would you prefer 10-hour shifts for 4 days with a 3-day weekend, or standard 5 days?"
+    type: "debate",
+    title: "Brutal honesty is always better than a comforting white lie",
+    opposingView: "Tact, emotional intelligence, and sparing someone's feelings are social glues that keep relationships intact.",
+    hook: "Radical candor versus compassionate empathy.",
+    question: "Would you rather have a friend who is brutally honest 100% of the time, or one who sometimes softens the truth to protect you?"
   },
   {
-    id: "dilemma-70",
+    id: "debate-75",
     category: "dilemma",
-    title: "Is human nature fundamentally good or selfish?",
-    hook: "Philosophers have debated this for thousands of years.",
-    question: "When nobody is watching, do you think people are naturally altruistic or selfish?"
+    type: "debate",
+    title: "Homework and letter grades should be abolished in schools",
+    opposingView: "Grades and homework teach self-discipline, measure objective progress, and prepare students for competitive adult realities.",
+    hook: "Finnish curiosity-driven education versus rigorous accountability and testing.",
+    question: "Do grades and homework cultivate discipline in young people, or do they kill the natural joy of learning?"
   },
   {
-    id: "dilemma-71",
+    id: "debate-76",
     category: "dilemma",
-    title: "Live in virtual reality vs. Real harsh world",
-    hook: "A Matrix-style choice: a customized utopian simulation or gritty reality.",
-    question: "If a simulation was indistinguishable from reality, would you plug in permanently?"
+    type: "debate",
+    title: "Human nature is fundamentally selfish rather than altruistic",
+    opposingView: "Human evolutionary success was driven by altruism, collective childcare, empathy, and mutual survival pacts.",
+    hook: "Thomas Hobbes versus Jean-Jacques Rousseau on the core of human nature.",
+    question: "When all social laws and incentives collapse, do people naturally cooperate or prioritize their own survival?"
   },
   {
-    id: "dilemma-72",
+    id: "debate-77",
     category: "dilemma",
-    title: "Always be 15 minutes late or 20 minutes early?",
-    hook: "Punctuality tests our patience and etiquette.",
-    question: "Which curse would you rather suffer from: always being early or chronically late?"
+    type: "debate",
+    title: "Books are inherently deeper and superior to cinema",
+    opposingView: "Cinema merges visual art, acting, musical composition, and timing into an emotional experience books cannot replicate.",
+    hook: "Internal imagination and psychological depth versus audiovisual multisensory mastery.",
+    question: "Can any movie ever match the psychological intimacy and richness of a great novel?"
   },
   {
-    id: "dilemma-73",
+    id: "debate-78",
     category: "dilemma",
-    title: "Is failure the best teacher or is success better?",
-    hook: "People romanticize failure, but repeated wins build dangerous momentum.",
-    question: "Did your biggest breakthroughs come from painful failures or positive momentum?"
+    type: "debate",
+    title: "Space colonization is a vanity waste while Earth suffers",
+    opposingView: "Space exploration pushes extreme engineering breakthroughs (solar, water recycling, satellite GPS) that directly heal Earth.",
+    hook: "Multi-planetary civilization versus saving our home planet first.",
+    question: "Should humanity spend billions sending rockets to Mars, or redirect every dollar into solving Earth's urgent crises?"
   },
   {
-    id: "dilemma-74",
+    id: "debate-79",
     category: "dilemma",
-    title: "Be the smartest person in the room vs. The most charismatic",
-    hook: "Raw intellect versus magnetic charm and persuasive power.",
-    question: "If you had to pick one superpower: unmatched genius IQ or unstoppable charisma?"
+    type: "debate",
+    title: "Money can buy genuine happiness and peace of mind",
+    opposingView: "Hedonic adaptation means luxury quickly becomes baseline; true peace comes from love, purpose, and inner stillness.",
+    hook: "Financial freedom solving 90% of daily stress versus the elusive nature of inner fulfillment.",
+    question: "Does having tens of millions of dollars solve human unhappiness, or simply replace practical problems with existential ones?"
   },
   {
-    id: "dilemma-75",
+    id: "debate-80",
     category: "dilemma",
-    title: "Should homework be banned for children?",
-    hook: "Educational systems in Finland have abolished traditional homework with great results.",
-    question: "Do you think homework helps kids learn discipline, or does it steal their childhood?"
-  },
-  {
-    id: "dilemma-76",
-    category: "dilemma",
-    title: "Know how you will die vs. Know when you will die",
-    hook: "A chilling question about the burden of foresight.",
-    question: "If you had to know one: the exact date of your demise or the manner of it?"
-  },
-  {
-    id: "dilemma-77",
-    category: "dilemma",
-    title: "Are books always better than movies?",
-    hook: "The debate between literary depth and cinematic visual spectacle.",
-    question: "Has there ever been a film adaptation that was genuinely superior to the book?"
-  },
-  {
-    id: "dilemma-78",
-    category: "dilemma",
-    title: "Would you colonize Mars with Elon Musk?",
-    hook: "A one-way ticket to build civilization on a red desert planet.",
-    question: "If offered a seat on the first crew to Mars, would you board the spaceship?"
-  },
-  {
-    id: "dilemma-79",
-    category: "dilemma",
-    title: "Can money actually buy happiness?",
-    hook: "Studies say wealth buys security and peace of mind up to a certain threshold.",
-    question: "In your honest view, can financial abundance buy genuine happiness?"
-  },
-  {
-    id: "dilemma-80",
-    category: "dilemma",
-    title: "Would you want to know the absolute secrets of the universe?",
-    hook: "Knowing why the universe exists, aliens, and the origin of consciousness.",
-    question: "Would you want the answer to life's ultimate mystery even if it terrified you?"
+    type: "debate",
+    title: "A 4-day workweek boosts productivity and prevents burnout",
+    opposingView: "Compressing 40 hours into 4 days creates intense daily stress, customer service gaps, and reduced national economic output.",
+    hook: "Parkinson's law and focused work sprints versus practical scheduling friction.",
+    question: "Would your workplace accomplish more in 4 focused days, or would customer service and deadlines collapse?"
   },
 
   // ── CATEGORY 5: TRAVEL, CULTURE, DREAMS & HUMAN NATURE (81–100) ─────────────
@@ -738,17 +799,53 @@ export function getRandomTopicPair() {
 }
 
 /**
- * Génère un bloc de contexte pour le prompt système résumant la richesse des 100 sujets.
+ * Retourne tous les sujets de débat.
+ */
+export function getDebateTopics() {
+  return REAL_LIFE_100_TOPICS.filter((t) => t.category === "debate" || t.type === "debate");
+}
+
+/**
+ * Retourne tous les scénarios de roleplay.
+ */
+export function getRoleplayTopics() {
+  return REAL_LIFE_100_TOPICS.filter((t) => t.category === "roleplay" || t.type === "roleplay");
+}
+
+/**
+ * Retourne un sujet de débat aléatoire.
+ */
+export function getRandomDebateTopic() {
+  const list = getDebateTopics();
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+/**
+ * Retourne un scénario de roleplay aléatoire.
+ */
+export function getRandomRoleplayTopic() {
+  const list = getRoleplayTopics();
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+/**
+ * Génère un bloc de contexte pour le prompt système résumant la richesse des 100 sujets
+ * et intégrant nativement la prise en charge des Débats et des Scénarios de Roleplay.
  */
 export function buildTopicsPromptContext() {
   const sample = getRandomTopicPair();
-  return `[WORLD-CLASS 100 REAL-LIFE TOPICS ENGINE]
+  return `[WORLD-CLASS 100 REAL-LIFE TOPICS ENGINE — CONVERSATION, DEBATES & ROLEPLAYS]
 You have access to a rich repertoire of 100 authentic, engaging real-life discussion themes across:
 1. Self-discovery & personal identity (introducing yourself, who you are, what drives you)
 2. Ambitions, tech, coding, AI & future projects
 3. Everyday real life, funny moments, routines & unfiltered anecdotes
-4. Thought-provoking dilemmas, lighthearted debates & 'would you rather'
-5. Culture, travels, human nature, music, food & big dreams
+4. High-stakes real-world roleplays (tech job interview, salary negotiation, client pitch, doctor, restaurant, airport)
+5. Provocative debates (AI vs human jobs, remote vs office, social media impact, college vs self-taught, climate ethics)
+6. Culture, travels, human nature, music, food & big dreams
+
+[DYNAMIC ROLEPLAY & DEBATE MODES ON DEMAND]
+- If a DEBATE topic is chosen, or if the student wants to debate: Actively take an articulate, spirited counter-position (ARGOS mindset)! Challenge their arguments constructively in spoken English, and make them defend their claims with conviction (1–3 sentences per turn).
+- If a ROLEPLAY scenario is chosen, or if the student wants a realistic simulation: Step immediately into character (e.g. Alex the Google recruiter, Marcus the skeptical client, Tony the NYC waiter, Dr. Johnson)! Maintain the scenario with authentic spoken dialogue and realistic reactions.
 
 When opening or when the student is open to suggestions, you can naturally propose 2 intriguing angles (e.g. "${sample[0].title}" or "${sample[1].title}"), or bring up a fresh, spontaneous everyday question!`;
 }
@@ -770,4 +867,5 @@ export function getRandomOpeningGreeting(name, t1, t2) {
   ];
   return greetings[Math.floor(Math.random() * greetings.length)];
 }
+
 

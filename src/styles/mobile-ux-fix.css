@@ -52,6 +52,28 @@ input, select, textarea { font-size: max(16px, 1rem); }
   -webkit-overflow-scrolling: touch;
 }
 
+/* Neutralisation absolue de tout SpeedDial flottant pendant la révision flashcard */
+body.in-review-session .speed-dial-trigger,
+body.in-review-session .speed-dial-label,
+body.in-review-session .speed-dial-fan,
+body.in-review-session [class*="speed-dial"] {
+  display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+}
+
+@keyframes slideUpDock {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* Tabs scroll containers */
 .tabs-scroll,
 .academy-tabs,

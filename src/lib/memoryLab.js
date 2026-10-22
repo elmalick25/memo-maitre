@@ -22,6 +22,10 @@ import { isConsolidationCandidate } from "./cardStatus.js";
 // Sous-quota anglais : on a besoin de savoir quelles fiches sont encore dans
 // le régime intensif (échelle 1→3→7→14) pour borner leur part du quota du jour.
 import { isEnglishIntensive } from "./fsrs.js";
+import { cardRetention, pickSentinels } from "./memoryTriage.js";
+
+// Places « Sentinelles » réservées chaque jour aux fiches les plus fragiles (R < 70 %).
+export const SENTINEL_DAILY_SLOTS = 4;
 
 // ── Tokenization + similarité Jaccard sur le recto ────────────────────────
 const STOPWORDS_FR = new Set([
@@ -257,7 +261,7 @@ export function nextLapseCount(card, q) {
 export const DAILY_SESSION_TIERS = [
   { maxPile: 50, target: null },        // petite pile → aucun plafond
   { maxPile: 150, target: 45 },         // pile moyenne → ~40-50 fiches
-  { maxPile: Infinity, target: 35 },    // grosse pile → ~30-40 fiches
+  { maxPile: Infinity, target: 45 },    // grosse pile → 45 fiches (35 générales + 10 Nova)
 ];
 
 // Répartition interne de la session (somme ≤ 1, le reste sert de marge) :
@@ -347,7 +351,9 @@ function selectByPriority(cards, target, todayISO) {
 
   // 2. Retard le plus ancien (nextReview le plus lointain dans le passé)
   const byOldest = [...cards].sort((a, b) => String(a.nextReview || "").localeCompare(String(b.nextReview || "")));
-  const backlog = take(byOldest, Math.ceil(target * DAILY_SESSION_MIX.backlog));
+  // Retard trié par RISQUE D'OUBLI réel (rétention FSRS croissante), pas par date.
+  const byRisk = [...byOldest].sort((a, b) => (cardRetention(a, todayISO || undefined) ?? 2) - (cardRetention(b, todayISO || undefined) ?? 2));
+  const backlog = take(byRisk, Math.ceil(target * DAILY_SESSION_MIX.backlog));
 
   // 3. Dues normales du jour
   const normalDue = take(
@@ -460,6 +466,100 @@ export function selectMultiCategoryByPriority(cards, target, todayISO) {
  * @param {Object} opts - { target, todayISO, englishSubQuota }
  * @returns {Array} session plafonnée et ordonnée.
  */
+export function isNovaCard(card) {
+  if (!card) return false;
+
+  // 1. Tags explicites de la vue English / Nova
+  if (card._agentDetected || card._novaV8) return true;
+  if (card.source === "user_error" || card.source === "coach_input" || card.source === "comprehension_request") return true;
+  if (card._source === "user_error" || card._source === "coach_input" || card._source === "comprehension_request" || card._source === "agent_teaching") return true;
+  if (card.source === "nova" || card.source === "english-view" || card._source === "nova" || card.source === "writing-lab") return true;
+  if (card._type === "correction" || card._type === "idiom") return true;
+
+  // 2. Préfixes d'identifiants créés par la vue English
+  const id = typeof card.id === "string" ? card.id : "";
+  if (
+    id.startsWith("agent-") ||
+    id.startsWith("coach-") ||
+    id.startsWith("el-") ||
+    id.startsWith("nova-") ||
+    id.startsWith("writing-lab") ||
+    id.startsWith("reallife_") ||
+    id.startsWith("wild_")
+  ) {
+    return true;
+  }
+
+  // 3. Catégorie Voice Coach ou thèmes English
+  if (card.category === "Voice Coach" || card.theme === "writing-lab" || card.theme === "english-practice") return true;
+  if (typeof card.notes === "string" && (card.notes.includes("Writing Lab") || card.notes.includes("Coach") || card.notes.includes("Nova") || card.notes.includes("Live"))) return true;
+
+  // 4. Formats de rectos d'erreurs générés par le coach
+  const front = typeof card.front === "string" ? card.front : "";
+  if (front.includes("comment le dire correctement") || front.includes("❌") || front.includes("Comment dire")) return true;
+
+  // 5. Versos et explications générés par le coach Nova
+  const back = typeof card.back === "string" ? card.back : "";
+  if (
+    back.includes("Contexte Live Nova") ||
+    back.includes("Coach Nova") ||
+    back.includes("Tu as dit") ||
+    back.includes("En réalité, on dit") ||
+    back.includes("Découvert avec Coach Nova") ||
+    (back.includes("✅") && back.includes("📌")) ||
+    (back.includes("QUAND L'UTILISER") && back.includes("SENS DANS CE CONTEXTE")) ||
+    (back.includes("📌 PIÈGE :") && back.includes("🗣")) ||
+    back.includes("Décomposition & Transition Métaphorique") ||
+    back.includes("Modèle Mental") ||
+    back.includes("Pourquoi A et pas B")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Détecte si une fiche provient STRICTEMENT d'une faute réelle commise par l'utilisateur
+ * lors de son échange avec le coach Nova (ex: calque, phrase bancale corrigée).
+ * Les simples fiches de vocabulaire, d'idiomes ou d'expressions introduites par le coach
+ * (ex: mindset, buddies, etc.) renvoient false.
+ *
+ * @param {Object} card
+ * @returns {boolean}
+ */
+export function isNovaMistakeCard(card) {
+  if (!card) return false;
+
+  // 1. Tag explicite de faute utilisateur
+  if (card.source === "user_error" || card._source === "user_error" || card._type === "correction") return true;
+  if (card.userMistake && typeof card.userMistake === "string" && card.userMistake.trim()) return true;
+
+  // 2. Recto typique d'une faute corrigée ("❌ phrase erronée → comment le dire correctement ?")
+  const front = typeof card.front === "string" ? card.front : "";
+  if (front.includes("comment le dire correctement") || front.includes("❌")) return true;
+
+  // 3. Verso avec trace formelle de ce que l'utilisateur a dit
+  const back = typeof card.back === "string" ? card.back : "";
+  if (
+    back.includes("Tu as dit") ||
+    back.includes("Tu avais dit") ||
+    back.includes("Ce que tu as dit") ||
+    back.includes("Vous avez dit") ||
+    back.includes("Vous aviez dit") ||
+    back.includes("Ce que vous avez dit") ||
+    back.includes("Phrase fautive") ||
+    back.includes("🔴 **Tu as dit") ||
+    back.includes("🔴 **Vous avez dit")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export const NOVA_MISTAKE_DAILY_SLOTS = 10;
+
 export function composeDailySession(dueCards, opts = {}) {
   const cards = Array.isArray(dueCards) ? dueCards : [];
   const target = opts.target !== undefined ? opts.target : getDailySessionTarget(cards.length);
@@ -470,25 +570,50 @@ export function composeDailySession(dueCards, opts = {}) {
     return antiInterferenceReorder(interleaveByCategory([...cards]));
   }
 
-  // ── Sous-quota anglais ───────────────────────────────────────────────────
+  // ── Réservation GARANTIE des fiches « Erreur Nova » (10 slots sur 45) ────
+  // Seules les vraies fautes commises avec le coach Nova (étiquette
+  // « Erreur Nova ») occupent ces 10 places réservées. Les autres fiches
+  // Nova (vocabulaire, idiomes) passent dans le pool normal pour ne pas
+  // voler les slots des erreurs.
+  const novaCards = cards.filter(isNovaMistakeCard);
+  const nonNovaCards = cards.filter((c) => !isNovaMistakeCard(c));
+  const novaMax = Math.min(NOVA_MISTAKE_DAILY_SLOTS, target, Math.max(1, Math.round(target * (NOVA_MISTAKE_DAILY_SLOTS / 45))));
+  const novaBudget = Math.min(novaMax, novaCards.length);
+  const novaPicked = selectByPriority(novaCards, novaBudget, todayISO);
+  const pickedIds = new Set(novaPicked.map((c) => c.id));
+
+  // ── Sentinelles : fiches les plus proches de l'oubli, tous modules confondus ─
+  const sentinelBudget = Math.min(SENTINEL_DAILY_SLOTS, Math.max(0, target - novaPicked.length));
+  const sentinels = pickSentinels(cards.filter((c) => !pickedIds.has(c.id)), sentinelBudget, todayISO || undefined);
+  sentinels.forEach((c) => pickedIds.add(c.id));
+  const sentinelIds = new Set(sentinels.map((c) => c.id));
+
+  // ── Sous-quota anglais intensif (non-Nova) & autres modules ───────────────
+  const remainingTarget = target - novaPicked.length - sentinels.length;
+
   const quota = opts.englishSubQuota !== undefined
     ? opts.englishSubQuota
-    : getEnglishSubQuota(target);
+    : getEnglishSubQuota(remainingTarget);
 
-  const english = cards.filter((c) => isEnglishIntensive(c));
-  const others = cards.filter((c) => !isEnglishIntensive(c));
+  const english = nonNovaCards.filter((c) => !sentinelIds.has(c.id) && isEnglishIntensive(c));
+  const others = nonNovaCards.filter((c) => !sentinelIds.has(c.id) && !isEnglishIntensive(c));
 
   const engBudget = quota === null || quota === undefined ? english.length : Math.min(quota, english.length);
   const englishPicked = selectByPriority(english, engBudget, todayISO);
-  const pickedIds = new Set(englishPicked.map((c) => c.id));
+  englishPicked.forEach(c => pickedIds.add(c.id));
 
-  const othersPicked = selectMultiCategoryByPriority(others, target - englishPicked.length, todayISO);
-  let merged = [...englishPicked, ...othersPicked];
+  const othersPicked = selectMultiCategoryByPriority(others, remainingTarget - englishPicked.length, todayISO);
+  othersPicked.forEach((c) => pickedIds.add(c.id));
+  let merged = [...novaPicked, ...sentinels, ...englishPicked, ...othersPicked];
 
   // Débordement autorisé : places que les autres modules n'ont pas réclamées.
   if (merged.length < target) {
     const leftoverEnglish = english.filter((c) => !pickedIds.has(c.id));
     merged = merged.concat(selectMultiCategoryByPriority(leftoverEnglish, target - merged.length, todayISO));
+  }
+  if (merged.length < target) {
+    const leftoverNova = novaCards.filter((c) => !pickedIds.has(c.id));
+    merged = merged.concat(selectMultiCategoryByPriority(leftoverNova, target - merged.length, todayISO));
   }
   if (merged.length < target) {
     const inSession = new Set(merged.map((c) => c.id));

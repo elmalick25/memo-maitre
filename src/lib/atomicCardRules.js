@@ -22,6 +22,9 @@ RÈGLES D'ATOMICITÉ (obligatoires — maximiser la rétention FSRS) :
    émets plusieurs fiches liées (définition, propriété, contre-exemple).
 7. Interdit : "Explique X", "Décris Y en détail", "Quels sont les 5..." → à
    scinder en fiches atomiques.
+8. Mise en forme DANS les champs : le code informatique va toujours dans un
+   bloc \`\`\`langage (ex: \`\`\`python) ; les phrases (anglais, français,
+   dialogues) ne sont JAMAIS dans un bloc \`\`\` ni entre \`backticks\`.
 
-Sortie : uniquement du JSON, aucune balise markdown, aucun texte hors JSON.
+Sortie : uniquement du JSON, aucune balise markdown autour du JSON, aucun texte hors JSON.
 `.trim();

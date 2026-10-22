@@ -104,3 +104,24 @@ test('restructureSelectedCards gère une réponse objet {text}', async () => {
   assert.equal(count, 1);
   assert.equal(state[0].back, 'from object');
 });
+
+test('parseEnglishRestructureResponse — formate La Règle Réflexe avec Vous avez dit pour les fiches erreurs', async () => {
+  const { parseEnglishRestructureResponse } = await import('../lib/englishCardEngine.js');
+  
+  const mistakeCard = {
+    id: 'mistake-1',
+    front: 'a career that combines AI and cybersecurity',
+    back: '🔴 **Tu as dit :** a career that combine with muscles\n✅ En réalité : a career that combines AI and cybersecurity',
+    category: '🇬🇧 Anglais',
+    source: 'user_error',
+  };
+
+  const llmResponse = {
+    front: 'a career that combines AI and cybersecurity',
+    back: '📖 **Vrai sens :** Une carrière qui réunit l\'IA et la cybersécurité.\n\n🧩 **La Règle Réflexe :** En anglais, on utilise "combine" avec un s à la 3e personne.\n\n💬 **Mini-dialogue :**\n* **A :** `He chose a career that combines AI and cybersecurity.`\n  ↳ *Il a choisi une carrière...*\n* **B :** `Smart choice!`\n  ↳ *Choix judicieux !*\n\n⚠️ **Attention au piège :** Ne pas faire de calque.',
+  };
+
+  const parsed = parseEnglishRestructureResponse(llmResponse, mistakeCard);
+  assert.ok(parsed);
+  assert.equal(parsed.back.includes('Vous avez dit : « a career that combine with muscles »'), true);
+});

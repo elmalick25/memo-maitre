@@ -32,8 +32,8 @@ const mkCards = (n, opts = {}) =>
 test('couche9 : le restant du jour décroît fiche par fiche (bug "toujours 35")', () => {
   const due = mkCards(200);
   let { plan, remainingCount, target } = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
-  assert.equal(target, 35, 'grosse pile ⇒ plafond 35');
-  assert.equal(remainingCount, 35);
+  assert.equal(target, 45, 'grosse pile ⇒ plafond 45');
+  assert.equal(remainingCount, 45);
 
   // On révise 20 fiches ; elles sortent de la pile due (nextReview futur).
   const doneIds = plan.ids.slice(0, 20);
@@ -42,8 +42,8 @@ test('couche9 : le restant du jour décroît fiche par fiche (bug "toujours 35")
 
   const after = buildDailyPlan({ plan, dueCards: stillDue, todayISO: TODAY });
   assert.equal(after.doneCount, 20);
-  assert.equal(after.remainingCount, 15, 'on doit voir 15, pas 35');
-  assert.equal(after.plannedCount, 35, 'le quota du jour reste 35, il ne se recharge pas');
+  assert.equal(after.remainingCount, 25, 'on doit voir 25, pas 45');
+  assert.equal(after.plannedCount, 45, 'le quota du jour reste 45, il ne se recharge pas');
 });
 
 test('couche9 : une seule fiche révisée ⇒ 35 devient 34', () => {
@@ -67,10 +67,10 @@ test('couche9 : les mêmes fiches sont servies à chaque entrée dans la journé
 test('couche9 : le plafond ne remonte pas quand la pile fond', () => {
   const due = mkCards(200);
   const a = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
-  // Pile tombée sous le palier (< 50) : le plafond du jour reste scellé à 35.
+  // Pile tombée sous le palier (< 50) : le plafond du jour reste scellé à 45.
   const b = buildDailyPlan({ plan: a.plan, dueCards: due.slice(0, 40), todayISO: TODAY });
-  assert.equal(b.target, 35);
-  assert.ok(b.plannedCount <= 35);
+  assert.equal(b.target, 45);
+  assert.ok(b.plannedCount <= 45);
 });
 
 // ── 3. Nouveau jour ⇒ nouveau quota ────────────────────────────────────────
@@ -80,7 +80,7 @@ test('couche9 : changement de date ⇒ plan remis à zéro', () => {
   const plan = markCardDone(a.plan, a.plan.ids[0], YESTERDAY);
   const b = buildDailyPlan({ plan, dueCards: due, todayISO: TODAY });
   assert.equal(b.doneCount, 0);
-  assert.equal(b.remainingCount, 35);
+  assert.equal(b.remainingCount, 45);
   assert.equal(b.plan.date, TODAY);
 });
 
@@ -107,7 +107,7 @@ test('couche9 : une fiche ratée (Again) reste due mais ne regonfle pas le resta
   const plan = markCardDone(a.plan, again, TODAY);
   // La fiche est rééchelonnée à aujourd'hui ⇒ elle est TOUJOURS dans dueCards.
   const b = buildDailyPlan({ plan, dueCards: due, todayISO: TODAY });
-  assert.equal(b.remainingCount, 34);
+  assert.equal(b.remainingCount, 44);
   assert.ok(!b.remaining.some((c) => c.id === again), 'déjà traitée aujourd\'hui');
 });
 
@@ -118,9 +118,9 @@ test('couche9 : une révision bonus hors plan ne fait jamais remonter le restant
   const outsider = due.find((c) => !a.plan.ids.includes(c.id));
   const plan = markCardDone(a.plan, outsider.id, TODAY);
   const b = buildDailyPlan({ plan, dueCards: due.filter((c) => c.id !== outsider.id), todayISO: TODAY });
-  assert.equal(b.remainingCount, 35);
+  assert.equal(b.remainingCount, 45);
   assert.equal(b.doneCount, 1);
-  assert.equal(b.plannedCount, 36);
+  assert.equal(b.plannedCount, 46);
 });
 
 // ── 7. Cohérence par module (bug de la constellation) ──────────────────────
@@ -134,10 +134,10 @@ test('couche9 : la somme des modules est exactement le restant du jour', () => {
   const byCat = remainingByCategory(r.remaining);
   const sum = [...byCat.values()].reduce((s, n) => s + n, 0);
   assert.equal(sum, r.remainingCount);
-  assert.equal(sum, 35, 'aucun module ne peut afficher plus que sa part des 35');
+  assert.equal(sum, 45, 'aucun module ne peut afficher plus que sa part des 45');
   for (const [cat, n] of byCat) {
     assert.equal(n, remainingForCategory(r.remaining, cat));
-    assert.ok(n <= 35);
+    assert.ok(n <= 45);
   }
 });
 
@@ -156,7 +156,7 @@ test('couche9 : fiches supprimées entre deux rendus ⇒ retirées du restant', 
   const a = buildDailyPlan({ plan: null, dueCards: due, todayISO: TODAY });
   const deleted = new Set(a.plan.ids.slice(0, 5));
   const b = buildDailyPlan({ plan: a.plan, dueCards: due.filter((c) => !deleted.has(c.id)), todayISO: TODAY });
-  assert.equal(b.remainingCount, 30, 'plan scellé : aucune fiche injectée en cours de journée');
+  assert.equal(b.remainingCount, 40, 'plan scellé : aucune fiche injectée en cours de journée');
   assert.ok(b.plan.ids.every((id) => !deleted.has(id)));
 });
 
@@ -192,7 +192,7 @@ test('couche9 : un plan scellé sans plafond est re-plafonné quand la pile gros
   // Plus tard : 244 fiches dues (import, déverrouillages, échéances).
   const big = mkCards(244);
   const b = buildDailyPlan({ plan: a.plan, dueCards: big, todayISO: TODAY });
-  assert.equal(b.target, 35);
+  assert.equal(b.target, 45);
   assert.equal(b.remainingCount, 20, 'plan scellé : ni 244, ni fiches injectées');
   assert.equal(b.plan.ids.length, 20);
 });
@@ -201,9 +201,9 @@ test('couche9 : un plan déjà corrompu en storage (244 ids) est réparé au cha
   const due = mkCards(244);
   const corrupted = { date: TODAY, target: null, sealed: true, ids: due.map((c) => c.id), doneIds: [] };
   const r = buildDailyPlan({ plan: corrupted, dueCards: due, todayISO: TODAY });
-  assert.equal(r.remainingCount, 35);
+  assert.equal(r.remainingCount, 45);
   const sum = [...remainingByCategory(r.remaining).values()].reduce((a, b) => a + b, 0);
-  assert.equal(sum, 35, 'somme des modules === restant du jour');
+  assert.equal(sum, 45, 'somme des modules === restant du jour');
 });
 
 test('couche9 : le plafond re-borné ne supprime jamais le travail déjà fait', () => {
@@ -227,5 +227,5 @@ test('bugfix : réviser un module puis sortir n\'injecte jamais de nouvelles fic
   const done = new Set(plan.doneIds);
   r = buildDailyPlan({ plan, dueCards: due.filter((c) => !done.has(c.id) && !gone.has(c.id)), todayISO: TODAY });
   assert.ok(r.plan.ids.every((id) => planIds.has(id)), 'aucune fiche hors plan');
-  assert.equal(r.remainingCount, 20);
+  assert.equal(r.remainingCount, 30);
 });

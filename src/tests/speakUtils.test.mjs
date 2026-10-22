@@ -30,6 +30,9 @@ test('extractEnglishSpeechText — Isole la réplique anglaise dans un dialogue 
   const lineA = '* **A :** `Can we play football today?` ↳ *Pouvons-nous jouer au foot ?*';
   assert.equal(extractEnglishSpeechText(lineA), 'Can we play football today?');
 
+  const lineWithSemicolon = "* **A :** `I'm excited about this new job; it will open more doors for me.` ↳ *Je suis excité...*";
+  assert.equal(extractEnglishSpeechText(lineWithSemicolon), "I'm excited about this new job; it will open more doors for me.");
+
   const lineB = '* **B :** No, look outside! It\'s raining cats and dogs. ↳ Regarde dehors ! Il pleut des cordes.';
   assert.equal(extractEnglishSpeechText(lineB), "No, look outside! It's raining cats and dogs.");
 });

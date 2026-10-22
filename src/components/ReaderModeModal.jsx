@@ -12,6 +12,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { applyBionicReading, estimateReadingTime } from "../lib/readerUtils.js";
 import { extractReadableFromHtml, extractReadableFromMarkdown } from "../lib/articleExtractor.js";
+import { isNewsSubheading, stripMarkdownAndAsterisks } from "../lib/newsTextPresentation.js";
 
 const THEMES = {
   dark: { id: "dark", name: "🌙 Sombre", bg: "#0F172A", text: "#F1F5F9", muted: "#94A3B8", border: "#334155", card: "#1E293B" },
@@ -54,7 +55,27 @@ export default function ReaderModeModal({
     const paragraphs = cleanBody.split("\n\n").filter(Boolean);
 
     return paragraphs.map((p, idx) => {
-      const formatted = isBionic ? applyBionicReading(p) : p;
+      const cleanP = stripMarkdownAndAsterisks(p);
+      const isHeading = isNewsSubheading(cleanP, idx);
+      if (isHeading && idx > 0) {
+        return (
+          <h3
+            key={idx}
+            style={{
+              marginTop: "1.8em",
+              marginBottom: "0.8em",
+              fontWeight: 700,
+              fontSize: `${Math.round(fontSize * 1.15)}px`,
+              lineHeight: 1.4,
+              color: theme.text,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            {cleanP}
+          </h3>
+        );
+      }
+      const formatted = isBionic ? applyBionicReading(cleanP) : cleanP;
       return (
         <p
           key={idx}
@@ -65,11 +86,11 @@ export default function ReaderModeModal({
           }}
           dangerouslySetInnerHTML={isBionic ? { __html: formatted } : undefined}
         >
-          {!isBionic ? p : undefined}
+          {!isBionic ? cleanP : undefined}
         </p>
       );
     });
-  }, [cleanBody, isBionic, fontSize]);
+  }, [cleanBody, isBionic, fontSize, theme]);
 
   // Suivi de la barre de progression de lecture
   const handleScroll = (e) => {

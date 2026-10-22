@@ -287,13 +287,25 @@ function App() {
       if (uid && isAuthorizedUser(auth?.currentUser)) ensureRealtimeExpressions(uid)
     }
 
+    const deferIdle = (fn) => {
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        window.requestIdleCallback(() => { if (!cancelled) fn() }, { timeout: 1500 })
+      } else {
+        setTimeout(() => { if (!cancelled) fn() }, 60)
+      }
+    }
+
     const handleSync = () => forceSync('storage-update')
     window.addEventListener('firebase_sync_updated', handleSync)
 
-    const doSync = () => { reviveRealtime(); forceSync('auto') }
-    const onVis = () => { if (document.visibilityState === 'visible') { reviveRealtime(); forceSync('visible') } }
-    const onFocus = () => { reviveRealtime(); forceSync('focus') }
-    const onPageShow = () => { reviveRealtime(); forceSync('pageshow') }
+    const doSync = () => deferIdle(() => { reviveRealtime(); forceSync('auto') })
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        deferIdle(() => { reviveRealtime(); forceSync('visible') })
+      }
+    }
+    const onFocus = () => deferIdle(() => { reviveRealtime(); forceSync('focus') })
+    const onPageShow = () => deferIdle(() => { reviveRealtime(); forceSync('pageshow') })
     // NB : on retire volontairement le sync sur `pagehide` — il doublait chaque
     //      cycle focus/blur et n'apportait aucune donnée fraîche.
 

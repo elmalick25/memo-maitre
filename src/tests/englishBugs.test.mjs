@@ -6,12 +6,13 @@ import path from 'node:path';
 const epPath = path.resolve('src/EnglishPractice.jsx');
 const eitwPath = path.resolve('src/EnglishInTheWild.jsx');
 
-test('EnglishInTheWild — No undefined function or ref references in shadowing', () => {
+test('EnglishInTheWild — Shadowing dead code is completely purged and no undefined references', () => {
   const code = fs.readFileSync(eitwPath, 'utf8');
   assert.strictEqual(code.includes('speakWithElevenLabs'), false, 'speakWithElevenLabs should not be referenced without import');
   assert.strictEqual(code.includes('speakWithBrowserTTS'), false, 'speakWithBrowserTTS should not be referenced without import');
-  assert.strictEqual(code.includes('setShadowingRecording('), false, 'setShadowingRecording should be setShadowingPhase');
-  assert.ok(code.includes('shadowTimerRef'), 'shadowTimerRef should be defined via useRef');
+  assert.strictEqual(code.includes('shadowTimerRef'), false, 'shadowTimerRef should be purged');
+  assert.strictEqual(code.includes('id: "shadowing"'), false, 'shadowing tab should be purged');
+  assert.strictEqual(code.includes('analyzeShadowingText'), false, 'analyzeShadowingText should be purged');
 });
 
 test('EnglishPractice — No undefined practiceDictationUserInput reference', () => {

@@ -25,7 +25,7 @@ const env = (k) => resolveKey(k);
 
 const KEYS = {
   cerebras:  [env("VITE_CEREBRAS_API_KEY"), env("VITE_CEREBRAS_API_KEY_1"), env("VITE_CEREBRAS_API_KEY_2"), env("VITE_CEREBRAS_API_KEY_3"), env("VITE_CEREBRAS_API_KEY_4"), env("VITE_CEREBRAS_API_KEY_5"), env("VITE_CEREBRAS_API_KEY_6"), env("VITE_CEREBRAS_API_KEY_7"), env("VITE_CEREBRAS_API_KEY_8")],
-  groq:      [env("VITE_GROQ_API_KEY"), env("VITE_GROQ_API_KEY_5"), env("VITE_GROQ_API_KEY_6"), env("VITE_GROQ_API_KEY_7"), env("VITE_GROQ_API_KEY_2")],
+  groq:      [env("VITE_GROQ_API_KEY"), env("VITE_GROQ_API_KEY_1"), env("VITE_GROQ_API_KEY_2"), env("VITE_GROQ_API_KEY_3"), env("VITE_GROQ_API_KEY_4"), env("VITE_GROQ_API_KEY_5"), env("VITE_GROQ_API_KEY_6"), env("VITE_GROQ_API_KEY_7"), env("VITE_GROQ_API_KEY_8"), env("VITE_GROQ_API_KEY_9")],
   mistral:   [env("VITE_MISTRAL_API_KEY_1"), env("VITE_MISTRAL_API_KEY_2"), env("VITE_MISTRAL_API_KEY_3"), env("VITE_MISTRAL_API_KEY_4"), env("VITE_MISTRAL_API_KEY_5"), env("VITE_MISTRAL_API_KEY_6"), env("VITE_MISTRAL_API_KEY_7")],
   or:        [env("VITE_OPENROUTER_API_KEY"), env("VITE_OPENROUTER_API_KEY_1"), env("VITE_OPENROUTER_API_KEY_2"), env("VITE_OPENROUTER_API_KEY_3"), env("VITE_OPENROUTER_API_KEY_4"), env("VITE_OPENROUTER_API_KEY_5"), env("VITE_OPENROUTER_API_KEY_6"), env("VITE_OPENROUTER_API_KEY_7")],
   fireworks: [env("VITE_FIREWORKS_API_KEY")],
@@ -52,21 +52,74 @@ function markKeyCooldown(provider, key, ms = 20_000) {
   _keyCooldowns.set(keyId(provider, key), Date.now() + ms);
 }
 
+function markProviderCooldown(provider, ms = 3600_000) {
+  const k = KEYS[provider] || [];
+  for (const key of k) {
+    if (key) markKeyCooldown(provider, key, ms);
+  }
+}
+
+let _proxyGlobalCooldownUntil = 0;
+function isProxyGlobalCoolingDown() {
+  return Date.now() < _proxyGlobalCooldownUntil;
+}
+function markProxyGlobalCooldown(ms = 3600_000) {
+  _proxyGlobalCooldownUntil = Date.now() + ms;
+}
+
+// 🔐 Mode sécurisé : si VITE_AI_PROXY_URL est défini, seuls les fournisseurs SANS clés directes
+// tentent de passer par le Worker Cloudflare. Si des clés directes existent dans le .env,
+// elles ont priorité absolue pour éviter les 404/503 de proxies tiers non configurés.
+const AI_PROXY_URL = (typeof import.meta !== "undefined" && import.meta.env?.VITE_AI_PROXY_URL || "").replace(/\/+$/, "");
+const PROXIED = new Set([
+  "fireworks", "deepseek"
+]);
+const isProxied = (provider) => !!AI_PROXY_URL && !isProxyGlobalCoolingDown() && PROXIED.has(provider) && !(KEYS[provider]?.filter(Boolean)?.length);
+
 function getValidKey(provider, { avoidCooldown = true } = {}) {
   const k = KEYS[provider] || [];
   const valid = k.filter(Boolean);
+  const usable = avoidCooldown ? valid.filter(k2 => !isKeyCoolingDown(provider, k2)) : valid;
+  if (usable.length > 0) {
+    return usable[Math.floor(Math.random() * usable.length)];
+  }
+
+  if (isProxied(provider)) {
+    const proxyCooling = isKeyCoolingDown(provider, "proxy");
+    if (!proxyCooling) return "proxy";
+  }
+
   if (!valid.length && provider === "mistral" && typeof localStorage !== "undefined") {
     return localStorage.getItem("MISTRAL_API_KEY") || "";
   }
-  if (!valid.length) return "";
-
-  const usable = avoidCooldown ? valid.filter(k2 => !isKeyCoolingDown(provider, k2)) : valid;
-  if (!usable.length) return "";
-  return usable[Math.floor(Math.random() * usable.length)];
+  return "";
 }
 
-function filterChain(chain) {
-  return chain.filter(m => getValidKey(m.p));
+export function isProviderAllowedForContext(provider, context) {
+  if (provider === "or") {
+    // OpenRouter est STRICTEMENT réservé à la création de fiches (AddCardView)
+    // et à l'optimisation en révision (bouton Optimiser de ReviewEngineView).
+    return context === "add_card" || context === "review_optimize";
+  }
+  return true;
+}
+
+export function filterChainForContext(chain, context, { checkKeys = true } = {}) {
+  if (!Array.isArray(chain)) return [];
+  const allowed = chain.filter(m =>
+    isProviderAllowedForContext(m.p, context) && (!checkKeys || Boolean(getValidKey(m.p)))
+  );
+  if (context === "add_card" || context === "review_optimize") {
+    // Priorité absolue aux modèles OpenRouter pour ces deux contextes exclusifs
+    const orModels = allowed.filter(m => m.p === "or");
+    const otherModels = allowed.filter(m => m.p !== "or");
+    return [...orModels, ...otherModels];
+  }
+  return allowed;
+}
+
+function filterChain(chain, context) {
+  return filterChainForContext(chain, context);
 }
 
 const URLS = {
@@ -81,7 +134,8 @@ const URLS = {
   deepseek:  "https://api.deepseek.com/chat/completions",
 };
 
-function getProviderUrl(provider) {
+function getProviderUrl(provider, key) {
+  if (isProxied(provider) && key === "proxy") return `${AI_PROXY_URL}/ai/${provider}`;
   if (provider === "cf") {
     const accountId = env("VITE_CLOUDFLARE_ACCOUNT_ID");
     return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
@@ -99,40 +153,56 @@ const MODELS = {
   // ─── Coach conversationnel ultra-rapide (Nova / EnglishPractice) ─────────
   chat: [
     { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 4096 },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
     { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
   ],
   coach: [
     { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 4096 },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
+    { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
   ],
   // ─── 1 fiche flashcard simple ────────────────────────────────────────────
   "fast-json": [
-    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 2048, json: true },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2048, json: true },
-    { p: "mistral",  m: "mistral-small-latest",                         max: 2048, json: true },
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 3500, json: false },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 3500, json: false },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 3500, json: false },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 3500, json: false },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 3500, json: false },
+  ],
+  "single-json": [
+    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 2500, json: true },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 2500, json: true },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 2500, json: true },
+    { p: "mistral",  m: "mistral-small-latest",                         max: 2500, json: true },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2500, json: true },
   ],
   fast: [
     { p: "groq",     m: "openai/gpt-oss-120b",                          max: 2048 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2048 },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 2048 },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 2048 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 2048 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 2048 },
   ],
   // ─── Batch 5-7 fiches : cohérence > vitesse ──────────────────────────────
   "batch-json": [
     { p: "groq",     m: "openai/gpt-oss-120b",                          max: 8192, json: true },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 8192, json: true },
-    { p: "or",       m: "qwen/qwen-2.5-72b-instruct",                   max: 8192, json: true },
+    { p: "groq",     m: "openai/gpt-oss-20b",                           max: 8192, json: true },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 8192, json: true },
     { p: "mistral",  m: "mistral-small-latest",                         max: 8192, json: true },
     { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 8192, json: true },
   ],
   // ─── Vision (Gemini direct dans Lab/geminiClient ; fallbacks ici) ────────
   vision: [
+    { p: "or",      m: "google/gemini-2.5-flash",                       max: 4096, vision: true },
+    { p: "or",      m: "qwen/qwen-2.5-vl-72b-instruct",                 max: 4096, vision: true },
     { p: "mistral", m: "pixtral-12b-2409",                              max: 4096, vision: true },
-    { p: "or",      m: "google/gemini-2.0-flash-exp:free",              max: 4096, vision: true },
-    { p: "or",      m: "meta-llama/llama-3.2-11b-vision-instruct:free", max: 4096, vision: true },
-    { p: "or",      m: "qwen/qwen-2.5-vl-72b-instruct:free",            max: 4096, vision: true },
   ],
   // ─── Créativité / mnémo absurde (FR/EN) ──────────────────────────────────
   creative: [
@@ -141,36 +211,40 @@ const MODELS = {
   ],
   // ─── Correction sémantique vocale (rapide & fin FR/EN) ───────────────────
   "semantic-grade": [
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 1024 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 1024 },
-    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 1024 },
     { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 1024 },
   ],
   // ─── Vocab / définitions lexicales (Cohere Command R+) ───────────────────
   lexical: [
     { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
   ],
   // ─── Résumé articles tech (débit max) ────────────────────────────────────
   "fast-summary": [
-    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 1024 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 1024 },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 1024 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 1024 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 1024 },
   ],
   // ─── Pédagogie / génération d'exercices ──────────────────────────────────
   pedagogy: [
-    { p: "groq",     m: "openai/gpt-oss-120b",                          max: 4096 },
-    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
+    { p: "groq",     m: "qwen/qwen3.8-27b",                             max: 4096 },
     { p: "mistral",  m: "mistral-small-latest",                         max: 4096 },
+    { p: "cohere",   m: "command-r-plus-08-2024",                       max: 4096 },
+    { p: "or",       m: "meta-llama/llama-3.3-70b-instruct",            max: 4096 },
   ],
   // ─── JSON strict ──────────────────────────────────────────────────────────
   "strict-json": [
-    { p: "groq",      m: "openai/gpt-oss-120b",                         max: 4096, json: true },
+    { p: "groq",      m: "qwen/qwen3.8-27b",                            max: 4096, json: true },
+    { p: "mistral",   m: "mistral-small-latest",                        max: 4096, json: true },
     { p: "or",        m: "meta-llama/llama-3.3-70b-instruct",           max: 4096, json: true },
+    { p: "groq",      m: "qwen/qwen3.8-27b",                            max: 4096, json: true },
     { p: "mistral",   m: "mistral-small-latest",                        max: 4096, json: true },
   ],
   json: [
-    { p: "groq",      m: "openai/gpt-oss-120b",                         max: 4096, json: true },
     { p: "or",        m: "meta-llama/llama-3.3-70b-instruct",           max: 4096, json: true },
+    { p: "groq",      m: "qwen/qwen3.8-27b",                            max: 4096, json: true },
     { p: "mistral",   m: "mistral-small-latest",                        max: 4096, json: true },
   ],
   // ─── Raisonnement profond ────────────────────────────────────────────────
@@ -190,7 +264,7 @@ const MODELS = {
 // MIN_GAP_MS, exécutées dans l'ordre d'arrivée. Simple mais suffisant pour
 // éviter les rafales parallèles (ex: génération de fiches en lot) qui
 // grillent les clés d'un provider en quelques centaines de ms.
-const QUEUE_MIN_GAP_MS = 1500;
+const QUEUE_MIN_GAP_MS = 250;
 let _queueTail = Promise.resolve();
 
 function enqueueCall(fn) {
@@ -207,7 +281,7 @@ function enqueueCall(fn) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ── Timeout helper ───────────────────────────────────────────────────────────
-const TIMEOUT_MS_DEFAULT = 30_000;
+const TIMEOUT_MS_DEFAULT = 10_000;
 function withTimeout(signal, ms = TIMEOUT_MS_DEFAULT) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(new Error("TIMEOUT")), ms);
@@ -255,11 +329,11 @@ function extractCohereText(data) {
 }
 
 async function callOne({ provider, model, messages, maxTokens, json, stream, temperature, signal }) {
-  const url = getProviderUrl(provider);
-  if (!url) throw new Error(`Unknown provider: ${provider}`);
-  
   const key = getValidKey(provider);
   if (!key) throw new Error(`Missing key for ${provider}`);
+
+  const url = getProviderUrl(provider, key);
+  if (!url) throw new Error(`Unknown provider: ${provider}`);
   
   const isCohere = provider === "cohere";
 
@@ -271,27 +345,49 @@ async function callOne({ provider, model, messages, maxTokens, json, stream, tem
 
   const headers = { 
     "Content-Type": "application/json",
-    "Authorization": `Bearer ${key}`
+    ...(key === "proxy" ? {} : { "Authorization": `Bearer ${key}` })
   };
   
-  if (provider === "or") {
+  if (provider === "or" && key !== "proxy") {
     headers["HTTP-Referer"] = (typeof window !== "undefined" && window.location?.origin) || "https://memo-maitre.web.app";
     headers["X-Title"] = "MemoMaster";
   }
 
-  const _t = withTimeout(signal);
+  const hasImage = messages?.some?.(m => Array.isArray(m.content) && m.content.some(c => c.type === "image_url"));
+  const effectiveTimeout = hasImage ? 35_000 : TIMEOUT_MS_DEFAULT;
   let res;
   try {
-    res = await enqueueCall(() => fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: _t.signal }));
-  } finally { 
-    _t.clear(); 
+    res = await enqueueCall(async () => {
+      const _t = withTimeout(signal, effectiveTimeout);
+      try {
+        return await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: _t.signal });
+      } finally {
+        _t.clear();
+      }
+    });
+  } catch (err) {
+    if (key === "proxy") {
+      markKeyCooldown(provider, "proxy", 3600_000);
+      markProxyGlobalCooldown(3600_000);
+    }
+    throw err;
   }
   
   if (!res.ok) {
     if (res.status === 429) {
-      markKeyCooldown(provider, key, 60_000); // 60s rate-limit
-    } else if (res.status === 402 || res.status === 401 || res.status === 404 || res.status === 403) {
-      markKeyCooldown(provider, key, 3600_000); // 1h pour crédits épuisés, interdit ou clé/modèle invalide
+      markKeyCooldown(provider, key, 10_000); // 10s rate-limit par clé (rotation fluide sur les autres clés)
+    } else if (res.status === 402) {
+      // 402 Payment Required : compte/wallet du provider épuisé (ex: OpenRouter à 0$).
+      // Quarantaine immédiate de 24h sur TOUTES les clés du provider pour basculer instantanément.
+      markProviderCooldown(provider, 24 * 3600_000);
+      if (key === "proxy") {
+        markProxyGlobalCooldown(3600_000);
+      }
+    } else if (res.status === 401 || res.status === 404 || res.status === 403) {
+      markKeyCooldown(provider, key, 3600_000); // 1h pour clé/modèle invalide ou interdit
+      if (key === "proxy") {
+        markProxyGlobalCooldown(3600_000);
+      }
     }
     const t = await res.text().catch(() => "");
     throw new Error(`HTTP_${res.status}_${provider}_${t.slice(0, 120)}`);
@@ -347,7 +443,7 @@ function setCached(cacheKey, value, ttlMs) {
 
 // ── Public : appel non-streaming ─────────────────────────────────────────────
 export async function aiCall(opts) {
-  const { task = "chat", system, user, messages, imageUrl, maxTokens, json = false, temperature, signal, cache = true } = opts;
+  const { task = "chat", system, user, messages, imageUrl, maxTokens, json = false, temperature, signal, cache = true, context, callerContext = context } = opts;
 
   const useCache = cache && (temperature === undefined || temperature <= 0.5);
   const cacheKey = useCache ? buildCacheKey({ task, system, user, messages, imageUrl, json }) : null;
@@ -356,13 +452,13 @@ export async function aiCall(opts) {
     if (hit) return { text: hit.text, model: hit.model, provider: hit.provider, raw: hit.raw, cached: true };
   }
 
-  const chain = filterChain(MODELS[task] || MODELS.chat);
+  const chain = filterChain(MODELS[task] || MODELS.chat, callerContext);
   if (!chain.length) throw new Error(`NO_KEYS_FOR_TASK_${task}`);
   const msgs = buildMessages({ system, user, messages, imageUrl });
   let lastErr;
   for (const m of chain) {
-    // Sur 429, on retente une fois avec une autre clé du même provider après
-    // un court backoff, avant de passer au provider suivant de la chaîne.
+    // Sur 429 ou incident proxy, on retente une fois avec une clé directe du même
+    // provider avant de passer au provider suivant de la chaîne.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const { res, isCohere } = await callOne({
@@ -374,14 +470,18 @@ export async function aiCall(opts) {
         });
         const data = await res.json();
         const text = isCohere ? extractCohereText(data) : (data?.choices?.[0]?.message?.content ?? "");
+        if (typeof text !== "string" || !text.trim()) {
+          throw new Error(`EMPTY_CONTENT_${m.p}_${m.m}`);
+        }
         const result = { text, model: m.m, provider: m.p, raw: data };
         if (cacheKey) setCached(cacheKey, result, CACHE_DEFAULT_TTL_MS);
         return result;
       } catch (e) {
         lastErr = e;
         const is429 = /HTTP_429/.test(e?.message || "");
-        if (is429 && attempt === 0 && getValidKey(m.p)) {
-          await sleep(2000); // backoff avant de retenter sur une autre clé du même provider
+        const isProxyFail = /HTTP_(?:401|403|500|502|503|504)/.test(e?.message || "") || isKeyCoolingDown(m.p, "proxy");
+        if ((is429 || isProxyFail) && attempt === 0 && getValidKey(m.p)) {
+          if (is429) await sleep(1500); // backoff avant de retenter sur une autre clé
           continue;
         }
         break;
@@ -393,40 +493,51 @@ export async function aiCall(opts) {
 
 // ── Public : streaming token-par-token (skip cohere car format différent) ────
 export async function* aiStream(opts) {
-  const { task = "chat", system, user, messages, imageUrl, maxTokens, signal } = opts;
-  const chain = filterChain((MODELS[task] || MODELS.chat).filter(m => m.p !== "cohere"));
+  const { task = "chat", system, user, messages, imageUrl, maxTokens, signal, context, callerContext = context } = opts;
+  const chain = filterChain((MODELS[task] || MODELS.chat).filter(m => m.p !== "cohere"), callerContext);
   if (!chain.length) throw new Error(`NO_KEYS_FOR_TASK_${task}`);
   const msgs = buildMessages({ system, user, messages, imageUrl });
   let lastErr;
   for (const m of chain) {
-    try {
-      const { res } = await callOne({
-        provider: m.p, model: m.m, messages: msgs,
-        maxTokens: maxTokens || m.max, stream: true, signal,
-      });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          let line = buf.slice(0, nl).replace(/\r$/, "");
-          buf = buf.slice(nl + 1);
-          if (!line.startsWith("data: ")) continue;
-          const data = line.slice(6).trim();
-          if (data === "[DONE]") return;
-          try {
-            const j = JSON.parse(data);
-            const tok = j?.choices?.[0]?.delta?.content;
-            if (tok) yield tok;
-          } catch { /* partial */ }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const { res } = await callOne({
+          provider: m.p, model: m.m, messages: msgs,
+          maxTokens: maxTokens || m.max, stream: true, signal,
+        });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let nl;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            let line = buf.slice(0, nl).replace(/\r$/, "");
+            buf = buf.slice(nl + 1);
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") return;
+            try {
+              const j = JSON.parse(data);
+              const tok = j?.choices?.[0]?.delta?.content;
+              if (tok) yield tok;
+            } catch { /* partial */ }
+          }
         }
+        return;
+      } catch (e) {
+        lastErr = e;
+        const is429 = /HTTP_429/.test(e?.message || "");
+        const isProxyFail = /HTTP_(?:401|403|500|502|503|504)/.test(e?.message || "") || isKeyCoolingDown(m.p, "proxy");
+        if ((is429 || isProxyFail) && attempt === 0 && getValidKey(m.p)) {
+          if (is429) await sleep(1500);
+          continue;
+        }
+        break;
       }
-      return;
-    } catch (e) { lastErr = e; }
+    }
   }
   throw new Error(`All stream providers failed for task '${task}': ${lastErr?.message || "unknown"}`);
 }

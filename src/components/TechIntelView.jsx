@@ -1,3 +1,8 @@
+import { stripJsonWrapper } from "../lib/cardOptimizer.js";
+import { MUST_NOT_MISS_FEEDS, loadWatchKeywords, saveWatchKeywords, mustNotMissBoost, isMajorEvent } from "../lib/mustNotMiss";
+import { publishNewsToCloud, loadNewsFromCloud } from "../lib/cloudNewsSync";
+import MustNotMissBanner from "./techIntel/MustNotMissBanner";
+import WatchKeywordsModal from "./techIntel/WatchKeywordsModal";
 import { resolveKey } from "../lib/security/apiKeys.js";
 // ⚡ TechIntelView.jsx — Agrégateur d'actualités tech — Version Magazine Premium
 // Design: French-first, hero card, glassmorphism, animations fluides.
@@ -5,17 +10,26 @@ import { resolveKey } from "../lib/security/apiKeys.js";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { safeStorage } from '../lib/safeStorage';
-import { saveArticleList, loadArticleList, loadArticleListMeta, saveArticleBodies, loadArticleBodies } from "../lib/offlineArticles";
+import { saveArticleList, loadArticleList, loadArticleListMeta, saveArticleBodies, loadArticleBodies, saveAiSummariesMap, loadAiSummariesMap } from "../lib/offlineArticles";
 import { isGeminiLikelyUnavailable } from "../lib/geminiClient";
-import { isBoilerplateOrConsentText, sanitizeArticleText, fetchReadableArticle, filterRelevantParagraphs, scoreTopicalRelevance, extractUniversalArticleParagraphs } from "../lib/articleExtractor";
+import { sortNews, isVisibleByAge, dedupeWithCoverage, recordTaste, emptyTaste, mustNotMiss, isSavedStillValid } from "../lib/newsRanking";
+import { AI_SCORE_KEY, pickUnscored, scoreBatchWithAi } from "../lib/newsAiScore";
+import { aiCall } from "../lib/aiRouter.js";
+import { isBoilerplateOrConsentText, sanitizeArticleText, fetchReadableArticle, filterRelevantParagraphs, scoreTopicalRelevance, extractUniversalArticleParagraphs, extractReadableFromHtml } from "../lib/articleExtractor";
 import ScholarshipHubView from "./ScholarshipHubView";
 import ReaderModeModal from "./ReaderModeModal";
 import CustomFeedManagerModal from "./CustomFeedManagerModal";
 import { colorMix } from "../lib/colorMix";
-import { translateToFrench } from "../lib/frenchNews";
+import { translateToFrench, looksFrench, guaranteeFrench } from "../lib/frenchNews";
+import { loadRankSnapshot, saveRankSnapshot } from "../lib/newsRankSnapshot.js";
 import { THEME_FILTERS, getArticleTheme } from "../lib/techIntelThemes";
-import { normalizeNewsPreview, isNewsSubheading, stripMarkdownAndAsterisks } from "../lib/newsTextPresentation.js";
+import "../styles/news-readability.css";
+import { findRelatedCoverage, coverageScore } from "../lib/newsCoverage.js";
+import { normalizeNewsPreview, isNewsSubheading, stripMarkdownAndAsterisks, formatCompleteSubtext, decodeAllHtmlEntities, sanitizeNewsTitle, stripBreadcrumbsAndHeaderJunk } from "../lib/newsTextPresentation.js";
 import { getNetworkStatus, onNetworkChange, shouldReduceData } from "../lib/networkStatus";
+import { fetchRssWithFailover } from "../lib/proxyPool.js";
+import { stabilizeNewsTimestamps, loadFirstSeen, saveFirstSeen } from "../lib/newsFirstSeen.js";
+import { pickUnbriefed, generateBatchExecutiveBriefs, generateSingleExecutiveBrief } from "../lib/newsExecutiveBrief.js";
 
 // Garde au plus N entrées (les plus récentes) pour ne jamais saturer le stockage local
 // — un quota plein faisait échouer silencieusement la sauvegarde hors-ligne.
@@ -35,6 +49,7 @@ const DIGEST_KEY_PREFIX = "tech_intel_digest_v2_";
 
 // CACHE EN MÉMOIRE POUR ZÉRO-LATENCE (ANTI-FLICKER)
 let memoryCache_techIntel = null;
+let _newsReadySupported = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("mm_news_ready_supported") !== "false" : true;
 
 // ─── CORS / Proxy ────────────────────────────────────────────────────────────
 const IS_DEV = typeof import.meta !== "undefined" && import.meta.env?.DEV;
@@ -46,10 +61,16 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
   const ctrl = new AbortController();
   const external = options.signal;
   if (external) {
-    if (external.aborted) ctrl.abort();
-    else external.addEventListener("abort", () => ctrl.abort(), { once: true });
+    if (external.aborted) ctrl.abort(external.reason);
+    else external.addEventListener("abort", () => ctrl.abort(external.reason), { once: true });
   }
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  const t = setTimeout(() => {
+    try {
+      ctrl.abort(new DOMException("Timeout", "TimeoutError"));
+    } catch {
+      ctrl.abort();
+    }
+  }, timeoutMs);
   try {
     return await fetch(url, { ...options, signal: ctrl.signal });
   } finally {
@@ -99,105 +120,16 @@ async function fetchViaProxy(url) {
   const memo = _proxyMemo.get(url);
   if (memo && (Date.now() - memo.ts) < PROXY_MEMO_TTL_MS) return memo.promise;
 
-  const customProxy = (typeof import.meta !== "undefined" && import.meta.env?.VITE_PROXY_URL) || "";
-  const proxies = [
-    // 0. Cloudflare Worker personnalisé (si configuré en production ou dev)
-    ...(customProxy ? [{
-      name: "CloudflareWorkerProxy",
-      build: (u) => `${customProxy.replace(/\/+$/, "")}?url=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text(),
-      timeoutMs: 5000
-    }] : []),
-    // 1. Proxy local Vite (uniquement en DEV)
-    ...(import.meta.env.DEV ? [{
-      name: "LocalViteProxy",
-      build: (u) => `/api/rss-proxy?url=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text(),
-      timeoutMs: 12000
-    }] : []),
-    // 4. rss2json en dernier recours
-    {
-      name: "rss2json",
-      build: (u) => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
-      parse: async (r) => {
-        const j = await r.json();
-        if (j.status !== "ok") throw new Error("rss2json error");
-        const isYT = j.feed?.url?.includes("youtube.com");
-        const itemTag = isYT ? "entry" : "item";
-        const itemsXml = (j.items || []).map(it => `
-          <${itemTag}>
-            <title><![CDATA[${it.title || ""}]]></title>
-            <link href="${it.link || ""}"><![CDATA[${it.link || ""}]]></link>
-            <description><![CDATA[${it.description || it.content || ""}]]></description>
-            <pubDate>${it.pubDate || ""}</pubDate>
-            <published>${it.pubDate || ""}</published>
-          </${itemTag}>
-        `).join("");
-        return `<rss><channel>${itemsXml}</channel></rss>`;
-      },
-      timeoutMs: 6000
-    },
-    // 2. AllOrigins JSON (mode encapsulé, fiable pour les flux RSS distants)
-    {
-      name: "AllOriginsJson",
-      build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-      parse: async (r) => {
-        const j = await r.json();
-        return j?.contents || "";
-      },
-      timeoutMs: 8000
-    },
-    // 3. AllOrigins Raw
-    {
-      name: "AllOriginsRaw",
-      build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text(),
-      timeoutMs: 8000
-    },
-    // 5. CodeTabs (ultime fallback)
-    {
-      name: "CodeTabs",
-      build: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
-      parse: async (r) => r.text(),
-      timeoutMs: 5000
-    }
-  ];
-
-  // Course PARALLÈLE : le premier proxy valide gagne, les autres sont annulés.
-  // (L'ancien mode séquentiel restait bloqué ~16 s sur AllOrigins, HS/CORS,
-  //  et dépassait le budget de 9,5 s par source → "Feed timeout".)
-  const executeSequential = async () => {
-    const usable = proxies.filter(p => !isProxyCoolingDown(p.name));
-    const pool = usable.length > 0 ? usable : proxies;
-    const raceCtrl = new AbortController();
-    const attempts = pool.map(async (p) => {
-      const res = await fetchWithTimeout(
-        p.build(url),
-        { headers: { Accept: "text/xml, application/xml, application/json, */*" }, signal: raceCtrl.signal },
-        p.timeoutMs || 4500
-      );
-      if (!res.ok) {
-        if (res.status === 429 || res.status === 503) markProxyCooldown(p.name, 25_000);
-        throw new Error(`${p.name} HTTP ${res.status}`);
-      }
-      const text = await p.parse(res);
-      if (text && text.length > 20 && /<(rss|feed|channel|item|entry)\b/i.test(text)) return text;
-      throw new Error(`${p.name} invalid payload`);
-    });
-    try {
-      const text = await Promise.any(attempts);
-      raceCtrl.abort();
+  const fetchPromise = (async () => {
+    const text = await fetchRssWithFailover(url, 7000);
+    if (text && text.length > 20 && /<(rss|feed|channel|item|entry)\b/i.test(text)) {
       return text;
-    } catch (agg) {
-      _proxyMemo.delete(url);
-      const msg = agg?.errors?.map(e => e?.message).filter(Boolean).join(" | ") || "timeout";
-      throw new Error(`All proxies failed: ${msg}`);
     }
-  };
+    throw new Error(`Proxy fallback exhausted for ${url}`);
+  })();
 
-  const promise = executeSequential();
-  _proxyMemo.set(url, { ts: Date.now(), promise });
-  return promise;
+  _proxyMemo.set(url, { ts: Date.now(), promise: fetchPromise });
+  return fetchPromise;
 }
 
 
@@ -217,11 +149,33 @@ const WEIGHTS = {
   "inflation": 4, "banque centrale": 4, "BCE": 4, "Fed": 4, "récession": 4,
   "climat": 4, "COP": 4, "accord historique": 5, "crise": 4, "sanctions": 4,
   "prix Nobel": 5, "découverte": 4, "santé mondiale": 4, "OMS": 4,
-  "international": 3, "mondial": 3, "géopolitique": 4, "gouvernement": 3, "ministre": 2,
+  // 🚫 Pénalité anti-spam commercial
+  "bon plan": -8, "aspirateur": -8, "code promo": -8, "réduction": -4, "meilleur prix": -4,
 };
+
+const ELITE_TECH_SOURCES = new Set([
+  "OpenAI Blog", "DeepMind", "Hacker News", "HN", "TechCrunch", "The Verge",
+  "Ars Technica", "MIT Tech Review", "GitHub Blog", "Hugging Face"
+]);
 
 // ─── Sources ─────────────────────────────────────────────────────────────────
 const SOURCE_META = {
+  France24: { color: "#F59E0B", emoji: "🌍" },
+  LeMondeWorld: { color: "#F59E0B", emoji: "🌍" },
+  RFI: { color: "#F59E0B", emoji: "🌍" },
+  FranceInfo: { color: "#F59E0B", emoji: "🌍" },
+  BBCWorld: { color: "#F59E0B", emoji: "🌍" },
+  AlJazeera: { color: "#F59E0B", emoji: "🌍" },
+  GuardianWorld: { color: "#F59E0B", emoji: "🌍" },
+  NYTWorld: { color: "#F59E0B", emoji: "🌍" },
+  NPRWorld: { color: "#F59E0B", emoji: "🌍" },
+  DWWorld: { color: "#F59E0B", emoji: "🌍" },
+  DarkReading: { color: "#EF4444", emoji: "🛡️" },
+  CISA: { color: "#EF4444", emoji: "🛡️" },
+  CERTFR: { color: "#EF4444", emoji: "🛡️" },
+  SecurityWeek: { color: "#EF4444", emoji: "🛡️" },
+  Anthropic: { color: "#8B5CF6", emoji: "🤖" },
+  TheDecoder: { color: "#8B5CF6", emoji: "🤖" },
   Numerama:       { color: "#E63946", emoji: "🔴" },
   JournalDuGeek:  { color: "#2196F3", emoji: "🎮" },
   Clubic:         { color: "#FF6B35", emoji: "🖥️" },
@@ -229,6 +183,7 @@ const SOURCE_META = {
   NextINpact:     { color: "#9C27B0", emoji: "📡" },
   Developpez:     { color: "#00BCD4", emoji: "💻" },
   LinuxFr:        { color: "#FFC107", emoji: "🐧" },
+  Korben:         { color: "#FF6B00", emoji: "⚡" },
   ZestDeSavoir:   { color: "#FF5722", emoji: "🧠" },
   HN:             { color: "#FF6600", emoji: "🟠" },
   Reddit:         { color: "#FF4500", emoji: "👾" },
@@ -246,6 +201,8 @@ const SOURCE_META = {
 };
 
 const RSS_FEEDS = [
+  // 🛰️ Sources incontournables : toujours actives (ne rien rater des grosses actus mondiales)
+  ...MUST_NOT_MISS_FEEDS,
   // 🇫🇷 Sources Tech Francophones — prioritaires
   { name: "Numerama",        source: "Numerama",       url: "https://www.numerama.com/feed/",                          lang: "fr", priority: 1 },
   { name: "Journal du Geek", source: "JournalDuGeek",  url: "https://www.journaldugeek.com/feed/",                    lang: "fr", priority: 1 },
@@ -281,7 +238,7 @@ const RSS_FEEDS = [
   { name: "Siècle Digital",  source: "Numerama",       url: "https://siecledigital.fr/feed/",                          lang: "fr", priority: 1 },
   { name: "Le Monde Informatique", source: "NextINpact", url: "https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml", lang: "fr", priority: 1 },
   { name: "ZDNet FR",        source: "NextINpact",     url: "https://www.zdnet.fr/feeds/rss/actualites/",              lang: "fr", priority: 1 },
-  { name: "Korben",          source: "LinuxFr",        url: "https://korben.info/feed",                                lang: "fr", priority: 2 },
+  { name: "Korben",          source: "Korben",         url: "https://korben.info/feed",                                lang: "fr", priority: 2 },
   { name: "Presse-citron",   source: "JournalDuGeek",  url: "https://www.presse-citron.net/feed/",                     lang: "fr", priority: 2 },
   { name: "BFM Tech",        source: "Clubic",         url: "https://www.bfmtv.com/rss/tech/",                         lang: "fr", priority: 1 },
   { name: "Bleeping Computer", source: "ArsTechnica",  url: "https://www.bleepingcomputer.com/feed/",                   lang: "en", priority: 1 },
@@ -295,6 +252,25 @@ const RSS_FEEDS = [
   { name: "9to5Mac",         source: "Verge",          url: "https://9to5mac.com/feed/",                               lang: "en", priority: 2 },
   { name: "9to5Google",      source: "Verge",          url: "https://9to5google.com/feed/",                            lang: "en", priority: 2 },
   { name: "ZDNet",           source: "TechCrunch",     url: "https://www.zdnet.com/news/rss.xml",                      lang: "en", priority: 2 },
+  // 🌍 Grands fils d'actualité mondiale (géopolitique, économie, crises)
+  { name: "France 24", source: "France24", url: "https://www.france24.com/fr/rss", lang: "fr", priority: 1 },
+  { name: "Le Monde International", source: "LeMondeWorld", url: "https://www.lemonde.fr/international/rss_full.xml", lang: "fr", priority: 1 },
+  { name: "RFI Monde", source: "RFI", url: "https://www.rfi.fr/fr/monde/rss", lang: "fr", priority: 1 },
+  { name: "France Info Monde", source: "FranceInfo", url: "https://www.francetvinfo.fr/monde.rss", lang: "fr", priority: 1 },
+  { name: "BBC World", source: "BBCWorld", url: "https://feeds.bbci.co.uk/news/world/rss.xml", lang: "en", priority: 1 },
+  { name: "Al Jazeera", source: "AlJazeera", url: "https://www.aljazeera.com/xml/rss/all.xml", lang: "en", priority: 1 },
+  { name: "The Guardian World", source: "GuardianWorld", url: "https://www.theguardian.com/world/rss", lang: "en", priority: 1 },
+  { name: "NYT World", source: "NYTWorld", url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", lang: "en", priority: 1 },
+  { name: "NPR World", source: "NPRWorld", url: "https://feeds.npr.org/1004/rss.xml", lang: "en", priority: 1 },
+  { name: "DW World", source: "DWWorld", url: "https://rss.dw.com/rdf/rss-en-world", lang: "en", priority: 1 },
+  // 🛡️ Alertes cyber officielles
+  { name: "Dark Reading", source: "DarkReading", url: "https://www.darkreading.com/rss.xml", lang: "en", priority: 1 },
+  { name: "CISA Alerts", source: "CISA", url: "https://www.cisa.gov/cybersecurity-advisories/all.xml", lang: "en", priority: 1 },
+  { name: "CERT-FR", source: "CERTFR", url: "https://www.cert.ssi.gouv.fr/feed/", lang: "fr", priority: 1 },
+  { name: "SecurityWeek", source: "SecurityWeek", url: "https://www.securityweek.com/feed/", lang: "en", priority: 1 },
+  // 🤖 Labos IA
+  { name: "Anthropic News", source: "Anthropic", url: "https://www.anthropic.com/news/rss.xml", lang: "en", priority: 1 },
+  { name: "The Decoder", source: "TheDecoder", url: "https://the-decoder.com/feed/", lang: "en", priority: 1 },
 ];
 
 const YOUTUBE_CHANNELS = [
@@ -306,12 +282,12 @@ const YOUTUBE_CHANNELS = [
 ];
 
 const TABS = [
-  { id: "fr",           label: "📰 Actus Tech",         desc: "Toute l'actu tech des dernières 72h, en français" },
+  { id: "fr",           label: "📰 Actus Tech",         desc: "Toute l'actu tech des dernières 24h, en français" },
   { id: "saved",        label: "🔖 Favoris",           desc: "Vos articles enregistrés pour lecture ultérieure" },
   { id: "digest",       label: "⚡ Briefing IA",        desc: "Revue de presse quotidienne et synthèse d'actualité par l'IA" },
   { id: "scholarships", label: "🎓 Bourses Master",     desc: "Opportunités mondiales vérifiées (Eiffel, Erasmus, DAAD...)" },
 ];
-const NEWS_MAX_AGE_MS = 72 * 60 * 60 * 1000; // 72 heures : couvre le week-end et les flux espacés
+const NEWS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const PAGE_SIZE = 100;
 
 const FILTERS = {
@@ -427,27 +403,8 @@ function cleanJinaText(text) {
 }
 
 // ─── Nettoyage sémantique des miettes de pain (breadcrumbs RSS parasites) ────
-function stripBreadcrumbsAndHeaderJunk(text) {
-  if (!text || typeof text !== "string") return "";
-  const lines = text.split(/\r?\n/);
-  let startIdx = 0;
-  const navKeywords = /^(accueil|home|actualit[ée]s?|news|high-tech|tech|informatique|logiciels?(\s*&\s*services)?|intelligence artificielle|ia|smartphones?|s[ée]curit[ée]|jeux vid[ée]o|web|hardware|tests?|tutoriels?|guides?|dossiers?|rubrique|cat[ée]gorie)\b/i;
+// stripBreadcrumbsAndHeaderJunk est désormais importé depuis newsTextPresentation.js
 
-  for (let i = 0; i < Math.min(lines.length, 6); i++) {
-    const l = lines[i].trim();
-    if (!l) {
-      startIdx = i + 1;
-      continue;
-    }
-    // Ligne courte avec mots-clés de navigation ou contenant des chevrons de fil d'Ariane
-    if (l.length < 55 && (navKeywords.test(l) || l.includes('>') || l.includes('»') || l.includes('›') || l.includes(' - '))) {
-      startIdx = i + 1;
-    } else {
-      break;
-    }
-  }
-  return lines.slice(startIdx).join("\n").trim();
-}
 
 // ─── Nettoyage typographique rigoureux (zéro étoiles, zéro anti-slash n, zéro artefacts) ─
 function cleanArticleText(raw) {
@@ -458,21 +415,8 @@ function cleanArticleText(raw) {
   // 1. Dé-échapper les littéraux \n, \r, \t
   s = s.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\r/g, "").replace(/\\t/g, " ");
 
-  // 2. Décoder les entités HTML courantes
-  s = s
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&rsquo;/g, "’")
-    .replace(/&lsquo;/g, "‘")
-    .replace(/&ldquo;/g, "“")
-    .replace(/&rdquo;/g, "”")
-    .replace(/&hellip;/g, "…")
-    .replace(/&ndash;/g, "–")
-    .replace(/&mdash;/g, "—")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+  // 2. Décoder exhaustivement toutes les entités HTML (accents français, guillemets, symboles, numériques)
+  s = decodeAllHtmlEntities(s);
 
   // 3. Supprimer les balises HTML restantes
   s = s.replace(/<[^>]+>/g, " ");
@@ -594,12 +538,20 @@ function stripRepeatedTitle(text, title) {
   return s;
 }
 
-function isTeaserSnippet(text, item = {}) {
+function isTeaserSnippet(text, item = {}, { allowShort = false } = {}) {
   if (!text || typeof text !== "string") return true;
   const trimmed = text.trim();
   if (trimmed.length < 80) return true;
-  // Détecte uniquement les vraies coupures avec points de suspension ou bouton de renvoi externe
+  // Détecte les coupures avec points de suspension ou bouton de renvoi externe
   if (/(\.\.\.|…|\[\+\]|\[lire la suite\]|lire la suite sur|en savoir plus)$/i.test(trimmed)) {
+    return true;
+  }
+  // Tout texte de moins de 350 caractères sans allowShort est strictement un teaser/résumé
+  if (!allowShort) {
+    if (trimmed.length < 350) return true;
+  }
+  const desc = cleanArticleText(item?.descriptionFr || item?.description || "");
+  if (!allowShort && desc && (trimmed === desc || Math.abs(trimmed.length - desc.length) < 40)) {
     return true;
   }
   return false;
@@ -619,9 +571,11 @@ function cleanEditorialText(raw) {
   s = s.replace(/https?:\/\/[^\s)]+/g, "");
   // Supprimer les césures parasites dans les mots (ex: "lan- gage" ou "ba- layage")
   s = s.replace(/(\b\w{2,})-\s+(\w{2,}\b)/g, "$1$2");
-  // Élimination absolue des étoiles et artefacts markdown résiduels
+  // Élimination absolue des étoiles, artefacts markdown et normalisation typographique
   s = stripMarkdownAndAsterisks(s);
-  return s.replace(/\n\s*\n\s*\n+/g, "\n\n").trim();
+  // Éliminer les paragraphes parasites (newsletter, consentements, promos)
+  const paras = s.split(/\n\s*\n+/).filter(p => p && !isBoilerplateOrConsentText(p));
+  return paras.join("\n\n").trim();
 }
 
 // ─── Élagage des préambules et disclaimers parasites au profit du lead d'actu ─
@@ -665,11 +619,26 @@ function refineArticleCandidate(raw, item) {
   const title = `${item?.titleFr || ""} ${item?.title || ""}`.trim();
   const focused = filterRelevantParagraphs(base, title) || "";
   const sanitized = sanitizeArticleText(base);
-  const text = focused.length >= 120 ? focused : (sanitized.length >= 120 ? sanitized : "");
+  const text = sanitized.length >= 400 ? sanitized : (focused.length >= 120 ? focused : (sanitized.length >= 120 ? sanitized : ""));
   return { text, relevance: text ? scoreTopicalRelevance(text, title) : 0 };
 }
 
-async function extractFullArticleText(item) {
+// ⚡ Une seule extraction par URL : les passes parallèles partagent la même promesse (zéro double téléchargement).
+const __extractInflight = new Map();
+function extractFullArticleText(item) {
+  const key = item?.url || item?.id || "";
+  if (!key) return extractFullArticleTextRaw(item);
+  if (__extractInflight.has(key)) return __extractInflight.get(key);
+  const p = extractFullArticleTextRaw(item).then((t) => {
+    if (!t) __extractInflight.delete(key);
+    else setTimeout(() => __extractInflight.delete(key), 10 * 60 * 1000);
+    return t;
+  }, () => { __extractInflight.delete(key); return ""; });
+  __extractInflight.set(key, p);
+  return p;
+}
+
+async function extractFullArticleTextRaw(item) {
   const candidates = [];
 
   const consider = (raw) => {
@@ -683,26 +652,50 @@ async function extractFullArticleText(item) {
     if (consider(item.fullContent)) return candidates[candidates.length - 1].text;
   }
 
-  // 2. Lecture via la course multi-proxys
-  try {
-    const { text } = await fetchReadableArticle(item.url, { timeoutMs: 9000 });
-    if (text && text.length > 200 && consider(text)) return candidates[candidates.length - 1].text;
-  } catch {}
-
-  // 3. Dernier recours : lecteur Jina
-  try {
+  // 2+3. Course PARALLÈLE : multi-proxys et lecteur Jina partent en même temps ;
+  // le premier texte complet et pertinent gagne (au lieu d'attendre l'un puis l'autre).
+  if (item.url) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 9000);
-    const res = await fetch(`https://r.jina.ai/${item.url}`, {
-      headers: { Accept: "text/plain" },
-      signal: controller.signal
+    const proxyP = fetchReadableArticle(item.url, { timeoutMs: 20000 })
+      .then(({ text } = {}) => (text && text.length > 200 && consider(text) ? candidates[candidates.length - 1].text : null))
+      .catch(() => null);
+    const jinaP = item.url.includes("reddit.com") ? Promise.resolve(null) : (async () => {
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      try {
+        const res = await fetch(`https://r.jina.ai/${item.url}`, { headers: { Accept: "text/plain" }, signal: controller.signal });
+        if (!res.ok) return null;
+        const t = cleanJinaText(await res.text());
+        return consider(t) ? candidates[candidates.length - 1].text : null;
+      } catch { return null; } finally { clearTimeout(timeoutId); }
+    })();
+    const winner = await new Promise((resolve) => {
+      let left = 2;
+      const settle = (v) => { if (v) resolve(v); else if (--left === 0) resolve(null); };
+      proxyP.then(settle); jinaP.then(settle);
     });
-    clearTimeout(timeoutId);
-    if (res.ok) {
-      const pageContent = await res.text();
-      if (consider(cleanJinaText(pageContent))) return candidates[candidates.length - 1].text;
+    if (winner) { try { controller.abort(); } catch {} return winner; }
+  }
+
+  // 3bis. Alternatives gratuites supplémentaires, essayées l'une après l'autre.
+  if (item.url && !item.url.includes("reddit.com")) {
+    const u = item.url;
+    const alts = [
+      { url: `https://r.jina.ai/https://web.archive.org/web/2id_/${u}`, md: true },
+      { url: `https://r.jina.ai/https://archive.ph/newest/${u}`, md: true },
+      { url: `https://corsproxy.io/?url=${encodeURIComponent(u)}`, md: false },
+      { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(u.replace(/\/?$/, "/amp"))}`, md: false },
+      { url: `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(`https://web.archive.org/web/2id_/${u}`)}`, md: false },
+    ];
+    for (const alt of alts) {
+      try {
+        const res = await fetch(alt.url, { signal: AbortSignal.timeout(15000), headers: alt.md ? { Accept: "text/plain" } : {} });
+        if (!res.ok) continue;
+        const body = await res.text();
+        const t = alt.md ? cleanJinaText(body) : extractReadableFromHtml(body);
+        if (consider(t)) return candidates[candidates.length - 1].text;
+      } catch {}
     }
-  } catch {}
+  }
 
   // 4. Meilleur candidat restant (pertinence d'abord, longueur ensuite)
   if (candidates.length) {
@@ -710,11 +703,12 @@ async function extractFullArticleText(item) {
     if (candidates[0].text.length > 300) return candidates[0].text;
   }
 
-  // 5. Repli strictement fiable : le résumé fourni par la source elle-même
-  const summary = cleanArticleText(item.descriptionFr || item.description || "");
-  if (summary && !isBoilerplateOrConsentText(summary)) return summary;
+  // 5. Repli : si aucun corps complet extrait n'a été trouvé, retourner vide pour déclencher la synthèse IA
   return candidates.length ? candidates[0].text : "";
 }
+
+// Style d'écriture IA : sobre, factuel, sans formules creuses. Utilisé en DERNIER recours.
+const NATURAL_NEWS_SYSTEM = "Tu écris comme un journaliste humain d'un quotidien sérieux : phrases simples et directes, faits concrets d'abord. Interdit : les formules creuses (« franchit une nouvelle étape », « met en lumière », « écosystème », « dynamiques », « standards », « ouvre de nouvelles perspectives », « transformation », « dans un monde où »), les superlatifs, les conclusions moralisatrices, les listes et le Markdown. N'invente aucun fait : si une information manque, n'en parle pas. 2 à 3 paragraphes courts en français.";
 
 // ─── Génération d'un compte-rendu exhaustif (In-app Complete Story) ──────────
 async function generateCompleteStory(item, callClaude) {
@@ -735,7 +729,7 @@ Format : uniquement des paragraphes séparés par une ligne vide. Pas de puces, 
 Contenu brut de l'article :
 ${contentStr.substring(0, 15000)}`;
 
-      const raw = await callClaude("Tu es un journaliste tech d'élite.", prompt, { maxTokens: 1000 });
+      const raw = await callClaude(NATURAL_NEWS_SYSTEM, prompt, { maxTokens: 1000 });
       const rawText = typeof raw === 'string' ? raw : (raw?.text || '');
       const aiTitle = item.titleFr || item.title;
       if (rawText.trim() && !isBoilerplateOrConsentText(rawText) && scoreTopicalRelevance(rawText, aiTitle) >= 0.15) {
@@ -763,7 +757,7 @@ ${contentStr.substring(0, 15000)}`;
     const fallback = item.lang === "fr"
       ? (item.descriptionFr || item.description)
       : item.descriptionFr;
-    paragraphs = [fallback || "La traduction française de cet article est momentanément indisponible."].filter(Boolean);
+    paragraphs = [fallback || item.descriptionFr || item.titleFr || item.title].filter(Boolean);
   }
 
   return {
@@ -811,10 +805,184 @@ function persistCache(key, cache) {
   try { safeStorage.set(key, JSON.stringify(cache)); } catch {}
 }
 
+// ⚡ Ordonnancement coopératif moderne (zéro jank, maintien de l'UI à 60 FPS)
+async function yieldToMainThread() {
+  if (typeof scheduler !== "undefined" && typeof scheduler.yield === "function") {
+    try { return await scheduler.yield(); } catch {}
+  }
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+// ─── Générateur Turbo d'Explications Claires & Nettes en Lot ─────────────────
+async function batchGenerateClearExplanations(list, callClaudeFn, existingSummaries = {}) {
+  if (!callClaudeFn || !Array.isArray(list) || list.length === 0) return {};
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return {};
+
+  // Priorité : les 10 articles les plus pertinents et visibles du flux sans explication nette en cache
+  const allTargets = list
+    .filter(i => i?.id && (!existingSummaries[i.id] || existingSummaries[i.id].length < 30))
+    .slice(0, 10);
+
+  if (allTargets.length === 0) return {};
+
+  const systemPrompt = `Tu es un journaliste et analyste tech d'élite.
+Pour chaque actualité tech fournie, rédige une explication/résumé limpide, fluide, complet et percutant en français.
+Consignes fondamentales :
+- Rédige un résumé complet et percutant qui répond directement au titre (ex: si le titre mentionne une faille, une nouveauté ou une fonctionnalité manquante, explique expressément de quoi il s'agit, ne laisse aucun suspense ni teaser inachevé).
+- Explique concrètement : le fait d'actualité précis, le contexte et ses implications réelles pour les développeurs ou les utilisateurs.
+- Ne coupe JAMAIS une idée, une phrase ni un mot. Zéro point de suspension de coupure (...).
+- Pas de titre répété au début, pas de markdown, pas de puces, pas de mentions publicitaires.
+Réponds STRICTEMENT sous forme d'un objet JSON valide :
+{
+  "summaries": [
+    { "id": "id_exact_fourni", "summary": "Texte limpide et complet de l'explication nette..." }
+  ]
+}`;
+
+  const result = {};
+  const CHUNK_SIZE = 5; // 2 paquets maximum pour éviter tout dépassement de quota RPM/TPM sur l'IA
+  const chunks = [];
+  for (let i = 0; i < allTargets.length; i += CHUNK_SIZE) chunks.push(allTargets.slice(i, i + CHUNK_SIZE));
+
+  // Traitement séquentiel avec micro-respiration pour respecter strictement les quotas RPM
+  for (const chunk of chunks) {
+    const payload = chunk.map(t => ({
+      id: t.id,
+      titre: visibleFrenchTitle(t),
+      source: t.sourceName || t.source || "Tech",
+      apercu: cleanEditorialText(visibleFrenchDescription(t)) || t.description || ""
+    }));
+
+    try {
+      let tChunk;
+      const timeoutChunkP = new Promise((_, reject) => {
+        tChunk = setTimeout(() => reject(new Error("AI Chunk Timeout")), 12000);
+      });
+      const rawP = callClaudeFn(
+        systemPrompt,
+        JSON.stringify(payload),
+        { task: "fast-json", json: true, maxTokens: 2500, temperature: 0.2, fast: true }
+      );
+      const raw = await Promise.race([rawP, timeoutChunkP]).finally(() => clearTimeout(tChunk));
+      const rawText = typeof raw === "string" ? raw : (raw?.text || "");
+      const clean = stripJsonWrapper(rawText);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(clean);
+      } catch {
+        const match = clean.match(/\{[\s\S]*\}/);
+        if (match) {
+          try { parsed = JSON.parse(match[0]); } catch {}
+        }
+      }
+
+      const itemsArr = Array.isArray(parsed?.summaries)
+        ? parsed.summaries
+        : (Array.isArray(parsed) ? parsed : []);
+
+      for (const item of itemsArr) {
+        if (item?.id && typeof item?.summary === "string" && item.summary.trim().length > 30) {
+          result[item.id] = cleanEditorialText(item.summary.trim());
+        }
+      }
+      // Micro-pause entre paquets
+      await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      console.debug("[TechIntelView] batchGenerateClearExplanations chunk error:", err?.message || err);
+      // En cas de rate limit (429), cesser immédiatement pour ne pas encombrer les logs
+      if (/429|quota|rate limit/i.test(err?.message || "")) break;
+    }
+  }
+
+  return result;
+}
+
+// 📦 Hydratation hors-ligne intégrale : prépare et stocke les corps complets substantiels de chaque article
+async function batchHydrateOfflineBodies(articles, callClaudeFn, existingBodies = {}) {
+  if (!Array.isArray(articles) || articles.length === 0) return {};
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return {};
+
+  // Traiter en priorité les articles les plus pertinents (max 10) qui n'ont pas encore de corps complet de 350+ car.
+  const targets = articles
+    .filter(i => {
+      if (!i?.id) return false;
+      const cur = existingBodies[i.id];
+      // Si déjà complet (plus de 350 car. et pas de coupure), pas besoin de retraiter
+      return !cur || isTeaserSnippet(cur, i) || cur.length < 350 || !looksFrench(cur);
+    })
+    .slice(0, 10);
+
+  if (targets.length === 0) return {};
+
+  const newBodies = {};
+  const concurrency = 4;
+  let cursor = 0;
+
+  const processArticle = async (item) => {
+    try {
+      let source = "";
+
+      // 1. Contenu déjà disponible dans le flux
+      if (item.fullContent && item.fullContent.length >= 350 && !isTeaserSnippet(item.fullContent, item)) {
+        source = item.fullContent;
+      }
+
+      // 2. Extraction web ultra-rapide avec timeout strict (2000ms max par article)
+      if (!source && item.url) {
+        let tId;
+        const fastFetchP = Promise.race([
+          extractFullArticleText(item),
+          new Promise((_, reject) => { tId = setTimeout(() => reject(new Error("Timeout")), 9500); })
+        ]).finally(() => clearTimeout(tId)).catch(() => "");
+        const raw = await fastFetchP;
+        const paras = extractUniversalArticleParagraphs(raw || "", item);
+        const cleaned = paras.join("\n\n").trim();
+        if (cleaned && cleaned.length >= 350 && !isTeaserSnippet(cleaned, item)) {
+          source = cleaned;
+        }
+      }
+
+      // 3. Pas d'IA en arrière-plan : elle reste le dernier recours, au clic sur « Complet ».
+
+      // 4. Si la source est en langue étrangère, traduction en français
+      let frenchBody = "";
+      if (source && source.length >= 350 && !isTeaserSnippet(source, item)) {
+        frenchBody = await guaranteeFrench(source, { aiFn: callClaudeFn });
+      }
+
+      // 5. Filet de sécurité déterministe absolu : si scraping + IA indisponibles, synthèse éditoriale complète
+      // Plus de texte de remplissage générique : sans texte réel, on n'enregistre rien.
+
+      if (frenchBody && frenchBody.trim().length >= 350) {
+        newBodies[item.id] = cleanEditorialText(frenchBody.trim());
+      }
+    } catch (e) {
+      try {
+      } catch {}
+      console.debug(`[TechIntelView] Hydration error for ${item.id}:`, e?.message || e);
+    }
+  };
+
+  const pool = Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
+    while (cursor < targets.length) {
+      const item = targets[cursor++];
+      if (!item) break;
+      await processArticle(item);
+      await yieldToMainThread();
+    }
+  });
+
+  await Promise.all(pool);
+  return newBodies;
+}
+
+
+
 function timeAgo(ts, now = Date.now()) {
   if (!ts) return "";
-  const diff = Math.max(0, (now - ts) / 1000);
-  if (diff < 45)     return "à l'instant";
+  // `now` peut être en retard sur le dernier rafraîchissement : on prend le max.
+  const diff = Math.max(0, (Math.max(now, Date.now()) - ts) / 1000);
+  if (diff < 60)     return "à l'instant";
   if (diff < 3600)   return `il y a ${Math.floor(diff / 60)} min`;
   if (diff < 86400)  return `il y a ${Math.floor(diff / 3600)}h`;
   if (diff < 604800) return `il y a ${Math.floor(diff / 86400)}j`;
@@ -823,9 +991,7 @@ function timeAgo(ts, now = Date.now()) {
 
 function stripHtml(s) {
   if (!s) return "";
-  return s
-    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+  return decodeAllHtmlEntities(s)
     .replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
@@ -861,11 +1027,18 @@ function matchesQuery(item, tokens) {
 }
 
 // ─── Fetchers ────────────────────────────────────────────────────────────────
+export const HN_TOP_LIMIT = 80;
+export const HN_BEST_LIMIT = 40;
 async function fetchHN() {
-  const r = await fetchWithTimeout("https://hacker-news.firebaseio.com/v0/topstories.json", {}, 6000);
-  if (!r.ok) throw new Error(`HN HTTP ${r.status}`);
-  // 50 articles majeurs chargés en 2 vagues de 25 en parallèle (réponse en ~2s)
-  const ids = (await r.json()).slice(0, 50);
+  // « Top » (80 du moment) + « Best » (40 meilleurs récents) : les pépites qui montent doucement arrivent aussi.
+  const [rTop, rBest] = await Promise.all([
+    fetchWithTimeout("https://hacker-news.firebaseio.com/v0/topstories.json", {}, 6000).catch(() => null),
+    fetchWithTimeout("https://hacker-news.firebaseio.com/v0/beststories.json", {}, 6000).catch(() => null),
+  ]);
+  if (!rTop?.ok && !rBest?.ok) throw new Error(`HN HTTP ${rTop?.status || rBest?.status || "network"}`);
+  const topIds = rTop?.ok ? (await rTop.json()).slice(0, HN_TOP_LIMIT) : [];
+  const bestIds = rBest?.ok ? (await rBest.json()).slice(0, HN_BEST_LIMIT) : [];
+  const ids = [...new Set([...topIds, ...bestIds])];
   const items = [];
   for (let i = 0; i < ids.length; i += 25) {
     const batch = await Promise.all(
@@ -894,11 +1067,10 @@ function parseMarkdownFeed(text, feed) {
   const items = [];
   let match;
   while ((match = itemRegex.exec(text)) !== null) {
-    let title = cleanEditorialText(stripHtml(match[1]?.trim() || ""));
     const url = match[2]?.trim() || "";
+    let title = sanitizeNewsTitle(cleanEditorialText(stripHtml(match[1]?.trim() || "")), url);
     if (!title && url) {
-      const slug = url.split("/").pop().replace(/\.html?$/i, "").replace(/^[a-z]+-\d+-/i, "").replace(/-/g, " ");
-      if (slug.length > 5) title = slug.charAt(0).toUpperCase() + slug.slice(1);
+      title = sanitizeNewsTitle("", url);
     }
     const rawDesc = cleanEditorialText(stripHtml((match[3] || "").trim().split("\n\n")[0] || "")).slice(0, 500);
     if (!title || !url) continue;
@@ -975,7 +1147,6 @@ async function fetchRSS(feed) {
       if (!xml.querySelector("parsererror")) {
         const items = [...xml.querySelectorAll("item, entry")].slice(0, 80);
         const parsed = items.map((it) => {
-          const title = stripHtml(it.querySelector("title")?.textContent || "");
           const links = [...it.querySelectorAll("link")];
           let url = "";
           for (const l of links) {
@@ -984,6 +1155,8 @@ async function fetchRSS(feed) {
             if (href && (l.getAttribute("rel") === "alternate" || !url)) url = href;
             else if (text && !url) url = text;
           }
+          const rawTitle = stripHtml(it.querySelector("title")?.textContent || "");
+          const title = sanitizeNewsTitle(rawTitle, url);
           const rawDesc = stripHtml(it.querySelector("description, summary, content")?.textContent || "");
           const desc = stripRepeatedTitle(rawDesc, title);
           const encodedRaw = it.getElementsByTagName("content:encoded")[0]?.textContent ||
@@ -1169,11 +1342,12 @@ function BreakingBadge() {
   );
 }
 
-function ScoreChip({ score = 0 }) {
-  const pct = Math.round((Math.min(10, Math.max(0, score)) / 10) * 100);
-  const color = score >= 7 ? "#22c55e" : score >= 4 ? "#f59e0b" : "var(--mm-primary)";
+function ScoreChip({ score = 0, sources = 1 }) {
+  const normalized = Math.min(10, Math.max(0, Math.round(score)));
+  const pct = normalized * 10;
+  const color = normalized >= 7 ? "#22c55e" : normalized >= 4 ? "#f59e0b" : "var(--mm-primary)";
   return (
-    <span title={`Pertinence ${score}/10`} style={{
+    <span className="tiv-score-chip" title={`Note ${normalized}/10${sources > 1 ? ` — ${sources} sites en parlent` : ""}`} style={{
       display: "inline-flex", alignItems: "center", gap: 4,
       background: color + "15", border: `1px solid ${colorMix(color, 19)}`,
       borderRadius: 6, padding: "2px 7px", fontSize: 10, color, fontWeight: 700,
@@ -1184,7 +1358,8 @@ function ScoreChip({ score = 0 }) {
       }}>
         <span style={{ display: "block", height: "100%", width: `${pct}%`, background: color, borderRadius: 2 }} />
       </span>
-      {score}/10
+      <span>{normalized}/10</span>
+      {sources > 1 && <span style={{ opacity: 0.85, fontWeight: 600 }}>· {sources} sites</span>}
     </span>
   );
 }
@@ -1356,14 +1531,13 @@ function needsFrenchTranslation(item) {
 function visibleFrenchTitle(item) {
   if (!item) return "";
   let raw = "";
-  if (item.lang === "fr") raw = item.title || item.titleFr || "";
-  else if (item.titleFr && isCleanTranslation(item.titleFr) && item.title && item.titleFr.trim() !== item.title.trim()) {
+  if (item.lang === "fr") raw = item.titleFr || item.title || "";
+  else if (item.titleFr && isCleanTranslation(item.titleFr)) {
     raw = item.titleFr;
   } else {
-    // En cours de traduction : afficher le titre original plutôt qu'un texte générique bloqué
     raw = item.title || "";
   }
-  return stripMarkdownAndAsterisks(raw);
+  return sanitizeNewsTitle(raw, item?.url);
 }
 
 function visibleFrenchDescription(item) {
@@ -1371,18 +1545,18 @@ function visibleFrenchDescription(item) {
   const desc = String(item.description || "").trim();
   const title = item.titleFr || item.title || "";
   let res = "";
-  if (!desc) {
-    res = (item.descriptionFr && isCleanTranslation(item.descriptionFr)) ? item.descriptionFr : "";
-  } else if (item.lang === "fr") {
-    res = item.descriptionFr || desc;
-  } else if (item.descriptionFr && isCleanTranslation(item.descriptionFr) && item.descriptionFr.trim() !== desc) {
+  if (item.descriptionFr && isCleanTranslation(item.descriptionFr)) {
     res = item.descriptionFr;
-  } else {
+  } else if (item.lang === "fr" || looksFrench(desc)) {
     res = desc;
+  } else {
+    // Si la description anglaise n'est pas encore traduite, ne pas afficher d'anglais brut si une traduction partielle existe
+    res = item.descriptionFr || "";
   }
   const clean = stripRepeatedTitle(res, title);
   return stripMarkdownAndAsterisks(clean);
 }
+
 
 // La traduction est désormais entièrement gérée par le moteur dédié
 // ../lib/frenchNews.js (cache persistant, découpage intelligent, zéro quota).
@@ -1402,6 +1576,11 @@ export default function TechIntelView({
   const [isOnline, setIsOnline] = useState(() => getNetworkStatus().online);
   const isOnlineRef = useRef(isOnline);
   useEffect(() => { isOnlineRef.current = isOnline; }, [isOnline]);
+  useEffect(() => {
+    return onNetworkChange((status) => {
+      setIsOnline(Boolean(status?.online));
+    });
+  }, []);
   // Hors-ligne : on garde visibles les actus en cache (jusqu'à 30 j) au lieu de tout masquer après 24 h.
   const ageLimit = isOnline ? NEWS_MAX_AGE_MS : OFFLINE_MAX_AGE_MS;
 
@@ -1440,6 +1619,22 @@ export default function TechIntelView({
   const [ttsProgress, setTtsProgress] = useState(null);
   const [showErrors, setShowErrors] = useState(false);
   const [expandedIds, setExpandedIds] = useState(new Set());
+  const expandedIdsRef = useRef(expandedIds);
+  useEffect(() => { expandedIdsRef.current = expandedIds; }, [expandedIds]);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  // Articles dont le texte « Complet » a dû être rédigé par l'IA (aucun texte source accessible)
+  const [aiWrittenIds, setAiWrittenIds] = useState(() => {
+    try { return new Set(JSON.parse(safeStorage.get("tech_intel_ai_written_v1") || "[]")); } catch { return new Set(); }
+  });
+  useEffect(() => {
+    try { safeStorage.set("tech_intel_ai_written_v1", JSON.stringify([...aiWrittenIds].slice(-300))); } catch {}
+  }, [aiWrittenIds]);
+  const coverageMap = useMemo(() => {
+    const m = {};
+    for (const it of items) m[it.id] = findRelatedCoverage(it, items);
+    return m;
+  }, [items]);
   const [dismissingIds, setDismissingIds] = useState(() => new Set());
   const [undoArticle, setUndoArticle] = useState(null);
   const undoTimerRef = useRef(null);
@@ -1451,26 +1646,7 @@ export default function TechIntelView({
   }, []);
   const prefetchAttemptedRef = useRef(false);
   const [inlineLoadingId, setInlineLoadingId] = useState(null);
-  const [fullArticleMap, setFullArticleMap] = useState(() => {
-    try {
-      const data = JSON.parse(safeStorage.get('tech_intel_full_articles_v2') || '{}');
-      let changed = false;
-      for (const [k, v] of Object.entries(data)) {
-        if (typeof v === 'string' && (
-          /choisissez votre mode de lecture/i.test(v) ||
-          isBoilerplateOrConsentText(v.slice(0, 400)) ||
-          (v.length < 500 && (v.endsWith("...") || v.endsWith("…")))
-        )) {
-          delete data[k];
-          changed = true;
-        }
-      }
-      if (changed) {
-        try { safeStorage.set('tech_intel_full_articles_v2', JSON.stringify(data)); } catch {}
-      }
-      return data;
-    } catch { return {}; }
-  });
+  const [fullArticleMap, setFullArticleMap] = useState(() => ({}));
   const fullArticleMapRef = useRef(fullArticleMap);
   useEffect(() => { fullArticleMapRef.current = fullArticleMap; }, [fullArticleMap]);
 
@@ -1478,34 +1654,15 @@ export default function TechIntelView({
     if (!id || !text) return;
     setFullArticleMap(prev => {
       const { [id]: _old, ...rest } = prev;
-      const next = capMap({ ...rest, [id]: text }, 200);
-      try { safeStorage.set('tech_intel_full_articles_v2', JSON.stringify(next)); } catch {}
-      saveArticleBodies(next).catch(() => {});
+      const next = capMap({ ...rest, [id]: text }, 300);
+      const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
+      saveArticleBodies(allBodies).catch(() => {});
       return next;
     });
   }, []);
 
-  // ─── Corps d'article francisé et COMPLET (persistant entre les sessions) ───
-  const [bodyFrMap, setBodyFrMap] = useState(() => {
-    try {
-      const data = JSON.parse(safeStorage.get('tech_intel_body_fr_v1') || '{}');
-      let changed = false;
-      for (const [k, v] of Object.entries(data)) {
-        if (typeof v === 'string' && (
-          /choisissez votre mode de lecture/i.test(v) ||
-          isBoilerplateOrConsentText(v.slice(0, 400)) ||
-          (v.length < 500 && (v.endsWith("...") || v.endsWith("…")))
-        )) {
-          delete data[k];
-          changed = true;
-        }
-      }
-      if (changed) {
-        try { safeStorage.set('tech_intel_body_fr_v1', JSON.stringify(data)); } catch {}
-      }
-      return data;
-    } catch { return {}; }
-  });
+  // ─── Corps d'article francisé et COMPLET (persistant en IndexedDB) ───
+  const [bodyFrMap, setBodyFrMap] = useState(() => ({}));
   const bodyFrMapRef = useRef(bodyFrMap);
   useEffect(() => { bodyFrMapRef.current = bodyFrMap; }, [bodyFrMap]);
 
@@ -1514,9 +1671,9 @@ export default function TechIntelView({
     setBodyFrMap(prev => {
       if (prev[id] === text) return prev;
       const { [id]: _old, ...rest } = prev;
-      const next = capMap({ ...rest, [id]: text }, 200);
-      try { safeStorage.set('tech_intel_body_fr_v1', JSON.stringify(next)); } catch {}
-      saveArticleBodies(next).catch(() => {});
+      const next = capMap({ ...rest, [id]: text }, 300);
+      const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
+      saveArticleBodies(allBodies).catch(() => {});
       return next;
     });
   }, []);
@@ -1534,8 +1691,116 @@ export default function TechIntelView({
     try { return new Set(JSON.parse(safeStorage.get('tech_intel_saved_ids_v1') || '[]')); }
     catch { return new Set(); }
   });
-  const [prefetchRunning, setPrefetchRunning] = useState(false);
-  const [prefetchProgress, setPrefetchProgress] = useState(null);
+
+  // 🎯 Goûts appris (lectures, favoris, articles jetés) — par source et par thème
+  const [taste, setTaste] = useState(() => {
+    try { return JSON.parse(safeStorage.get('tech_intel_taste_v1') || 'null') || emptyTaste(); }
+    catch { return emptyTaste(); }
+  });
+  const learnTaste = useCallback((item, action) => {
+    setTaste(prev => {
+      const next = recordTaste(prev, item, action, getArticleTheme(item)?.id || null);
+      try { safeStorage.set('tech_intel_taste_v1', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+  const themeOfItem = useCallback((i) => getArticleTheme(i)?.id || null, []);
+  const tasteRef = useRef(taste);
+  useEffect(() => { tasteRef.current = taste; }, [taste]);
+  // 🔒 Classement figé : calculé UNE fois à la fin de « Actualiser », identique à chaque réouverture.
+  const [rankSnapshot, setRankSnapshot] = useState(() => {
+    const existing = loadRankSnapshot(safeStorage);
+    if (existing) return existing;
+    let scores = {};
+    try { scores = JSON.parse(safeStorage.get(AI_SCORE_KEY) || '{}'); } catch {}
+    const snap = { now: Date.now(), taste, aiScores: scores };
+    saveRankSnapshot(safeStorage, snap);
+    return snap;
+  });
+
+  // 🤖 Notes IA (0–10), calculées une seule fois par article et gardées en cache
+  const [aiScores, setAiScores] = useState(() => {
+    try { return JSON.parse(safeStorage.get(AI_SCORE_KEY) || '{}'); } catch { return {}; }
+  });
+  const aiScoresRef = useRef(aiScores);
+  useEffect(() => { aiScoresRef.current = aiScores; }, [aiScores]);
+  const [mustNotMissHidden, setMustNotMissHidden] = useState(false);
+  const [watchKeywords, setWatchKeywords] = useState(() => loadWatchKeywords(safeStorage));
+  const [showWatchKeywordsModal, setShowWatchKeywordsModal] = useState(false);
+  const handleSaveWatchKeywords = useCallback((newList) => {
+    setWatchKeywords(newList);
+    saveWatchKeywords(safeStorage, newList);
+  }, []);
+
+  // 🧠 Cache persistant des explications IA claires et nettes
+  const AI_SUMMARIES_KEY = "tech_intel_ai_summaries_v2";
+  const [aiSummaries, setAiSummaries] = useState(() => {
+    try {
+      return JSON.parse(safeStorage.get(AI_SUMMARIES_KEY) || "{}");
+    } catch {
+      return {};
+    }
+  });
+  const aiSummariesRef = useRef(aiSummaries);
+  useEffect(() => { aiSummariesRef.current = aiSummaries; }, [aiSummaries]);
+
+  const saveAiSummaries = useCallback((newMap) => {
+    if (!newMap || Object.keys(newMap).length === 0) return;
+    setAiSummaries(prev => {
+      const merged = capMap({ ...prev, ...newMap }, 300);
+      try { safeStorage.set(AI_SUMMARIES_KEY, JSON.stringify(merged)); } catch {}
+      return merged;
+    });
+  }, []);
+
+  const [briefingIds, setBriefingIds] = useState(() => new Set());
+  const isBatchBriefingRef = useRef(false);
+
+  const generateDirectBrief = useCallback(async (item) => {
+    if (!item) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      showToast?.("Connexion Internet requise pour générer la synthèse IA", "info");
+      return;
+    }
+    const key = item.id || item.url;
+    setBriefingIds(prev => new Set(prev).add(key));
+    try {
+      const brief = await generateSingleExecutiveBrief(item, aiCall, null, callClaude);
+      if (brief && brief.trim().length >= 35) {
+        setAiSummaries(prev => {
+          const updated = capMap({
+            ...prev,
+            [item.id]: brief,
+            ...(item.url ? { [item.url]: brief } : {}),
+            ...(item.title ? { [item.title]: brief } : {}),
+            ...(item.titleFr ? { [item.titleFr]: brief } : {}),
+          }, 800);
+          aiSummariesRef.current = updated;
+          saveAiSummariesMap(updated).catch(() => {});
+          try { safeStorage.set("tech_intel_ai_summaries_v2", JSON.stringify(updated)); } catch {}
+          return updated;
+        });
+        setItems(prevItems => (prevItems || []).map(it => {
+          if (it.id === item.id || (item.url && it.url === item.url)) {
+            return { ...it, aiSummary: brief };
+          }
+          return it;
+        }));
+        showToast?.("Synthèse essentielle prête !", "success");
+      } else {
+        showToast?.("Impossible de générer la synthèse pour le moment", "warning");
+      }
+    } catch (err) {
+      console.debug("[TechIntelView] Direct briefing error:", err?.message);
+      showToast?.("Erreur lors de la génération de la synthèse", "warning");
+    } finally {
+      setBriefingIds(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  }, [aiCall, callClaude, saveAiSummariesMap, showToast]);
   const [query, setQuery] = useState("");
   const [isTabsOpen, setIsTabsOpen] = useState(false);
   const [sortMode, setSortMode] = useState('relevance'); // 'relevance' | 'recent' | 'popular'
@@ -1604,7 +1869,7 @@ export default function TechIntelView({
   const [enabledSources, setEnabledSources] = useState(() => {
     try {
       const saved = safeStorage.get('tech_intel_sources_v1');
-      if (saved) return new Set(JSON.parse(saved));
+      if (saved) return new Set([...JSON.parse(saved), ...MUST_NOT_MISS_FEEDS.map(f => f.name)]);
     } catch {}
     return new Set(RSS_FEEDS.map(f => f.name));
   });
@@ -1678,27 +1943,34 @@ export default function TechIntelView({
 
     const commit = (entries) => {
       if (!entries.length) return;
-      setItems((prev) => prev.map((p) => {
-        const match = entries.find((s) => s.id === p.id);
-        return match ? { ...p, titleFr: match.titleFr, descriptionFr: match.descriptionFr } : p;
-      }));
+      setItems((prev) => {
+        const next = prev.map((p) => {
+          const match = entries.find((s) => s.id === p.id);
+          return match ? { ...p, titleFr: match.titleFr || p.titleFr, descriptionFr: match.descriptionFr || p.descriptionFr } : p;
+        });
+        saveArticleList(next).catch(() => {});
+        return next;
+      });
     };
 
     const processBatch = async (batch) => {
       const results = await Promise.allSettled(
         batch.map(async (item) => {
-          // Traduction intégrale : le titre ET la description entière
-          // (plus aucune coupure à 450 caractères).
-          const [titleFr, descriptionFr] = await Promise.all([
-            translateToFrench(item.title || ""),
-            item.description ? translateToFrench(item.description) : Promise.resolve(""),
-          ]);
-          // Ne conserver que si le titre a réellement été traduit (non vide et distinct du titre original)
-          if (!titleFr || (item.title && titleFr.trim() === item.title.trim())) return null;
-          const entry = { titleFr, descriptionFr };
+          let titleFr = "";
+          if (needsFrenchTranslation({ title: item.title })) {
+            titleFr = await translateToFrench(item.title || "").catch(() => "");
+          }
+          let descriptionFr = "";
+          if (item.description && needsFrenchTranslation({ description: item.description })) {
+            descriptionFr = await translateToFrench(item.description).catch(() => "");
+          }
+          const effectiveTitle = (titleFr && isCleanTranslation(titleFr)) ? titleFr : (item.titleFr || item.title || "");
+          const effectiveDesc = (descriptionFr && isCleanTranslation(descriptionFr)) ? descriptionFr : (item.descriptionFr || "");
+          if (!effectiveTitle && !effectiveDesc) return null;
+          const entry = { titleFr: effectiveTitle, descriptionFr: effectiveDesc };
           vault[item.id] = entry;
           if (item.url) vault[item.url] = entry;
-          vault[item.title] = entry;
+          if (item.title) vault[item.title] = entry;
           updatedVault = true;
           attemptedTranslationIdsRef.current.add(item.id);
           return { id: item.id, ...entry };
@@ -1713,21 +1985,19 @@ export default function TechIntelView({
       if (updatedVault) saveTranslationVault(vault);
     };
 
-    const concurrency = 6;
+    const concurrency = 8;
     setTranslating(true);
     try {
-      const priorityItems = toTranslate.slice(0, 30);
-      const remainingItems = toTranslate.slice(30);
+      const priorityItems = toTranslate.slice(0, 5);
+      const remainingItems = toTranslate.slice(5);
 
       for (let i = 0; i < priorityItems.length; i += concurrency) {
         await processBatch(priorityItems.slice(i, i + concurrency));
-        await new Promise((r) => setTimeout(r, 50));
       }
 
       (async () => {
         for (let i = 0; i < remainingItems.length; i += concurrency) {
           await processBatch(remainingItems.slice(i, i + concurrency));
-          await new Promise((r) => setTimeout(r, 80));
         }
         if (updatedVault) saveTranslationVault(vault);
       })();
@@ -1773,6 +2043,20 @@ export default function TechIntelView({
     await translateItems(visibleEnItems);
   }, [items, loading, translating, translateItems, ageLimit]);
 
+  // ✅ Auto-traduction dynamique en tâche de fond (Groq 9 clés) dès l'apparition d'articles en anglais
+  useEffect(() => {
+    if (!autoTranslate || loading || translating) return;
+    const toTranslate = (items || []).filter(
+      (i) => needsFrenchTranslation(i) && !attemptedTranslationIdsRef.current.has(i.id)
+    );
+    if (!toTranslate.length) return;
+    const prioritySlice = toTranslate.slice(0, 5);
+    const timer = setTimeout(() => {
+      translateItems(prioritySlice);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [items, autoTranslate, loading, translating, translateItems]);
+
   // ─ Fetching ─
   const fetchAll = useCallback(async (silent = false) => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
@@ -1780,11 +2064,15 @@ export default function TechIntelView({
       if (!silent) showToast?.("Hors ligne : affichage des actus enregistrées", "info");
       return;
     }
-    if (!silent) setLoading(true);
+    if (!silent) {
+      setLoading(true);
+      attemptedTranslationIdsRef.current.clear();
+    }
     setProgress(0);
     setVisibleCount(PAGE_SIZE);
 
-    const activeFeeds = [
+    try {
+      const activeFeeds = [
       ...RSS_FEEDS.filter(f => enabledSources.has(f.name)),
       ...customFeeds.filter(f => f.enabled !== false && (enabledSources.has(f.name) || !enabledSources.has("__disabled__" + (f.id || f.name))))
     ];
@@ -1800,6 +2088,154 @@ export default function TechIntelView({
     let done = 0;
     const failed = [];
     const all = [];
+    // Dates stables : une actu déjà vue garde sa date d'origine (jamais « il y a 0 min » au rafraîchissement).
+    let firstSeen = stabilizeNewsTimestamps(items || [], loadFirstSeen(safeStorage)).map;
+
+    const runBriefings = async (targetItems = [], onProgress) => {
+      if (isBatchBriefingRef.current) return;
+      isBatchBriefingRef.current = true;
+      try {
+        let briefs = { ...aiSummariesRef.current };
+        // ⚡ Récupère TOUTES les actualités non encore synthétisées (zéro limite arbitraire)
+        const rawUnbriefed = pickUnbriefed(targetItems || [], briefs, 0);
+        if (!rawUnbriefed.length) return;
+
+        // 🎯 PRIORITÉ ABSOLUE : Traiter immédiatement les articles visibles à l'écran
+        // (articles en français / traduits avec les meilleures notes en premier)
+        const unbriefed = [...rawUnbriefed].sort((a, b) => {
+          const aFr = (a.lang === "fr" || Boolean(a.titleFr)) ? 1 : 0;
+          const bFr = (b.lang === "fr" || Boolean(b.titleFr)) ? 1 : 0;
+          if (aFr !== bFr) return bFr - aFr;
+          return (b.score || 0) - (a.score || 0) || (b.ts || 0) - (a.ts || 0);
+        });
+
+        // Découpe en lots de 6 articles (très stable, rapide, haute précision de parsing)
+        const BATCH_SIZE = 6;
+        const batches = [];
+        for (let i = 0; i < unbriefed.length; i += BATCH_SIZE) {
+          batches.push(unbriefed.slice(i, i + BATCH_SIZE));
+        }
+
+        const totalBatches = batches.length;
+        for (let idx = 0; idx < batches.length; idx++) {
+          const batch = batches[idx];
+          if (!batch || !batch.length) continue;
+
+          // Retry jusqu'à 3 tentatives avec bascule transparente Groq -> Gemini
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              if (attempt > 0) await new Promise(r => setTimeout(r, 600 * attempt));
+              const got = await generateBatchExecutiveBriefs(batch, aiCall, null, callClaude);
+              if (got && Object.keys(got).length > 0) {
+                briefs = capMap({ ...briefs, ...got }, 800);
+                aiSummariesRef.current = briefs;
+                setAiSummaries(briefs);
+                saveAiSummariesMap(briefs).catch(() => {});
+                try { safeStorage.set("tech_intel_ai_summaries_v2", JSON.stringify(briefs)); } catch {}
+                (targetItems || []).forEach(it => {
+                  const b = got[it.id] || (it.url && got[it.url]) || (it.titleFr && got[it.titleFr]) || (it.title && got[it.title]);
+                  if (b) it.aiSummary = b;
+                });
+                setItems(prevItems => (prevItems || []).map(it => {
+                  const b = got[it.id] || (it.url && got[it.url]) || (it.titleFr && got[it.titleFr]) || (it.title && got[it.title]);
+                  return b ? { ...it, aiSummary: b } : it;
+                }));
+                break; // Succès, passe au lot suivant
+              }
+            } catch (err) {
+              console.debug(`[TechIntelView] Batch ${idx + 1}/${totalBatches} tentative ${attempt + 1}:`, err?.message);
+            }
+          }
+
+          if (onProgress && totalBatches > 0) {
+            onProgress(idx + 1, totalBatches);
+          }
+          // Pause de 500ms pour garantir le respect strict des quotas et éviter les 429
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } catch (briefErr) {
+        console.debug("Comprehensive brief generation pass error:", briefErr);
+      } finally {
+        isBatchBriefingRef.current = false;
+      }
+    };
+
+    // 🚀 0. Vérification du lot pré-calculé ultra-rapide (< 1 s au clic)
+    const customProxy = (typeof import.meta !== "undefined" && import.meta.env?.VITE_PROXY_URL) || "";
+    if (customProxy && _newsReadySupported) {
+      try {
+        const readyRes = await fetchWithTimeout(`${customProxy.replace(/\/+$/, "")}/news-ready.json`, { headers: { Accept: "application/json" } }, 2500);
+        if (readyRes.ok) {
+          const readyData = await readyRes.json();
+          const ageMs = Date.now() - (readyData?.ts || 0);
+          if (Array.isArray(readyData?.items) && readyData.items.length >= 10 && ageMs < 30 * 60 * 1000) {
+            const cutoffR = Date.now() - NEWS_MAX_AGE_MS;
+            const validThemes = new Set(["ai", "cyber", "cloud", "dev", "world"]);
+            let readyFresh = readyData.items.filter(i => (i.ts || 0) >= cutoffR && !deletedIdsRef.current.has(i.id));
+            readyFresh = readyFresh.filter(i => {
+              const th = getArticleTheme(i);
+              return th && validThemes.has(th.id);
+            });
+            if (readyFresh.length > 0) {
+              readyFresh = enrichWithVault(readyFresh);
+              const mergedMap = new Map();
+              (items || []).forEach(it => {
+                if (it?.id && !deletedIdsRef.current.has(it.id) && (it.ts || 0) >= cutoffR) {
+                  const th = getArticleTheme(it);
+                  if (th && validThemes.has(th.id)) mergedMap.set(it.id, it);
+                }
+              });
+              readyFresh.forEach(it => mergedMap.set(it.id, it));
+              let finalItems = dedupeWithCoverage(Array.from(mergedMap.values()).sort((a, b) => (b.ts - a.ts) || (b.score - a.score)));
+              
+              const nowR = Date.now();
+              updateLastRefresh(nowR);
+              memoryCache_techIntel = { items: finalItems, ts: nowR };
+              try { await saveArticleList(finalItems); } catch {}
+              
+              setItems(finalItems);
+              setIsOnline(true);
+              const snap = { now: nowR, taste: tasteRef.current, aiScores: { ...aiScoresRef.current } };
+              saveRankSnapshot(safeStorage, snap);
+              setRankSnapshot(snap);
+              if (!silent) setProgress(70);
+
+              // ⚡ Synthèse immédiate et intégrale de TOUTES les actualités du lot Edge
+              await runBriefings(finalItems, (done, total) => {
+                if (!silent && total > 0) {
+                  setProgress(70 + Math.round((done / total) * 28));
+                }
+              });
+
+              if (!silent) {
+                setProgress(100);
+                showToast?.("Actualités prêtes et 100% synthétisées !", "success");
+              }
+              setLoading(false);
+              return;
+            }
+          }
+        } else if (readyRes.status === 400 || readyRes.status === 404) {
+          _newsReadySupported = false;
+          try { sessionStorage.setItem("mm_news_ready_supported", "false"); } catch {}
+        }
+      } catch (err) {
+        console.debug("Edge news-ready.json fallback vers pipeline complet:", err?.message);
+      }
+
+      // 🚀 Moisson Edge pré-agrégée en priorité absolue (1 requête = 200 actus en <200ms)
+      try {
+        const edgeRes = await fetchWithTimeout(`${customProxy.replace(/\/+$/, "")}/feed.json`, { headers: { Accept: "application/json" } }, 3500);
+        if (edgeRes.ok) {
+          const edgeData = await edgeRes.json();
+          if (Array.isArray(edgeData?.items) && edgeData.items.length > 0) {
+            all.push(...edgeData.items);
+          }
+        }
+      } catch (err) {
+        console.debug("Edge feed.json fallback:", err?.message);
+      }
+    }
 
     // Pool haute performance à 8 sources en parallèle avec coupe-circuit adaptatif
     const concurrency = 16;
@@ -1830,9 +2266,10 @@ export default function TechIntelView({
         const m = new Map();
         (prev || []).forEach(it => { if (it?.id) m.set(it.id, it); });
         batch.forEach(it => m.set(it.id, { ...(m.get(it.id) || {}), ...it }));
-        return Array.from(m.values()).sort((a, b) => (b.ts - a.ts) || (b.score - a.score));
+        const list = Array.from(m.values()).sort((a, b) => (b.ts - a.ts) || (b.score - a.score));
+        return dedupeWithCoverage(list);
       });
-      if (!firstFlushDone) { firstFlushDone = true; setLoading(false); }
+      if (!firstFlushDone) { firstFlushDone = true; }
     };
     const schedulePartialFlush = () => {
       if (flushTimer) return;
@@ -1842,7 +2279,7 @@ export default function TechIntelView({
     const runTaskWithTimeout = async (task) => {
       let tId;
       const timeoutP = new Promise((_, reject) => {
-        tId = setTimeout(() => reject(new Error('Feed timeout')), 14000);
+        tId = setTimeout(() => reject(new Error('Feed timeout')), 9000);
       });
       try {
         return await Promise.race([task.run(), timeoutP]);
@@ -1856,17 +2293,23 @@ export default function TechIntelView({
         if (!task) break;
         try {
           const res = await runTaskWithTimeout(task);
-          if (Array.isArray(res) && res.length) { all.push(...res); schedulePartialFlush(); }
+          if (Array.isArray(res) && res.length) {
+            const st = stabilizeNewsTimestamps(res, firstSeen);
+            firstSeen = st.map;
+            all.push(...st.items);
+            schedulePartialFlush();
+          }
         } catch (e) {
           failed.push(task.name);
           console.debug(`RSS [${task.name}]:`, e?.message);
         } finally {
           done++;
-          setProgress(Math.round((done / total) * 100));
+          setProgress(Math.round((done / total) * 45));
         }
       }
     });
     await Promise.all(workers);
+    saveFirstSeen(safeStorage, firstSeen);
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
 
     // ✅ Phase 1.1 — Déduplication par URL canonique (évite les doublons cross-sources)
@@ -1910,6 +2353,9 @@ export default function TechIntelView({
     let combined = Array.from(mergedMap.values());
     combined.sort((a, b) => (b.ts - a.ts) || (b.score - a.score));
 
+    // ✅ Déduplication stricte finale par URL canonique et titre normalisé (zéro doublon à l'écran)
+    combined = dedupeWithCoverage(combined);
+
     // Aucune source n'a répondu et aucun article en cache : on informe sans vider
     if (combined.length === 0) {
       setErrors(failed);
@@ -1927,28 +2373,24 @@ export default function TechIntelView({
         const vault = loadTranslationVault();
         let updatedVault = false;
         const translateFast = async () => {
-          await Promise.allSettled(
-            priorityEn.map(async (item) => {
-              const [titleFr, descriptionFr] = await Promise.all([
-                translateToFrench(item.title || ""),
-                item.description ? translateToFrench(item.description) : Promise.resolve("")
-              ]);
-              if (titleFr && (!item.title || titleFr.trim() !== item.title.trim())) {
-                item.titleFr = titleFr;
-                item.descriptionFr = descriptionFr;
-                const entry = { titleFr, descriptionFr };
-                vault[item.id] = entry;
-                if (item.url) vault[item.url] = entry;
-                vault[item.title] = entry;
-                updatedVault = true;
-              }
-            })
-          );
+          for (const item of priorityEn) {
+            const titleFr = await translateToFrench(item.title || "");
+            const descriptionFr = item.description ? await translateToFrench(item.description) : "";
+            if (titleFr && (!item.title || titleFr.trim() !== item.title.trim())) {
+              item.titleFr = titleFr;
+              item.descriptionFr = descriptionFr;
+              const entry = { titleFr, descriptionFr };
+              vault[item.id] = entry;
+              if (item.url) vault[item.url] = entry;
+              vault[item.title] = entry;
+              updatedVault = true;
+            }
+          }
         };
         let tId;
         await Promise.race([
           translateFast(),
-          new Promise((resolve) => { tId = setTimeout(resolve, 400); })
+          new Promise((resolve) => { tId = setTimeout(resolve, 1500); })
         ]).finally(() => clearTimeout(tId));
         if (updatedVault) saveTranslationVault(vault);
       } catch (err) {
@@ -1956,10 +2398,115 @@ export default function TechIntelView({
       }
     }
 
-    // Affichage atomique : la liste fusionnée est mise à jour en un seul bloc stable
+    // 🚀 Affichage instantané du flux (zéro écran blanc : les cartes s'affichent immédiatement)
     setItems(combined);
-    setLoading(false);
 
+    // 🚀 Pipeline PARALLÈLE avec budget global < 1 min : explications IA, corps complets,
+    // notation IA et textes intégraux tournent EN MÊME TEMPS (au lieu de l'un après l'autre).
+    const REFRESH_BUDGET_MS = 240000;
+    const budgetStart = Date.now();
+    const withinBudget = (p, ms) => {
+      let tId;
+      return Promise.race([
+        Promise.resolve(p).catch(() => {}),
+        new Promise(r => { tId = setTimeout(r, Math.max(0, ms ?? (REFRESH_BUDGET_MS - (Date.now() - budgetStart)))); }),
+      ]).finally(() => clearTimeout(tId));
+    };
+    const runStages = async () => {
+    // ⚡ 1. Génération groupée ultra-rapide des explications IA claires et nettes (prêtes avant la fin du refresh)
+    if (callClaude && typeof navigator !== "undefined" && navigator.onLine) {
+      try {
+        const freshExplanations = await batchGenerateClearExplanations(combined, callClaude, aiSummariesRef.current);
+        if (freshExplanations && Object.keys(freshExplanations).length > 0) {
+          saveAiSummaries(freshExplanations);
+          saveAiSummariesMap(freshExplanations).catch(() => {});
+          combined.forEach(it => {
+            if (freshExplanations[it.id]) it.aiSummary = freshExplanations[it.id];
+          });
+          setItems([...combined]);
+        }
+      } catch (err) {
+        console.debug("Batch explanation pass:", err);
+      }
+    }
+
+    // 📦 2. Ingestion des corps complets déjà embarqués dans le flux RSS
+    const embeddedBodies = {};
+    (combined || []).forEach(it => {
+      if (it?.id && it.fullContent && it.fullContent.length > 150) {
+        embeddedBodies[it.id] = it.fullContent;
+      }
+    });
+
+    // ⚡ 3. Hydratation hors-ligne intégrale : prépare les corps complets de chaque article
+    // Les corps complets sont préparés UNE seule fois par le préchargement (prefetchOfflineRef) :
+    // plus de seconde passe concurrente qui retéléchargeait les mêmes pages.
+    if (false) {
+      try {
+        const existingBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, ...embeddedBodies };
+        const freshBodies = await batchHydrateOfflineBodies(combined, callClaude, existingBodies);
+        if (freshBodies && Object.keys(freshBodies).length > 0) {
+          const allBodies = { ...existingBodies, ...freshBodies };
+          setFullArticleMap(prev => ({ ...prev, ...allBodies }));
+          setBodyFrMap(prev => ({ ...prev, ...allBodies }));
+          await saveArticleBodies(allBodies).catch(() => {});
+        } else if (Object.keys(embeddedBodies).length > 0) {
+          setFullArticleMap(prev => ({ ...embeddedBodies, ...prev }));
+          setBodyFrMap(prev => ({ ...embeddedBodies, ...prev }));
+          await saveArticleBodies(embeddedBodies).catch(() => {});
+        }
+      } catch (err) {
+        console.debug("Batch body hydration pass:", err);
+      }
+    } else if (Object.keys(embeddedBodies).length > 0) {
+      setFullArticleMap(prev => ({ ...embeddedBodies, ...prev }));
+      setBodyFrMap(prev => ({ ...embeddedBodies, ...prev }));
+      saveArticleBodies(embeddedBodies).catch(() => {});
+    }
+
+    };
+    const runScoring = async () => {
+      try {
+        const scoreDeadline = budgetStart + REFRESH_BUDGET_MS - 2000;
+        let scores = { ...aiScoresRef.current };
+        for (let round = 0; round < 40 && Date.now() < scoreDeadline; round++) {
+          const batch = pickUnscored(combined, scores);
+          if (!batch.length) break;
+          let got = {};
+          try { got = await scoreBatchWithAi(batch, aiCall); } catch { break; }
+          if (!got || !Object.keys(got).length) break;
+          scores = capMap({ ...scores, ...got }, 800);
+          aiScoresRef.current = scores;
+        }
+        aiScoresRef.current = scores;
+        setAiScores(scores);
+        try { safeStorage.set(AI_SCORE_KEY, JSON.stringify(scores)); } catch {}
+      } catch {}
+    };
+
+    setProgress(50);
+    await withinBudget(Promise.all([runStages(), runScoring()]), 4000);
+
+    // ⚡ Synthèse IA exhaustive de TOUTES les actualités sans coupure arbitraire
+    setProgress(60);
+    await runBriefings(combined, (done, total) => {
+      if (!silent && total > 0) {
+        setProgress(60 + Math.round((done / total) * 35));
+      }
+    });
+
+    // ⚡ Textes intégraux : préchargement réel et approfondi pour garantir une disponibilité 100% hors-ligne
+    if (!silent && prefetchOfflineRef.current) {
+      await withinBudget(
+        prefetchOfflineRef.current(combined, (d, t) => {
+          if (t > 0) setProgress(50 + Math.round((d / t) * 45));
+        }),
+        200000
+      );
+    }
+    setProgress(96);
+
+    // 💾 4. Sauvegarde atomique dans IndexedDB & session
     const deduped2 = combined;
     const now = Date.now();
     updateLastRefresh(now);
@@ -1967,6 +2514,14 @@ export default function TechIntelView({
     memoryCache_techIntel = c;
     try {
       await saveArticleList(combined);
+      const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current };
+      await saveArticleBodies(allBodies);
+      // ☁️ Sauvegarde transparente sur Firestore en tâche de fond (partage inter-appareils)
+      const itemsToSync = combined.map(it => ({
+        ...it,
+        bodyFr: allBodies[it.id] || it.bodyFr || ""
+      }));
+      publishNewsToCloud(itemsToSync, now).catch(() => {});
       try {
         localStorage.removeItem("memomaitre_" + CACHE_KEY);
         localStorage.removeItem("memomaitre_" + CACHE_KEY + "_ts");
@@ -1974,27 +2529,36 @@ export default function TechIntelView({
       } catch {}
     } catch (e) {
       console.warn("Cache IndexedDB KO:", e);
-      // Fallback sessionStorage (survie à la session)
       try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(c)); } catch {}
     }
-    // Ingestion immédiate des corps complets déjà embarqués dans le flux RSS
-    const embeddedBodies = {};
-    (combined || []).forEach(it => {
-      if (it?.id && it.fullContent && it.fullContent.length > 150) {
-        embeddedBodies[it.id] = it.fullContent;
-      }
-    });
-    if (Object.keys(embeddedBodies).length > 0) {
-      setFullArticleMap(prev => ({ ...embeddedBodies, ...prev }));
-      setBodyFrMap(prev => ({ ...embeddedBodies, ...prev }));
-      saveArticleBodies(embeddedBodies).catch(() => {});
-    }
 
-    setErrors(failed);
-    // 📥 Préparation hors-ligne intégrale : extrait et traduit immédiatement tous les corps d'articles
-    prefetchOfflineRef.current?.(combined);
-    setLoading(false);
-  }, [callClaude, customFeeds, enabledSources, translateItems, showToast]);
+      // 🎯 5. Tout est 100% prêt : résumés IA + corps complets en IndexedDB
+      const allBriefs = aiSummariesRef.current || {};
+      const enrichedCombined = combined.map(it => {
+        const b = it.aiSummary || allBriefs[it.id] || (it.url && allBriefs[it.url]) || (it.titleFr && allBriefs[it.titleFr]) || (it.title && allBriefs[it.title]);
+        return b ? { ...it, aiSummary: b } : it;
+      });
+      setItems(enrichedCombined);
+      setIsOnline(true);
+      setErrors(failed);
+      // 🔒 Classement définitif : figé maintenant, identique jusqu'à la prochaine actualisation.
+      const snap = { now: Date.now(), taste: tasteRef.current, aiScores: { ...aiScoresRef.current } };
+      saveRankSnapshot(safeStorage, snap);
+      setRankSnapshot(snap);
+      if (!silent) {
+        setProgress(100);
+      }
+      if (!silent) {
+        showToast?.("Actualités et articles complets prêts (100% hors-ligne) !", "success");
+      }
+    } catch (err) {
+      console.warn("[TechIntelView] Erreur dans fetchAll:", err);
+      if (!silent) showToast?.("Flux actualisé avec les éléments disponibles", "info");
+    } finally {
+      setLoading(false);
+    }
+  }, [callClaude, customFeeds, enabledSources, translateItems, showToast, saveAiSummaries]);
+
 
   const fetchDigest = useCallback(async (currentItems = []) => {
     const today = localToday || new Date().toISOString().slice(0, 10);
@@ -2076,17 +2640,47 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   useEffect(() => {
     let active = true;
     async function init() {
-      // 1. Restauration instantanée IndexedDB (0ms : actus + corps complets)
+      // 1. Restauration instantanée IndexedDB (0ms : actus + corps complets + résumés IA)
       try {
-        const [{ items: cachedList, lastListAt }, cachedBodies] = await Promise.all([
+        try {
+          safeStorage.remove('tech_intel_full_articles_v2');
+          safeStorage.remove('tech_intel_body_fr_v1');
+          for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i);
+            if (k && (k.startsWith('tech_intel_full_') || k.startsWith('tech_intel_body_fr_'))) {
+              localStorage.removeItem(k);
+            }
+          }
+        } catch {}
+
+        const [{ items: cachedList, lastListAt }, cachedBodies, cachedSummaries] = await Promise.all([
           loadArticleListMeta(),
           loadArticleBodies(),
+          loadAiSummariesMap().catch(() => ({})),
         ]);
         if (!active) return;
         if (cachedBodies && typeof cachedBodies === "object" && Object.keys(cachedBodies).length > 0) {
           setFullArticleMap(prev => ({ ...cachedBodies, ...prev }));
           setBodyFrMap(prev => ({ ...cachedBodies, ...prev }));
         }
+        if (cachedSummaries && typeof cachedSummaries === "object" && Object.keys(cachedSummaries).length > 0) {
+          setAiSummaries(prev => ({ ...cachedSummaries, ...prev }));
+        }
+        // 1bis. Synchronisation Cloud Firestore transparente (partage inter-appareils)
+        loadNewsFromCloud().then((cloudData) => {
+          if (!active || !cloudData?.items?.length) return;
+          const cloudBodies = {};
+          cloudData.items.forEach((it) => {
+            if (it?.id && it.bodyFr && it.bodyFr.length >= 80) {
+              cloudBodies[it.id] = it.bodyFr;
+            }
+          });
+          if (Object.keys(cloudBodies).length > 0) {
+            setFullArticleMap((prev) => ({ ...cloudBodies, ...prev }));
+            setBodyFrMap((prev) => ({ ...cloudBodies, ...prev }));
+            saveArticleBodies(cloudBodies).catch(() => {});
+          }
+        }).catch(() => {});
         if (Array.isArray(cachedList) && cachedList.length > 0) {
           memoryCache_techIntel = { items: cachedList, ts: lastListAt || Date.now() };
           setItems(enrichWithVault(cachedList));
@@ -2158,51 +2752,45 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     }
   }, [tab, digest, items, loading, fetchDigest]);
 
-  // Pas de boucle de traduction intempestive en arrière-plan qui insère brusquement des cartes dans le flux visible.
-  // Les articles prioritaires sont traduits à l'actualisation, et la lecture individuelle traduit à la demande.
+  // ⚡ Génération dynamique en tâche de fond des Executive Briefings (synthèses haute densité)
+  useEffect(() => {
+    if (!items || items.length === 0 || !navigator.onLine || loading || isBatchBriefingRef.current) return;
+    const rawUnbriefed = pickUnbriefed(items, aiSummariesRef.current, 0);
+    if (!rawUnbriefed.length) return;
 
-  // ✅ Phase 2.2 — Prefetch automatique avec Circuit-Breaker (God Mode Offline)
-  const runPrefetch = useCallback(async () => {
-    if (prefetchRunning || !callClaude || !navigator.onLine || prefetchAttemptedRef.current) return;
-    prefetchAttemptedRef.current = true;
-    setPrefetchRunning(true);
-    prefetchAttemptedRef.current = true;
-    
-    // On limite à 5 articles maximum
-    const toProcess = items
-      .filter(i => i.score >= 1 && !summaryCache.current[i.id])
-      .slice(0, 5);
-      
-    if (toProcess.length === 0) { setPrefetchRunning(false); return; }
-    setPrefetchProgress({ done: 0, total: toProcess.length });
-    
-    for (let i = 0; i < toProcess.length; i++) {
-      const item = toProcess[i];
-      if (isGeminiLikelyUnavailable()) break;
-      
-      if (i > 0) await new Promise(r => setTimeout(r, 2000));
-      
+    // Priorise les articles visibles à l'écran (FR / traduits et hauts scores d'abord)
+    const prioritized = [...rawUnbriefed].sort((a, b) => {
+      const aFr = (a.lang === "fr" || Boolean(a.titleFr)) ? 1 : 0;
+      const bFr = (b.lang === "fr" || Boolean(b.titleFr)) ? 1 : 0;
+      if (aFr !== bFr) return bFr - aFr;
+      return (b.score || 0) - (a.score || 0) || (b.ts || 0) - (a.ts || 0);
+    });
+    const unbriefed = prioritized.slice(0, 6);
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
       try {
-        const story = await generateCompleteStory(item, callClaude);
-        if (story?.paragraphs?.length > 0) {
-          setSummaryEntry(summaryCache.current, item.id, story);
-          persistCache(SUMMARY_LS_KEY, summaryCache.current);
-          setSummaryVersion(v => v + 1);
+        const got = await generateBatchExecutiveBriefs(unbriefed, aiCall, null, callClaude);
+        if (!cancelled && got && Object.keys(got).length > 0) {
+          setAiSummaries(prev => {
+            const updated = capMap({ ...prev, ...got }, 800);
+            aiSummariesRef.current = updated;
+            saveAiSummariesMap(updated).catch(() => {});
+            try { safeStorage.set("tech_intel_ai_summaries_v2", JSON.stringify(updated)); } catch {}
+            return updated;
+          });
+          setItems(prevItems => (prevItems || []).map(it => {
+            const b = got[it.id] || (it.url && got[it.url]) || (it.titleFr && got[it.titleFr]) || (it.title && got[it.title]);
+            return b ? { ...it, aiSummary: b } : it;
+          }));
         }
-      } catch (e) {
-        console.warn("[TechIntel] Prefetch suspendu — IA indisponible", e);
-        break; // Arrêt d'urgence immédiat pour libérer le thread UI
+      } catch (err) {
+        console.debug("[TechIntelView] Auto-briefing pass error:", err?.message);
       }
-      
-      setPrefetchProgress({ done: i + 1, total: toProcess.length });
-      await new Promise(r => setTimeout(r, 1200));
-    }
-    
-    setTimeout(() => setPrefetchProgress(null), 2000);
-    setPrefetchRunning(false);
-  }, [items, callClaude, prefetchRunning]);
+    }, 500);
 
-  // Le prefetch automatique en arrière-plan a été supprimé pour éviter les requêtes IA non sollicitées
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [items, aiSummaries, aiCall, callClaude, saveAiSummariesMap]);
 
 
   // ✅ Phase 2.1 — IntersectionObserver pour le scroll virtuel
@@ -2225,13 +2813,23 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   // ─ Filtered items ─
   const filtered = useMemo(() => {
     const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-    const nowMs = Date.now();
-    
-    let res = items.filter(i => {
-      if (deletedIds.has(i.id)) return false;
+    // Tout est figé sur l'instant de la dernière actualisation : l'ordre ne bouge plus entre deux visites.
+    const nowMs = rankSnapshot?.now || Date.now();
+    const frozenScores = rankSnapshot?.aiScores || {};
+    const rankOpts = { now: nowMs, taste: rankSnapshot?.taste || null, themeOf: themeOfItem };
+    let res = items.map(i => {
+      const related = coverageMap[i.id] || [];
+      const srcCount = 1 + related.length;
+      return {
+        ...i,
+        sourceCount: Math.max(i.sourceCount || 1, srcCount),
+        aiScore: typeof frozenScores[i.id] === "number" ? frozenScores[i.id] : undefined,
+      };
+    }).filter(i => {
+      // « Passer » masque l'article du flux, mais un favori reste visible dans l'onglet Favoris (72 h).
+      if (deletedIds.has(i.id) && !(tab === "saved" && savedIds.has(i.id))) return false;
       // En ligne : plus de 24h = masqué. Hors ligne : on garde le cache lisible.
-      if (savedIds.has(i.id)) return true;
-      return (nowMs - (i.ts || 0)) <= ageLimit;
+      return isVisibleByAge(i, { ageLimit, now: nowMs, saved: savedIds.has(i.id), read: readIds.has(i.id) });
     });
     
     const tokens = normalizeText(query).split(" ").filter(Boolean);
@@ -2242,12 +2840,12 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       if (feedFilter === "relevant" && tab !== "github") {
         res = res.filter(i => (i.score || 0) >= 3 || trendScore(i) >= 7);
       }
-      return [...res].sort((a, b) => (b.score - a.score) || (b.ts - a.ts));
+      return sortNews(res, { mode: "relevance", ...rankOpts });
     }
 
     if (tab === "saved")   res = res.filter(i => savedIds.has(i.id));
     // ✅ Phase 3.3 — Score de tendance réel (décroissance temporelle)
-    else if (tab === "top")     res = [...res].sort((a, b) => trendScore(b) - trendScore(a)).slice(0, 300);
+    else if (tab === "top")     res = sortNews(res, { mode: "relevance", ...rankOpts }).slice(0, 300);
     else if (tab === "fr")      res = res.filter(i => i.lang === "fr" || (Boolean(i.titleFr) && i.titleFr.trim() !== (i.title || "").trim()));
     else if (tab === "github")  res = res.filter(i => i.kind === "github");
     else if (tab === "youtube") res = res.filter(i => i.kind === "youtube");
@@ -2271,19 +2869,34 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     }
 
     // ✅ Phase 2.4 — Filtre temporel
-    if (dateFilter === 'today') res = res.filter(i => Date.now() - (i.ts || 0) < 86400000);
-    else if (dateFilter === 'week') res = res.filter(i => Date.now() - (i.ts || 0) < 604800000);
+    if (dateFilter === 'today') res = res.filter(i => nowMs - (i.ts || 0) < 86400000);
+    else if (dateFilter === 'week') res = res.filter(i => nowMs - (i.ts || 0) < 604800000);
 
     // ✅ Phase 2.4 — Tri explicite
-    return [...res].sort((a, b) => {
-      if (sortMode === 'recent')  return (b.ts || 0) - (a.ts || 0);
-      if (sortMode === 'popular') return ((b.votes || b.stars || 0) - (a.votes || a.stars || 0));
-      // 'relevance' : par score puis par timestamp (stable)
-      return (b.score - a.score) || (b.ts - a.ts);
-    });
-  }, [items, tab, readIds, deletedIds, savedIds, query, sortMode, dateFilter, feedFilter, selectedTheme, ageLimit]);
+    // L'onglet Top garde toujours son classement « meilleurs d'abord »
+    return sortNews(res, { mode: tab === "top" ? "relevance" : sortMode, ...rankOpts });
+  }, [items, tab, readIds, deletedIds, savedIds, query, sortMode, dateFilter, feedFilter, selectedTheme, ageLimit, rankSnapshot, themeOfItem, coverageMap]);
 
   const listItems = filtered;
+
+  // 🔥 « À ne pas rater » : articles non lus à très haute note
+  const mustNotMissItems = useMemo(() => {
+    const fs = rankSnapshot?.aiScores || {};
+    const pool = items.filter(i => !deletedIds.has(i.id)).map(i => typeof fs[i.id] === "number" ? { ...i, aiScore: fs[i.id] } : { ...i, aiScore: undefined });
+    const base = mustNotMiss(pool, { readIds, now: rankSnapshot?.now || Date.now() });
+    // 🛰️ Événements majeurs (Tesla Roadster, lancement Gemini…) épinglés même avec une seule source.
+    const kw = watchKeywords;
+    const now = rankSnapshot?.now || Date.now();
+    const seen = new Set(base.map(i => i.id));
+    const majors = pool
+      .filter(i => !seen.has(i.id) && !readIds.has(i.id) && now - (i.ts || 0) < 48 * 3600000 && isMajorEvent(i, kw))
+      .sort((a, b) => mustNotMissBoost(b, kw) - mustNotMissBoost(a, kw) || (b.ts || 0) - (a.ts || 0))
+      .slice(0, 5);
+    return [...majors, ...base];
+  }, [items, deletedIds, readIds, rankSnapshot, watchKeywords]);
+
+  // 🤖 La notation IA se fait pendant « Actualiser » (voir fetchAll), jamais après :
+  // sinon l'ordre changerait sous les yeux du lecteur.
 
   const readArticle = useCallback(async (item) => {
     if (!item) return;
@@ -2311,6 +2924,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       setReadSummary(story);
       setSummaryVersion(v => v + 1);
       
+      learnTaste(item, "read");
       setReadIds(prev => {
         if (prev.has(item.id)) return prev;
         const next = new Set(prev);
@@ -2320,7 +2934,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       });
     } catch { showToast?.("Chargement impossible", "error"); }
     finally { setReading(false); }
-  }, [showToast, callClaude]);
+  }, [showToast, callClaude, learnTaste]);
 
   // Pas de boucle de traduction automatique continue qui fait pop-in de nouvelles cartes sous les yeux de l'utilisateur.
   // Les actus anglophones prioritaires sont déjà francisées lors du fetch, et le reste se traduit à la demande (JIT).
@@ -2346,6 +2960,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     }
 
     setDismissingIds(prev => new Set(prev).add(item.id));
+    learnTaste(item, "dismiss");
 
     setTimeout(() => {
       setDeletedIds(prev => {
@@ -2367,7 +2982,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       setUndoArticle(null);
       undoTimerRef.current = null;
     }, 5000);
-  }, [speakingId]);
+  }, [speakingId, learnTaste]);
 
   const handleUndoDismiss = useCallback(() => {
     if (!undoArticle?.id) return;
@@ -2394,61 +3009,157 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   // pour les actus visibles : à l'ouverture, tout est déjà là.
   const articleJobsRef = useRef(new Map());
   const [articleStatus, setArticleStatus] = useState({}); // id -> 'loading' | 'failed'
-  const ensureFrenchArticle = useCallback((item, force = false) => {
+  const ensureFrenchArticle = useCallback((item, force = false, options = {}) => {
     if (!item?.id) return Promise.resolve();
-    if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      // Hors-ligne : le texte local et résumés déjà stockés sont utilisés immédiatement sans requête
-      const local = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || item.descriptionFr || item.description || "";
-      if (local && (item.lang === "fr" || item.descriptionFr)) {
-        saveFrenchBody(item.id, cleanEditorialText(local) || local);
-      }
-      return Promise.resolve();
-    }
+    const allowAi = options?.allowAi ?? true;
     const existing = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || "";
-    if (!force && existing && !isTeaserSnippet(existing, item)) return Promise.resolve();
-    const jobs = articleJobsRef.current;
-    if (jobs.has(item.id)) return jobs.get(item.id);
+    const isAiFallback = aiWrittenIds.has(item.id);
+    if (!force && !isAiFallback && existing && !isTeaserSnippet(existing, item, { allowShort: true }) && existing.length >= 450 && looksFrench(existing)) return Promise.resolve(existing);
 
-    // Extraction 100% silencieuse en arrière-plan sans bloquer l'UI
-    const job = (async () => {
-      let source = fullArticleMapRef.current[item.id] || "";
-      if (isTeaserSnippet(source, item)) source = "";
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
-      if (!source && item.fullContent && !isTeaserSnippet(item.fullContent, item)) {
-        source = item.fullContent;
-        saveFullArticle(item.id, source);
-      }
-      if (!source && item.url) {
-        const raw = await extractFullArticleText(item).catch(() => "");
-        const paras = extractUniversalArticleParagraphs(raw || "", item);
-        const cleaned = paras.join("\n\n").trim();
-        if (cleaned && !isTeaserSnippet(cleaned, item)) {
-          source = cleaned;
-          saveFullArticle(item.id, cleaned);
-        }
-      }
-      if (!source && callClaude && item.url) {
+    // ⚡ Tentative de restauration depuis IndexedDB si manquant en mémoire (crucial en mode hors ligne)
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return (async () => {
         try {
-          const aiContext = await callClaude(
-            "Tu es un journaliste et analyste tech expert. Rédige un article complet et approfondi en français (4 à 6 paragraphes détaillés) expliquant cette actualité, le contexte technique, les acteurs impliqués et les implications pratiques pour les développeurs.",
-            `Titre : "${item.titleFr || item.title}"\nSource : ${item.source || "Tech"}\nLien : ${item.url}\nRésumé initial : ${item.description || item.descriptionFr || ""}`,
-            { maxTokens: 1200 }
-          );
-          const aiText = typeof aiContext === 'string' ? aiContext : (aiContext?.text || '');
-          if (aiText && aiText.trim().length > 200) {
-            source = aiText.trim();
-            saveFullArticle(item.id, source);
+          const cachedBodies = await loadArticleBodies();
+          const fromDb = cachedBodies?.[item.id];
+          if (fromDb && fromDb.length >= 80 && looksFrench(fromDb) && !isTeaserSnippet(fromDb, item, { allowShort: true })) {
+            saveFullArticle(item.id, fromDb);
+            saveFrenchBody(item.id, fromDb);
+            return fromDb;
           }
         } catch {}
-      }
-      if (!source) source = cleanEditorialText(item.descriptionFr || item.description || "");
-      if (!source) return;
-      const frenchBody = item.lang === "fr" ? source : await translateToFrench(source, { strict: true });
-      if (!frenchBody) return;
-      saveFrenchBody(item.id, frenchBody);
-    })()
+        return null;
+      })();
+    }
+    const jobs = articleJobsRef.current;
+    if (force) {
+      jobs.delete(item.id);
+    } else if (jobs.has(item.id)) {
+      return jobs.get(item.id);
+    }
+
+    // Extraction et synthèse IA ultra-rapide sans bloquer l'UI
+    const job = Promise.race([
+      (async () => {
+        let source = fullArticleMapRef.current[item.id] || "";
+        if (force || aiWrittenIds.has(item.id) || isTeaserSnippet(source, item) || source.length < 450) source = "";
+        if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+        if (!source && item.fullContent && item.fullContent.length >= 450 && !isTeaserSnippet(item.fullContent, item)) {
+          source = item.fullContent;
+          saveFullArticle(item.id, source);
+        }
+        if (!source && item.url) {
+          let tId;
+          const fastFetchP = Promise.race([
+            extractFullArticleText(item),
+            new Promise((_, reject) => { tId = setTimeout(() => reject(new Error("Timeout")), 45000); })
+          ]).finally(() => clearTimeout(tId)).catch(() => "");
+          const raw = await fastFetchP;
+          const paras = extractUniversalArticleParagraphs(raw || "", item);
+          const cleaned = paras.join("\n\n").trim();
+          if (cleaned && !isTeaserSnippet(cleaned, item) && cleaned.length >= 350) {
+            source = cleaned;
+            saveFullArticle(item.id, cleaned);
+            setAiWrittenIds(prev => {
+              if (!prev.has(item.id)) return prev;
+              const next = new Set(prev);
+              next.delete(item.id);
+              return next;
+            });
+          }
+        }
+        // 2bis. Autres sites qui couvrent la même actu : on reprend leur texte réel avant toute IA.
+        const related = findRelatedCoverage(item, itemsRef.current || []);
+        const relatedSnippets = [];
+        if (!source && related.length) {
+          for (const other of related.slice(0, 5)) {
+            const known = fullArticleMapRef.current[other.id] || bodyFrMapRef.current[other.id] ||
+              (other.fullContent && other.fullContent.length >= 350 ? other.fullContent : "");
+            let text = known && !isTeaserSnippet(known, other) ? known : "";
+            if (!text && other.url) {
+              let tR;
+              const raw = await Promise.race([
+                extractFullArticleText(other),
+                new Promise((_, reject) => { tR = setTimeout(() => reject(new Error("Timeout")), 15000); })
+              ]).finally(() => clearTimeout(tR)).catch(() => "");
+              const cleaned = extractUniversalArticleParagraphs(raw || "", other).join("\n\n").trim();
+              if (cleaned && cleaned.length >= 350 && !isTeaserSnippet(cleaned, other)) text = cleaned;
+            }
+            if (text) {
+              source = text;
+              setAiWrittenIds(prev => {
+                if (!prev.has(item.id)) return prev;
+                const next = new Set(prev);
+                next.delete(item.id);
+                return next;
+              });
+              break;
+            }
+            const d = cleanEditorialText(other.descriptionFr || other.description || "");
+            if (d) relatedSnippets.push(`${other.sourceName || other.source} : ${d}`);
+          }
+          if (source) saveFullArticle(item.id, source);
+        }
+
+        // 3. Dernier recours : l'IA, uniquement si autorisée (clic sur « Complet », pas en tâche de fond aveugle)
+        if (allowAi && (!source || source.length < 350 || isTeaserSnippet(source, item)) && callClaude) {
+          try {
+            const facts = [
+              cleanEditorialText(item.descriptionFr || item.description || ""),
+              ...relatedSnippets,
+            ].filter(Boolean).join("\n");
+            const aiContext = await callClaude(
+              NATURAL_NEWS_SYSTEM,
+              `Titre : "${visibleFrenchTitle(item)}"\nSource : ${item.sourceName || item.source || "Tech"}\nCe que disent les sources :\n${facts || "(rien de plus que le titre)"}\n\nRédige un article complet en français (3 à 5 paragraphes détaillés) expliquant l'actualité, son contexte technique et ses implications.`,
+              { maxTokens: 1200, fast: true }
+            ).catch(() => callClaude(
+              NATURAL_NEWS_SYSTEM,
+              `Titre : "${visibleFrenchTitle(item)}"\nCe que disent les sources :\n${facts || "(rien de plus que le titre)"}\n\nRédige en français un article d'actualité complet, approfondi et factuel sur ce sujet.`,
+              { maxTokens: 1200 }
+            ));
+            const aiText = typeof aiContext === 'string' ? aiContext : (aiContext?.text || '');
+            if (aiText && aiText.trim().length >= 200) {
+              source = aiText.trim();
+              saveFullArticle(item.id, source);
+              saveFrenchBody(item.id, cleanEditorialText(source));
+              setAiWrittenIds(prev => new Set(prev).add(item.id));
+            }
+          } catch {}
+        }
+
+        // 4. Repli intelligent immédiat si l'URL est non scrapable (dépôt GitHub, paywall, brève)
+        if (!source || source.length < 350 || isTeaserSnippet(source, item)) {
+          const edDesc = cleanEditorialText(item.descriptionFr || item.description || "");
+          const factParts = [edDesc, ...relatedSnippets].filter(Boolean);
+          if (factParts.length > 0) {
+            const contextIntro = item.source === "GITHUB" || /github\.com/i.test(item.url || "")
+              ? `Projet répertorié sur GitHub concernant « ${visibleFrenchTitle(item)} ».`
+              : "";
+            source = [contextIntro, ...factParts].filter(Boolean).join("\n\n");
+            if (source.length < 200) {
+              source = `${visibleFrenchTitle(item)}.\n\n${source}`;
+            }
+          }
+        }
+
+        if (!source) return;
+
+        // Toujours en français : traducteur, puis IA si besoin. Jamais de texte étranger affiché.
+        let frenchBody = source;
+        if (!looksFrench(source)) {
+          frenchBody = await guaranteeFrench(source, { aiFn: callClaude, timeoutMs: 25000 }).catch(() => "");
+        }
+        if (!frenchBody) frenchBody = source;
+        const cleanBody = cleanEditorialText(frenchBody.trim());
+        if (cleanBody && cleanBody.length >= 80) {
+          saveFullArticle(item.id, cleanBody);
+          saveFrenchBody(item.id, cleanBody);
+        }
+      })(),
+      new Promise(r => setTimeout(r, 120000))
+    ])
       .catch(() => {})
-      .finally(() => { setTimeout(() => jobs.delete(item.id), 20000); });
+      .finally(() => { setTimeout(() => jobs.delete(item.id), 8000); });
     jobs.set(item.id, job);
     return job;
   }, [saveFullArticle, saveFrenchBody, callClaude]);
@@ -2465,65 +3176,128 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
     return items.filter(i => {
       const id = i.id;
       return Boolean(
-        (bodyFrMap[id] && !isTeaserSnippet(bodyFrMap[id], i)) ||
-        (fullArticleMap[id] && !isTeaserSnippet(fullArticleMap[id], i)) ||
-        (i.fullContent && !isTeaserSnippet(i.fullContent, i))
+        (bodyFrMap[id] && !isTeaserSnippet(bodyFrMap[id], i, { allowShort: true }) && bodyFrMap[id].length >= 80) ||
+        (fullArticleMap[id] && !isTeaserSnippet(fullArticleMap[id], i, { allowShort: true }) && fullArticleMap[id].length >= 80) ||
+        (i.fullContent && !isTeaserSnippet(i.fullContent, i, { allowShort: true }) && i.fullContent.length >= 80)
       );
     }).length;
   }, [items, bodyFrMap, fullArticleMap]);
 
-  // 📥 Préparation silencieuse hors-ligne : extrait en tâche de fond le texte complet des
-  // 80 articles les plus récents et pertinents avec un pool haute performance à 6 workers concurrents.
-  const offlinePrefetchRunning = useRef(false);
+  // 📥 Le chargement du texte intégral est désormais 100% à la demande via le bouton "Complet",
+  // éliminant ainsi toute congestion réseau, blocage ou limitation proxy en tâche de fond.
+  // 🔄 Préchargement en arrière-plan, une actu à la fois : article → autres sites → IA (dernier recours,
+  // seulement si le texte est bloqué partout). Ainsi, au clic sur « Complet », le texte est déjà prêt.
+  const bgPrefetchBusyRef = useRef(null); // promesse en cours
+  const bgPrefetchDoneRef = useRef(new Set());
+  const bgPrefetchTriesRef = useRef(new Map());
   useEffect(() => {
-    prefetchOfflineRef.current = async (list) => {
-      if (offlinePrefetchRunning.current || !Array.isArray(list) || list.length === 0) return;
-      if (shouldReduceData()) return;
-      offlinePrefetchRunning.current = true;
-      try {
-        const targets = list
-          .filter(i => i?.id && i.kind !== "github" && i.kind !== "youtube" && isTeaserSnippet(bodyFrMapRef.current[i.id], i) && isTeaserSnippet(fullArticleMapRef.current[i.id], i))
+    // Prépare le texte complet des actus du flux pour une lecture 100% hors-ligne
+    prefetchOfflineRef.current = async (listArg, onProgress) => {
+      while (bgPrefetchBusyRef.current) { try { await bgPrefetchBusyRef.current; } catch {} }
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+      const run = (async () => {
+        const list = (listArg || itemsRef.current || [])
+          .filter(i => i?.id && !bgPrefetchDoneRef.current.has(i.id))
+          .filter(i => {
+            const cur = bodyFrMapRef.current[i.id] || fullArticleMapRef.current[i.id] || "";
+            return !cur || cur.length < 350 || isTeaserSnippet(cur, i, { allowShort: true }) || !looksFrench(cur) || aiWrittenIds.has(i.id);
+          })
           .sort((a, b) => (b.score || 0) - (a.score || 0))
-          .slice(0, 80);
-        if (!targets.length) return;
-        let cursor = 0;
-        const concurrency = 6;
-        const workers = Array.from({ length: Math.min(concurrency, targets.length) }, async () => {
-          while (cursor < targets.length) {
-            const it = targets[cursor++];
-            if (!it) break;
-            if (typeof navigator !== "undefined" && navigator.onLine === false) break;
-            await ensureFrenchArticle(it).catch(() => {});
+          .slice(0, 45); // Élargi aux 45 actus principales pour une disponibilité hors-ligne intégrale
+        let done = 0; let idx = 0;
+        onProgress?.(0, list.length);
+        if (list.length === 0) {
+          onProgress?.(1, 1);
+          return;
+        }
+        const concurrency = 2; // Concurrence douce pour ne jamais inonder les proxys
+        const worker = async () => {
+          while (idx < list.length) {
+            if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+            const item = list[idx++];
+            if (!item) break;
+            try {
+              // En arrière-plan : extraction du texte réel uniquement, sans IA pour préserver les quotas
+              await ensureFrenchArticle(item, false, { allowAi: false });
+              const cur = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || "";
+              const n = (bgPrefetchTriesRef.current.get(item.id) || 0) + 1;
+              bgPrefetchTriesRef.current.set(item.id, n);
+              if ((cur.length >= 350 && looksFrench(cur)) || n >= 2) bgPrefetchDoneRef.current.add(item.id);
+            } catch {
+              bgPrefetchDoneRef.current.add(item.id);
+            }
+            done++;
+            onProgress?.(done, list.length);
+            await new Promise((r) => setTimeout(r, 400));
           }
-        });
-        await Promise.all(workers);
-      } finally {
-        offlinePrefetchRunning.current = false;
-      }
+        };
+        await Promise.all(Array.from({ length: Math.min(concurrency, list.length) }, worker));
+        try {
+          const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current };
+          await saveArticleBodies(allBodies);
+        } catch {}
+      })();
+      bgPrefetchBusyRef.current = run;
+      try { await run; } finally { if (bgPrefetchBusyRef.current === run) bgPrefetchBusyRef.current = null; }
     };
-  }, [ensureFrenchArticle]);
+  }, [ensureFrenchArticle, aiWrittenIds]);
+
+  useEffect(() => {
+    if (!items.length) return;
+    // Préchargement passif unique et doux 1.5s après l'affichage du flux
+    const t = setTimeout(() => { prefetchOfflineRef.current?.(); }, 1500);
+    return () => clearTimeout(t);
+  }, [items]);
+
 
   // ⚡ Zéro blocage : l'affichage s'appuie directement et immédiatement sur les contenus disponibles.
-  const handleToggleExpand = useCallback((item, e) => {
+  const handleToggleExpand = useCallback(async (item, e) => {
     e?.stopPropagation?.();
     if (!item?.id) return;
 
-    setExpandedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(item.id)) {
-        next.delete(item.id);
-      } else {
-        next.add(item.id);
-      }
-      return next;
-    });
+    const willBeExpanded = !expandedIdsRef.current.has(item.id);
+    const nextSet = new Set(expandedIdsRef.current);
+    if (willBeExpanded) {
+      nextSet.add(item.id);
+    } else {
+      nextSet.delete(item.id);
+    }
+    expandedIdsRef.current = nextSet;
+    setExpandedIds(nextSet);
 
-    if (typeof navigator !== "undefined" && navigator.onLine) {
-      const currentText = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || item.fullContent || "";
-      if (isTeaserSnippet(currentText, item)) {
-        ensureFrenchArticle(item, false);
+    if (willBeExpanded) {
+      const frenchFull = bodyFrMapRef.current[item.id] || "";
+      const fullSource = fullArticleMapRef.current[item.id] || (item.fullContent && item.fullContent.length >= 80 ? item.fullContent : "");
+      const isSubstantial = (frenchFull.length >= 450 && looksFrench(frenchFull) && !isTeaserSnippet(frenchFull, item, { allowShort: true })) ||
+        (fullSource.length >= 450 && looksFrench(fullSource) && !isTeaserSnippet(fullSource, item, { allowShort: true }));
+      const isComplete = isSubstantial && !aiWrittenIds.has(item.id);
+
+      if (!isComplete && (typeof navigator === "undefined" || navigator.onLine !== false)) {
+        setInlineLoadingId(item.id);
+        const timer = setTimeout(() => {
+          setInlineLoadingId(curr => (curr === item.id ? null : curr));
+        }, 15000);
+        try {
+          await ensureFrenchArticle(item, true, { allowAi: true });
+        } finally {
+          clearTimeout(timer);
+          setInlineLoadingId(curr => (curr === item.id ? null : curr));
+        }
       }
     }
+  }, [ensureFrenchArticle, aiWrittenIds]);
+
+  const handleRetryArticle = useCallback((item, e) => {
+    e?.stopPropagation?.();
+    if (!item?.id) return;
+    setInlineLoadingId(item.id);
+    const timer = setTimeout(() => {
+      setInlineLoadingId(curr => (curr === item.id ? null : curr));
+    }, 15000);
+    ensureFrenchArticle(item, true, { allowAi: true }).finally(() => {
+      clearTimeout(timer);
+      setInlineLoadingId(curr => (curr === item.id ? null : curr));
+    });
   }, [ensureFrenchArticle]);
 
   const analyze = useCallback(async (item) => {
@@ -2635,8 +3409,9 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       next.add(item.id);
       return next;
     });
+    learnTaste(item, "dismiss");
     showToast?.("Article masqué", "info");
-  }, [showToast]);
+  }, [showToast, learnTaste]);
 
   const toggleSave = useCallback((item) => {
     if (!item?.id) return;
@@ -2651,7 +3426,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
       }
       return next;
     });
-  }, [showToast]);
+    if (!savedIds.has(item.id)) learnTaste(item, "save");
+  }, [showToast, learnTaste, savedIds]);
 
   const speak = useCallback((item) => {
     try {
@@ -2706,7 +3482,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   const frCount = feedFilter === "popular" ? frBase.filter(i => (i.score || 0) >= 3 || trendScore(i) >= 7).length : frBase.length;
   const relevantCount = frCount || allCount;
   const freshCount = items.filter(i => isBreaking(i.ts)).length;
-  const savedCount = items.filter(i => savedIds.has(i.id) && !deletedIds.has(i.id)).length;
+  const savedCount = items.filter(i => savedIds.has(i.id) && isSavedStillValid(i)).length;
   // 🏷️ Décompte dynamique en temps réel pour chaque pilule thématique
   const themeCounts = useMemo(() => {
     let base = items.filter(i => !deletedIds.has(i.id) && (Date.now() - (i.ts || 0)) <= ageLimit);
@@ -2732,9 +3508,31 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   const DATE_LABELS = { all: 'Tout', today: "Aujourd'hui", week: 'Cette semaine' };
 
   return (
-    <div style={{ background: "var(--mm-bg)", minHeight: "100vh", color: "var(--mm-fg)" }}>
+    <div
+      className="tiv-experience"
+      data-news-theme={isDark ? "dark" : "light"}
+      style={{ background: "var(--mm-bg)", minHeight: "100vh", color: "var(--mm-fg)" }}
+    >
       {!isOnline && (
-        <div role="status" style={{ position: "sticky", top: 0, zIndex: 50, padding: "8px 14px", fontSize: 12, fontWeight: 700, textAlign: "center", background: "rgba(16, 185, 129, 0.18)", color: isDarkMode ? "#6EE7B7" : "#065F46", borderBottom: "1px solid rgba(16, 185, 129, 0.35)", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <div
+          role="status"
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 50,
+            padding: "8px 14px",
+            fontSize: 12,
+            fontWeight: 700,
+            textAlign: "center",
+            background: isDark ? "rgba(16, 185, 129, 0.16)" : "rgba(16, 185, 129, 0.12)",
+            color: isDark ? "#6EE7B7" : "#065F46",
+            borderBottom: isDark ? "1px solid rgba(16, 185, 129, 0.35)" : "1px solid rgba(16, 185, 129, 0.25)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
           <span>📴 Mode Hors-Ligne</span>
           <span>·</span>
           <span>Dernières actualités générées prêtes pour lecture sans connexion</span>
@@ -3073,23 +3871,25 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", flexShrink: 0 }}>
             <button
               className="tiv-btn-header-refresh-top"
-              onClick={async () => {
+              onClick={() => {
                 if (tab === "scholarships" && scholarshipScanRef.current) {
                   setScholarshipScanning(true);
-                  try {
-                    await scholarshipScanRef.current();
-                  } finally {
-                    setScholarshipScanning(false);
-                  }
+                  setTimeout(async () => {
+                    try {
+                      await scholarshipScanRef.current();
+                    } finally {
+                      setScholarshipScanning(false);
+                    }
+                  }, 0);
                   return;
                 }
                 if (tab === "digest") {
                   showToast?.("Génération du briefing IA...", "info");
-                  fetchDigest(items);
+                  setTimeout(() => fetchDigest(items), 0);
                   return;
                 }
                 showToast?.("Actualisation des actualités du jour...", "info");
-                fetchAll(false);
+                setTimeout(() => fetchAll(false), 0);
               }}
               disabled={tab === "scholarships" ? scholarshipScanning : loading}
               title={tab === "scholarships"
@@ -3684,6 +4484,24 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           </>
         )}
 
+        {/* ── BANDEAU « À NE PAS RATER » ── */}
+        {!mustNotMissHidden && mustNotMissItems.length > 0 && !isSearching && tab === "all" && (
+          <MustNotMissBanner
+            items={mustNotMissItems}
+            onOpen={(item) => {
+              if (item?.id) {
+                setExpandedIds(prev => new Set(prev).add(item.id));
+                setTimeout(() => {
+                  const el = document.querySelector(`[data-article-id="${item.id}"]`);
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+                }, 100);
+              }
+            }}
+            onClose={() => setMustNotMissHidden(true)}
+            onManageKeywords={() => setShowWatchKeywordsModal(true)}
+          />
+        )}
+
         {/* ── FLUX D'ARTICLES MAGAZINE LIQUID GLASS ── */}
         {((tab !== "digest" && tab !== "github" && tab !== "scholarships") || isSearching) && listItems.length > 0 && (
           <div className="tiv-feed-list" style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 110 }}>
@@ -3694,26 +4512,38 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
               // Jamais de corps anglais affiché : pour une actu étrangère, on montre le
               // chapô français tant que l'article complet traduit n'est pas prêt.
               const frenchFull = bodyFrMap[item.id] || "";
-              const fullSource = fullArticleMap[item.id] || (item.fullContent && item.fullContent.length > 400 ? item.fullContent : "");
-              const isAlreadyComplete = !isTeaserSnippet(frenchFull, item) || (item.lang === "fr" && !isTeaserSnippet(fullSource, item));
+              const fullSource = fullArticleMap[item.id] || (item.fullContent && item.fullContent.length >= 80 ? item.fullContent : "");
+              const isStandardLong = frenchFull.length >= 350;
+              const frOk = (t) => Boolean(t) && (t.length >= 350) && !isTeaserSnippet(t, item, { allowShort: true }) && looksFrench(t);
+              const isAlreadyComplete = (frOk(frenchFull) || frOk(fullSource)) && !aiWrittenIds.has(item.id);
+              const isOfflineReady = Boolean(frOk(frenchFull) || frOk(fullSource));
               const fullStatus = isAlreadyComplete ? "ready" : (articleStatus[item.id] || "idle");
 
-              const completeText = (!isTeaserSnippet(frenchFull, item) ? frenchFull : "") ||
-                (item.lang === "fr" && !isTeaserSnippet(fullSource, item) ? fullSource : "");
-              const rawArticleText = completeText || frenchFull || fullSource || item.descriptionFr || item.description || "";
+              const rawComplete = (frOk(frenchFull) ? frenchFull : "") || (frOk(fullSource) ? fullSource : "");
+              const completeText = rawComplete;
+              const related = coverageMap[item.id] || [];
+              const sourceCount = 1 + related.length;
+              const frenchFallbackDesc = visibleFrenchDescription(item) || cleanEditorialText(item.descriptionFr || (looksFrench(item.description) ? item.description : ""));
+              const rawArticleText = completeText || frenchFallbackDesc || "";
               const articleText = cleanEditorialText(rawArticleText);
-              const universalParas = extractUniversalArticleParagraphs(rawArticleText, item);
-              const paragraphs = universalParas.length > 0 ? universalParas : (articleText ? [articleText] : []);
-              const hasSummary = Boolean(cleanEditorialText(visibleFrenchDescription(item)) || paragraphs[0] || articleText);
+              const universalParas = extractUniversalArticleParagraphs(completeText || rawArticleText, item);
+              const paragraphs = universalParas.length > 0
+                ? universalParas
+                : (articleText ? [articleText] : (visibleFrenchTitle(item) ? [visibleFrenchTitle(item)] : []));
+              const hasSummary = Boolean(cleanEditorialText(frenchFallbackDesc) || paragraphs[0] || articleText);
               const isLongText = hasSummary && ((paragraphs.length > 1) || articleText.length > 280);
               // Tout article disposant d'une URL peut être déplié pour révéler le corps complet
               const canExpand = Boolean(item.url || hasSummary || isLongText);
 
               const isDismissing = dismissingIds.has(item.id);
+              const aiExpl = item.aiSummary || aiSummaries[item.id] || (item.url && aiSummaries[item.url]) || (item.titleFr && aiSummaries[item.titleFr]) || (item.title && aiSummaries[item.title]);
+              const hasAiBrief = Boolean(aiExpl && typeof aiExpl === "string" && aiExpl.trim().length >= 35);
+              const isBriefing = briefingIds.has(item.id) || (item.url && briefingIds.has(item.url));
 
               return (
                 <article
                   key={item.id}
+                  data-article-id={item.id}
                   className={`tiv-article tiv-card ${isFirst ? "tiv-card-hero" : "tiv-card-sub"} ${isDismissing ? "tiv-dismissing" : ""}`}
                   style={{
                     position: "relative",
@@ -3756,6 +4586,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                       </span>
                     )}
                     <SourceBadge source={item.source} />
+                    <ScoreChip score={coverageScore(item.score ?? 5, sourceCount)} sources={sourceCount} />
                     <LangBadge lang={item.lang} />
                     {(item.isWorld || /présidentielle|élection|guerre|conflit|diplomatie|traité|sommet|onu|otan|brics|banque centrale|inflation|climat|cop|prix nobel|santé mondiale/i.test(`${item.title} ${item.description || ""}`)) && (
                       <WorldBadge isDark={isDark} />
@@ -3782,7 +4613,25 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                         </span>
                       );
                     })()}
-                    {isLongText && isExpanded && (
+                    {!isOnline && isOfflineReady && (
+                      <span style={{
+                        background: isDark ? "rgba(16, 185, 129, 0.15)" : "rgba(16, 185, 129, 0.1)",
+                        color: "#10B981",
+                        border: `1px solid ${isDark ? "rgba(16, 185, 129, 0.3)" : "rgba(16, 185, 129, 0.25)"}`,
+                        borderRadius: 6,
+                        padding: "1.5px 6px",
+                        fontSize: 9.5,
+                        fontWeight: 800,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 3,
+                        letterSpacing: 0.25,
+                      }}>
+                        <span>📥</span>
+                        <span>Hors-ligne prêt</span>
+                      </span>
+                    )}
+                    {isExpanded && (
                       <button
                         type="button"
                         onClick={(e) => handleToggleExpand(item, e)}
@@ -3792,7 +4641,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <polyline points="18 15 12 9 6 15" />
                         </svg>
-                        <span>Fermer</span>
+                        <span>Réduire</span>
                       </button>
                     )}
                     {isBreaking(item.ts) && <BreakingBadge />}
@@ -3836,13 +4685,24 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                           const isHeading = isNewsSubheading(cleanP, idx);
                           if (isHeading && idx > 0) {
                             return (
-                              <h4 key={idx} className="tiv-article-subheading">
+                              <h4
+                                key={idx}
+                                className="tiv-article-subheading"
+                                style={{
+                                  fontSize: 17,
+                                  fontWeight: 700,
+                                  lineHeight: 1.45,
+                                  margin: "18px 0 8px",
+                                  color: isDark ? "#F8FAFC" : "#0F172A",
+                                  letterSpacing: "-0.01em",
+                                }}
+                              >
                                 {cleanP}
                               </h4>
                             );
                           }
                           return (
-                            <p key={idx} className="tiv-article-summary">
+                            <p key={idx} className="tiv-article-summary" style={{ marginBottom: 10, lineHeight: 1.65 }}>
                               {cleanP}
                             </p>
                           );
@@ -3850,138 +4710,161 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                       </div>
                     ) : (
                       (() => {
-                        const editorialDesc = cleanEditorialText(visibleFrenchDescription(item)) || cleanEditorialText(item.descriptionFr || item.description);
-                        const cardSummary = editorialDesc || (paragraphs.length > 0 ? stripMarkdownAndAsterisks(paragraphs[0]) : "") || articleText;
-                        if (!cardSummary) {
-                          return (
-                            <div style={{
-                              padding: "10px 14px",
-                              borderRadius: 10,
-                              background: isDark ? "rgba(255, 255, 255, 0.03)" : "rgba(0, 0, 0, 0.02)",
-                              border: isDark ? "1px dashed rgba(255, 255, 255, 0.12)" : "1px dashed rgba(0, 0, 0, 0.1)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              flexWrap: "wrap",
-                              gap: 10,
-                              margin: "6px 0 10px",
-                            }}>
-                              <span style={{ fontSize: 12.5, color: "var(--mm-fg-muted)", lineHeight: 1.5 }}>
-                                {[
-                                  item.sourceName || item.source,
-                                  (() => { try { return item.url ? new URL(item.url).hostname.replace(/^www\./, "") : ""; } catch { return ""; } })(),
-                                  item.votes ? `▲ ${item.votes} points` : "",
-                                  item.comments ? `💬 ${item.comments} commentaires` : "",
-                                  item.author ? `par ${item.author}` : "",
-                                ].filter(Boolean).join(" · ")}
-                                <br />
-                                Pas de résumé fourni par la source — cliquez sur « Extraire l'article » pour lire le texte complet.
-                              </span>
-                              <div style={{ display: "flex", gap: 6 }}>
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleToggleExpand(item, e)}
-                                  style={{
-                                    background: isDark ? "rgba(99, 102, 241, 0.2)" : "#EEF2FF",
-                                    border: isDark ? "1px solid rgba(99, 102, 241, 0.4)" : "1px solid #C7D2FE",
-                                    color: isDark ? "#A5B4FC" : "#4338CA",
-                                    borderRadius: 7,
-                                    padding: "4px 10px",
-                                    fontSize: 11.5,
-                                    fontWeight: 700,
-                                    cursor: "pointer",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
-                                >
-                                  📖 Extraire l'article ▼
-                                </button>
-                                <a
-                                  href={item.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  style={{
-                                    background: isDark ? "rgba(255, 255, 255, 0.06)" : "#F1F5F9",
-                                    border: isDark ? "1px solid rgba(255, 255, 255, 0.12)" : "1px solid #CBD5E1",
-                                    color: isDark ? "#E2E8F0" : "#475569",
-                                    borderRadius: 7,
-                                    padding: "4px 10px",
-                                    fontSize: 11.5,
-                                    fontWeight: 700,
-                                    textDecoration: "none",
-                                    display: "inline-flex",
-                                    alignItems: "center",
-                                    gap: 4,
-                                  }}
-                                >
-                                  ↗ Source
-                                </a>
-                              </div>
-                            </div>
-                          );
+                        const aiExpl = item.aiSummary || aiSummaries[item.id] || (item.url && aiSummaries[item.url]) || (item.titleFr && aiSummaries[item.titleFr]) || (item.title && aiSummaries[item.title]);
+                        const hasAiBrief = Boolean(aiExpl && typeof aiExpl === "string" && aiExpl.trim().length >= 35);
+                        const editorialDesc = cleanEditorialText(visibleFrenchDescription(item)) || cleanEditorialText(item.descriptionFr || (looksFrench(item.description) ? item.description : ""));
+                        const rawFallback = (paragraphs.length > 0 ? stripMarkdownAndAsterisks(paragraphs.slice(0, 3).join(" ")) : "") || articleText;
+
+                        // 🎯 PRIORITÉ ABSOLUE : La synthèse IA haute densité surpasse le snippet RSS
+                        const cardSummary = hasAiBrief ? aiExpl : (editorialDesc || rawFallback);
+                        let fullSummaryText = cardSummary;
+                        if (!fullSummaryText) {
+                          fullSummaryText = `Pas encore de résumé. Clique sur « Complet » pour lire l'article.`;
                         }
-                        const rawText = stripMarkdownAndAsterisks(cardSummary || "");
-                        const baseText = normalizeNewsPreview(rawText).replace(/[\s.…]+$/, "");
+                        const rawText = stripMarkdownAndAsterisks(fullSummaryText);
+                        const displayText = hasAiBrief ? rawText : formatCompleteSubtext(rawText, rawFallback, { minSentences: 1, maxSentences: 3 });
 
                         return (
                           <div
                             className="tiv-article-summary-lead"
-                            onClick={(e) => {
-                              if (canExpand && !isExpanded) handleToggleExpand(item, e);
-                            }}
-                            title={canExpand && !isExpanded ? "Cliquer pour lire l'article complet" : undefined}
                             style={{
-                              cursor: canExpand && !isExpanded ? "pointer" : "default",
+                              cursor: "default",
                             }}
                           >
+                            {isBriefing && !hasAiBrief && (
+                              <div
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  padding: "3px 9px",
+                                  borderRadius: 7,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  letterSpacing: "0.03em",
+                                  textTransform: "uppercase",
+                                  background: isDark ? "rgba(56, 189, 248, 0.15)" : "rgba(2, 132, 199, 0.1)",
+                                  color: isDark ? "#38BDF8" : "#0284C7",
+                                  border: isDark ? "1px solid rgba(56, 189, 248, 0.3)" : "1px solid rgba(2, 132, 199, 0.25)",
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <span className="tiv-spinner" style={{ width: 11, height: 11, border: "2px solid currentColor", borderRightColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite" }} />
+                                <span>Génération de la synthèse...</span>
+                              </div>
+                            )}
+                            {hasAiBrief && (
+                              <div
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  padding: "3px 9px",
+                                  borderRadius: 7,
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  letterSpacing: "0.03em",
+                                  textTransform: "uppercase",
+                                  background: isDark ? "rgba(56, 189, 248, 0.12)" : "rgba(2, 132, 199, 0.08)",
+                                  color: isDark ? "#38BDF8" : "#0284C7",
+                                  border: isDark ? "1px solid rgba(56, 189, 248, 0.25)" : "1px solid rgba(2, 132, 199, 0.2)",
+                                  marginBottom: 8,
+                                }}
+                              >
+                                <span style={{ fontSize: 13, lineHeight: 1 }}>✨</span>
+                                <span>Synthèse Essentielle</span>
+                              </div>
+                            )}
                             <p
-                              className="tiv-article-summary tiv-article-summary-clamped"
+                              className={`tiv-article-summary tiv-article-summary-complete ${hasAiBrief ? "tiv-ai-brief-text" : ""}`}
                               style={{
                                 margin: 0,
-                                color: isDark ? "#B6AADA" : "#475569",
+                                color: isDark
+                                  ? (hasAiBrief ? "#F1F5F9" : "#CBD5E1")
+                                  : (hasAiBrief ? "#0F172A" : "#334155"),
                                 whiteSpace: "normal",
-                                lineHeight: 1.62,
-                                fontSize: 14,
-                                fontWeight: 400,
+                                lineHeight: hasAiBrief ? 1.66 : 1.62,
+                                fontSize: hasAiBrief ? 14.5 : 14,
+                                fontWeight: hasAiBrief ? 480 : 450,
                                 fontStyle: "normal",
                                 hyphens: "none",
                                 WebkitHyphens: "none",
                                 wordBreak: "normal",
+                                letterSpacing: hasAiBrief ? "-0.005em" : "normal",
                                 fontFamily: "var(--mm-font-body), system-ui, -apple-system, sans-serif",
-                                display: "-webkit-box",
-                                WebkitLineClamp: 4,
-                                WebkitBoxOrient: "vertical",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
                               }}
                             >
-                              {baseText}
+                              {displayText}
                             </p>
-                            {canExpand && (
-                              <div style={{ marginTop: 4, display: "flex", alignItems: "center" }}>
-                                <button
-                                  type="button"
-                                  aria-expanded={false}
-                                  className="tiv-continuer-btn"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleToggleExpand(item, e);
-                                  }}
-                                  title="Afficher l'article complet"
-                                >
-                                  <span>Continuer</span>
-                                  <span aria-hidden="true">→</span>
-                                </button>
-                              </div>
-                            )}
                           </div>
                         );
                       })()
                     )}
 
+                    {isExpanded && aiWrittenIds.has(item.id) && (
+                      <p className="tiv-article-note">Texte reconstitué à partir de plusieurs sources.</p>
+                    )}
+                    {isExpanded && related.length > 0 && (
+                      <p className="tiv-article-note">Aussi couvert par : {related.slice(0, 5).map(r => r.sourceName || r.source).join(", ")}</p>
+                    )}
+                    {isExpanded && (!rawComplete || rawComplete.length < 80) && inlineLoadingId !== item.id && !isOnline && (
+                      <div className="tiv-offline-notice" style={{
+                        marginTop: 10,
+                        padding: "10px 14px",
+                        borderRadius: 10,
+                        background: isDark ? "rgba(234, 179, 8, 0.12)" : "rgba(234, 179, 8, 0.08)",
+                        border: `1px solid ${isDark ? "rgba(234, 179, 8, 0.3)" : "rgba(234, 179, 8, 0.25)"}`,
+                        color: isDark ? "#FDE047" : "#B45309",
+                        fontSize: 12.5,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 4,
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700 }}>
+                          <span aria-hidden="true">📡</span>
+                          <span>Mode hors ligne · Synthèse essentielle enregistrée</span>
+                        </div>
+                        <div style={{ lineHeight: 1.5, opacity: 0.9 }}>
+                          Le résumé essentiel ci-dessus est conservé en mémoire locale. L'article complet s'enregistrera automatiquement lors de votre prochaine synchronisation en ligne.
+                        </div>
+                      </div>
+                    )}
+                    {isExpanded && (!isAlreadyComplete || aiWrittenIds.has(item.id)) && inlineLoadingId !== item.id && isOnline && (
+                      <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={(e) => handleRetryArticle(item, e)}
+                          style={{
+                            background: "transparent",
+                            border: `1px solid ${isDark ? "rgba(139, 92, 246, 0.4)" : "rgba(37, 99, 235, 0.3)"}`,
+                            color: isDark ? "#D8B4FE" : "#2563EB",
+                            borderRadius: 6,
+                            padding: "4px 10px",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4
+                          }}
+                        >
+                          <span>🔄</span>
+                          <span>Réessayer de charger l'article</span>
+                        </button>
+                        {item.url && (
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ fontSize: 12, color: isDark ? "#A78BFA" : "#2563EB", textDecoration: "underline" }}
+                          >
+                            ↗ Ouvrir la source originale ({item.sourceName || item.source})
+                          </a>
+                        )}
+                      </div>
+                    )}
                     {isExpanded && (
-                      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 10, paddingTop: 8, borderTop: isDark ? "1px solid rgba(255, 255, 255, 0.08)" : "1px solid rgba(0, 0, 0, 0.06)" }}>
+                      <div className="tiv-collapse-bottom-row">
                         <button
                           type="button"
                           onClick={(e) => handleToggleExpand(item, e)}
@@ -4002,9 +4885,128 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
 
                       <button
                         type="button"
+                        className={`tiv-fav-btn ${isSaved ? "is-on" : ""}`}
+                        onClick={(e) => { e.stopPropagation(); toggleSave(item); }}
+                        aria-pressed={isSaved}
+                        aria-label={isSaved ? "Retirer des favoris" : "Ajouter aux favoris"}
+                        title={isSaved ? "Retirer des favoris" : "Ajouter aux favoris"}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
+                          <polygon points="12 2.5 15 8.8 22 9.8 17 14.6 18.2 21.5 12 18.2 5.8 21.5 7 14.6 2 9.8 9 8.8" />
+                        </svg>
+                        <span>{isSaved ? "Favori" : "Favori"}</span>
+                      </button>
+
+                      {/* ✨ Bouton Synthèse (disponible dès que l'article n'a pas encore sa synthèse) */}
+                      {!hasAiBrief && (
+                        <button
+                          type="button"
+                          className="tiv-card-action-btn tiv-card-action-brief"
+                          onClick={(e) => { e.stopPropagation(); generateDirectBrief(item); }}
+                          disabled={isBriefing}
+                          aria-label="Générer une synthèse essentielle haute densité"
+                          title="Générer la synthèse essentielle haute densité par IA"
+                          style={{
+                            background: isDark ? "rgba(56, 189, 248, 0.12)" : "rgba(2, 132, 199, 0.08)",
+                            border: `1px solid ${isDark ? "rgba(56, 189, 248, 0.32)" : "rgba(2, 132, 199, 0.22)"}`,
+                            color: isDark ? "#38BDF8" : "#0284C7",
+                            borderRadius: 999,
+                            padding: "5px 12px",
+                            cursor: isBriefing ? "wait" : "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 5,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            transition: "all 0.18s ease",
+                            opacity: isBriefing ? 0.8 : 1,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isBriefing) {
+                              e.currentTarget.style.transform = "translateY(-1px)";
+                              e.currentTarget.style.boxShadow = isDark ? "0 4px 12px rgba(56, 189, 248, 0.25)" : "0 4px 12px rgba(2, 132, 199, 0.15)";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.transform = "none";
+                            e.currentTarget.style.boxShadow = "none";
+                          }}
+                        >
+                          {isBriefing ? (
+                            <>
+                              <span className="tiv-spinner" style={{ width: 12, height: 12, border: "2px solid currentColor", borderRightColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite" }} />
+                              <span>Synthèse...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span aria-hidden="true" style={{ fontSize: 13, lineHeight: 1 }}>✨</span>
+                              <span>Synthèse</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {/* 📖 Bouton Complet (masqué une fois ouvert : Réduire est en haut et en bas) */}
+                      {!isExpanded && <button
+                        type="button"
+                        className="tiv-card-action-btn tiv-card-action-complete"
+                        onClick={(e) => handleToggleExpand(item, e)}
+                        title={isExpanded ? "Replier l'article complet" : "Charger et lire l'article complet"}
+                        style={{
+                          background: isExpanded
+                            ? (isDark ? "rgba(139, 92, 246, 0.28)" : "rgba(37, 99, 235, 0.15)")
+                            : (isDark ? "rgba(139, 92, 246, 0.14)" : "rgba(37, 99, 235, 0.08)"),
+                          border: `1px solid ${isExpanded
+                            ? (isDark ? "rgba(178, 150, 255, 0.45)" : "rgba(37, 99, 235, 0.35)")
+                            : (isDark ? "rgba(178, 150, 255, 0.25)" : "rgba(37, 99, 235, 0.18)")}`,
+                          color: isExpanded
+                            ? (isDark ? "#FFFFFF" : "#1D4ED8")
+                            : (isDark ? "#D8B4FE" : "#2563EB"),
+                          borderRadius: 999,
+                          padding: "5px 13px",
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          transition: "all 0.18s ease"
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.transform = "translateY(-1px)";
+                          e.currentTarget.style.boxShadow = isDark ? "0 4px 12px rgba(139, 92, 246, 0.25)" : "0 4px 12px rgba(37, 99, 235, 0.15)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.transform = "none";
+                          e.currentTarget.style.boxShadow = "none";
+                        }}
+                      >
+                        {inlineLoadingId === item.id ? (
+                          <>
+                            <span className="tiv-spinner" style={{ width: 12, height: 12, border: "2px solid currentColor", borderRightColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "spin 0.8s linear infinite" }} />
+                            <span>Chargement...</span>
+                          </>
+                        ) : isExpanded ? (
+                          <>
+                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <polyline points="18 15 12 9 6 15" />
+                            </svg>
+                            <span>Réduire</span>
+                          </>
+                        ) : (
+                          <>
+                            <span aria-hidden="true" style={{ fontSize: 13 }}>📖</span>
+                            <span>{!isOnline && !isOfflineReady ? "Lire le résumé" : "Complet"}</span>
+                          </>
+                        )}
+                      </button>}
+
+                      <button
+                        type="button"
                         className="tiv-card-action-btn"
                         onClick={(e) => handleDismissArticle(item, e)}
                         title="Passer cet article pour afficher le suivant sans scroller"
+
                         style={{
                           background: isDark ? "rgba(139, 92, 246, 0.12)" : "rgba(0, 0, 0, 0.04)",
                           border: `1px solid ${isDark ? "rgba(178, 150, 255, 0.22)" : "rgba(0, 0, 0, 0.08)"}`,
@@ -4034,30 +5036,6 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
                         <span>Passer</span>
                       </button>
 
-                      {needsFrenchTranslation(item) && (
-                        <button
-                          type="button"
-                          className="tiv-card-action-btn"
-                          onClick={(e) => { e.stopPropagation(); translateSingle(item); }}
-                          disabled={translating}
-                          title="Traduire cet article en français"
-                          style={{
-                            background: "rgba(59, 130, 246, 0.15)",
-                            border: "1px solid rgba(59, 130, 246, 0.35)",
-                            color: "#3B82F6",
-                            borderRadius: 8,
-                            padding: "4px 9px",
-                            cursor: translating ? "wait" : "pointer",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            fontSize: 12,
-                            fontWeight: 700,
-                          }}
-                        >
-                          <span>✨ Traduire</span>
-                        </button>
-                      )}
 
 
                       <button
@@ -4398,6 +5376,16 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           }}
           isDarkMode={isDark}
           showToast={showToast}
+        />
+      )}
+
+      {showWatchKeywordsModal && (
+        <WatchKeywordsModal
+          isOpen={showWatchKeywordsModal}
+          onClose={() => setShowWatchKeywordsModal(false)}
+          keywords={watchKeywords}
+          onSaveKeywords={handleSaveWatchKeywords}
+          isDarkMode={isDark}
         />
       )}
 

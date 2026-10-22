@@ -53,9 +53,10 @@ html {
   margin: 0;
   padding: 0;
   width: 100%;
+  max-width: 100%;
   height: 100%;          /* référence pour les enfants */
   background: var(--mm-bg, #07060f);
-  overflow-x: hidden;
+  overflow-x: clip;      /* Bloque toute dérive/défilement horizontal gestuel ou programmatique */
   overflow-y: auto;      /* ← LE scroll container principal */
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
@@ -64,8 +65,11 @@ html {
 body {
   margin: 0;
   padding: 0;
+  width: 100%;
+  max-width: 100%;
   min-height: 100%;      /* s'étire avec le contenu */
-  overflow: visible;     /* NE scrolle PAS — laisse html le faire */
+  overflow-x: clip;      /* Ne défile jamais horizontalement */
+  overflow-y: visible;   /* NE scrolle PAS — laisse html le faire */
   position: relative;
 }
 
@@ -76,7 +80,8 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  overflow: visible;
+  overflow-x: clip;
+  overflow-y: visible;
 }
 
 @keyframes soundwave-bar {
@@ -101,3 +106,41 @@ body {
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
   animation: node-shine 3.2s ease-in-out infinite; pointer-events: none;
 }
+
+/* ── Agent Command Bar Textarea Focus Reset ── */
+.mm-agent-cmd-textarea:focus,
+.mm-agent-cmd-textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+
+/* ── Masquage propre des barres de scroll pour défilement horizontal fluide ── */
+.mm-no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+.mm-no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+/* ── Forge Auto-Génération IA Placeholder ── */
+.forge-ai-input::placeholder {
+  color: rgba(255, 255, 255, 0.9) !important;
+  opacity: 1;
+}
+
+/* ── Copilot Chat Textarea Placeholder & Focus Reset ── */
+.copilot-chat-textarea::placeholder,
+.copilot-chat-textarea::-webkit-input-placeholder,
+.copilot-chat-textarea::-moz-placeholder,
+.copilot-chat-textarea:-ms-input-placeholder {
+  color: rgba(255, 255, 255, 0.95) !important;
+  opacity: 1 !important;
+}
+.copilot-chat-textarea:focus,
+.copilot-chat-textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
+}
+

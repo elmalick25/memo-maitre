@@ -98,6 +98,15 @@ export default function ReviewEngineView({
   const [continueCount, setContinueCount] = useState(10);
 
   useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.body.classList.add("in-review-session");
+      return () => {
+        document.body.classList.remove("in-review-session");
+      };
+    }
+  }, []);
+
+  useEffect(() => {
     if (reviewCategory) {
       setSelectedModule(reviewCategory);
     }
@@ -485,7 +494,7 @@ export default function ReviewEngineView({
   const tag = cognitiveTag(currentCard);
 
   return (
-    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(env(safe-area-inset-bottom, 16px) + 36px)" : 40 }}>
+    <div style={{ animation: "flowCardEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", paddingBottom: isMobile ? "calc(110px + env(safe-area-inset-bottom, 16px))" : 40 }}>
       {/* Session Header */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", gap: 8 }}>
@@ -978,7 +987,34 @@ export default function ReviewEngineView({
             {(() => {
               const showIntervalPreview = reviewMode !== "free";
               return (
-                <div className="review-btns-row" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: isMobile ? 6 : 10, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}>
+                <div
+                  className="review-btns-row review-btns-dock"
+                  style={isMobile ? {
+                    position: "fixed",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    zIndex: 350,
+                    background: isDarkMode ? "rgba(11, 17, 32, 0.95)" : "rgba(255, 255, 255, 0.96)",
+                    backdropFilter: "blur(20px)",
+                    WebkitBackdropFilter: "blur(20px)",
+                    borderTop: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(226, 232, 240, 0.9)"}`,
+                    boxShadow: "0 -8px 32px rgba(0, 0, 0, 0.16)",
+                    padding: "8px 10px calc(10px + env(safe-area-inset-bottom, 12px))",
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gap: 6,
+                    boxSizing: "border-box",
+                    animation: "slideUpDock 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+                  } : {
+                    display: "grid",
+                    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                    gap: 10,
+                    width: "100%",
+                    maxWidth: "100%",
+                    boxSizing: "border-box",
+                  }}
+                >
                   {[
                     { q: 0, emoji: "💀", label: "Oublié", sub: showIntervalPreview ? getPreviewInterval(currentCard, 0) : null, bg: isDarkMode ? "#2D0A0A" : "#FEE2E2", color: "#EF4444", border: "#EF4444" },
                     { q: 1, emoji: "😅", label: "Hésité", sub: showIntervalPreview ? getPreviewInterval(currentCard, 1) : null, bg: isDarkMode ? "#2D1A00" : "#FFFBEB", color: "#F59E0B", border: "#F59E0B" },
@@ -993,13 +1029,13 @@ export default function ReviewEngineView({
                         if (window.navigator?.vibrate) window.navigator.vibrate(q === 0 ? [40, 20, 40] : 8);
                       }}
                       style={{
-                        padding: isMobile ? "12px 4px" : "16px 10px",
+                        padding: isMobile ? "9px 2px" : "16px 10px",
                         background: bg,
                         color,
                         border: `1.5px solid ${border}40`,
-                        borderRadius: 18,
+                        borderRadius: 14,
                         fontWeight: 800,
-                        fontSize: isMobile ? 12 : 14,
+                        fontSize: isMobile ? 11.5 : 14,
                         minWidth: 0,
                         maxWidth: "100%",
                         boxSizing: "border-box",
@@ -1008,9 +1044,10 @@ export default function ReviewEngineView({
                         flexDirection: "column",
                         alignItems: "center",
                         justifyContent: "center",
-                        gap: 4,
-                        minHeight: isMobile ? 68 : 76,
+                        gap: 2,
+                        minHeight: isMobile ? 54 : 76,
                         lineHeight: 1.2,
+                        touchAction: "manipulation",
                       }}
                     >
                       <span style={{ fontSize: isMobile ? 18 : 22 }}>{emoji}</span>

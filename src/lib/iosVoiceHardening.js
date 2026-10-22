@@ -244,9 +244,14 @@ export function whenMicPermissionReady() {
 export function consumePrewarmedMicStream() {
   const s = prewarmedMicStream;
   prewarmedMicStream = null;
+  // 🔁 FIX "Nova écoute mais n'entend rien" (2e session et suivantes) :
+  // on réinitialise la promesse pour que le PROCHAIN armIosAudio() ré-obtienne
+  // un stream micro frais. Avant, la promesse restait résolue pour toujours :
+  // aucune nouvelle capture n'était faite après la 1re conversation.
+  micPermissionPromise = null;
   if (!s) return null;
   const tracks = s.getAudioTracks?.() || [];
-  const alive = tracks.some((t) => t.readyState === "live" && !t.muted);
+  const alive = tracks.some((t) => t.readyState === "live");
   if (!alive) {
     try { tracks.forEach((t) => t.stop()); } catch {}
     return null;

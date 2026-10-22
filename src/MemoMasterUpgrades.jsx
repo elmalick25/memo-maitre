@@ -110,7 +110,12 @@ export function Minimap({ cards, onPixelClick, theme }) {
 export function YearHeatmap({ sessionHistory = [], onClickDay, theme, isDarkMode }) {
   const map = useMemo(() => {
     const m = new Map();
-    sessionHistory.forEach(s => m.set(s.date, (m.get(s.date) || 0) + (s.count || 0)));
+    sessionHistory.forEach(s => {
+      const c = Number(s?.count) || 0;
+      if (c > 0 && s?.date) {
+        m.set(s.date, (m.get(s.date) || 0) + c);
+      }
+    });
     return m;
   }, [sessionHistory]);
 
@@ -144,7 +149,7 @@ export function YearHeatmap({ sessionHistory = [], onClickDay, theme, isDarkMode
   };
 
   const monthLabels = ["Jan","Fév","Mar","Avr","Mai","Juin","Juil","Août","Sep","Oct","Nov","Déc"];
-  const totalDays = sessionHistory.reduce((a, s) => a + (s.count || 0), 0);
+  const totalReviews = sessionHistory.reduce((a, s) => a + (Number(s?.count) || 0), 0);
   const activeDays = map.size;
 
   return (
@@ -152,7 +157,7 @@ export function YearHeatmap({ sessionHistory = [], onClickDay, theme, isDarkMode
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
         <h3 style={{ margin: 0, fontWeight: 800, color: theme.text, fontSize: 16 }}>📅 Activité — 365 derniers jours</h3>
         <div style={{ fontSize: 12, color: theme.textMuted }}>
-          <strong style={{ color: theme.highlight }}>{totalDays}</strong> reviews · <strong style={{ color: theme.highlight }}>{activeDays}</strong> jours actifs
+          <strong style={{ color: theme.highlight }}>{totalReviews}</strong> reviews · <strong style={{ color: theme.highlight }}>{activeDays}</strong> jours actifs
         </div>
       </div>
       <div style={{ overflowX: "auto", paddingBottom: 4 }}>
@@ -632,7 +637,7 @@ export function useSavedViews({ storage, key = "memo_saved_views" }) {
  * ════════════════════════════════════════════════════════════════════════════
  * Calcule combien de fiches seront dues chaque jour des 30 prochains.
  */
-export function computeFsrsForecast(expressions, days = 7) {
+function computeFsrsForecast(expressions, days = 7) {
   const buckets = new Map();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -671,6 +676,8 @@ export function computeFsrsForecast(expressions, days = 7) {
 export function FsrsForecastChart({ expressions, theme, isDarkMode }) {
     const data = useMemo(() => computeFsrsForecast(expressions, 7), [expressions]);
     const total = data.reduce((a, d) => a + d.count, 0);
+    const peak = Math.max(0, ...data.map(d => d.count));
+    const peakDay = peak > 0 ? new Date(data.find(d => d.count === peak).date).toLocaleDateString('fr-FR', { weekday: 'long' }) : null;
     
     const textColor = isDarkMode ? "#F8FAFF" : "#0F172A";
     const textMuted = isDarkMode ? "#94a3b8" : "#64748b";
@@ -686,37 +693,35 @@ export function FsrsForecastChart({ expressions, theme, isDarkMode }) {
           <h3 style={{ margin: 0, fontWeight: 900, color: theme.text, fontSize: 17 }}>🔮 Charge prévue (7 jours)</h3>
           <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}><strong style={{ color: theme.highlight, fontWeight: 900, fontSize: 14 }}>{total}</strong> à venir</div>
         </div>
+        {peakDay && (
+          <div style={{ fontSize: 12, color: theme.textMuted, fontWeight: 600, marginBottom: 12 }}>
+            Pic {peakDay} : {peak} fiches. Avance quelques révisions la veille pour lisser.
+          </div>
+        )}
         <div style={{ height: 260, width: "100%", display: "flex", justifyContent: "center" }}>
-          <Doughnut 
+          <Bar
             data={{
-              labels: data.map(d => {
-                const date = new Date(d.date);
-                return date.toLocaleDateString('fr-FR', { weekday: 'short' });
-              }),
+              labels: data.map(d => new Date(d.date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' })),
               datasets: [{
                 data: data.map(d => d.count),
-                backgroundColor: [
-                  chartPrimary, chartGlow, "#EC4899", "#F43F5E", 
-                  "#F59E0B", "#10B981", "#14B8A6"
-                ],
-                borderWidth: 2,
-                borderColor: theme.cardBg,
-                hoverOffset: 4
+                backgroundColor: data.map(d => d.count === peak && peak > 0 ? chartGlow : chartPrimary),
+                borderRadius: 8,
+                borderSkipped: false,
               }]
             }}
             options={{
               responsive: true, maintainAspectRatio: false,
-              cutout: '68%',
               plugins: {
-                legend: { 
-                  position: 'bottom', 
-                  labels: { color: textMuted, font: { weight: 'bold', size: 11 }, boxWidth: 10, padding: 8 } 
-                },
+                legend: { display: false },
                 tooltip: {
                   backgroundColor: tooltipBg, titleColor: textColor, bodyColor: textColor,
-                  borderColor: borderColor, borderWidth: 1, padding: 12, cornerRadius: 10,
-                  callbacks: { label: (ctx) => ` ${ctx.raw} révisions` }
+                  borderColor: borderColor, borderWidth: 1, padding: 12, cornerRadius: 10, displayColors: false,
+                  callbacks: { label: (ctx) => ` ${ctx.raw} fiche(s) à réviser` }
                 }
+              },
+              scales: {
+                x: { grid: { display: false }, ticks: { color: textMuted, font: { weight: 'bold', size: 11 } } },
+                y: { beginAtZero: true, grid: { color: borderColor }, ticks: { color: textMuted, precision: 0 } }
               }
             }}
           />

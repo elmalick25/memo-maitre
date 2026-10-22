@@ -58,17 +58,16 @@ export const RARITY_STYLES = {
 export const RARITY_ORDER = { legendaire: 0, epique: 1, rare: 2, commun: 3 };
 
 // Catégories réellement utilisées (plus de catégorie morte "Héritage").
+// Seules les catégories qui attestent un VRAI acquis sont conservées :
+// mémoire FSRS consolidée, production active, régularité réelle (streak).
+// Création de fiches, volume de révisions, IA, Pomodoro, horaires et XP ont
+// été retirés : ils récompensaient le clic, pas l'apprentissage.
 export const BADGE_CATEGORIES = [
-  "Création",
-  "Streak",
-  "Révisions",
   "Mémoire (FSRS)",
   "Production active",
-  "IA",
-  "Discipline",
-  "Découverte",
-  "Progression",
+  "Streak",
 ];
+const MEANINGFUL_EXTRA_IDS = new Set(["leech_slayer", "all_reviewed"]);
 
 // ───────────────────────────────────────────────────────────────────────────
 // 1. Badges curatés à la main
@@ -288,11 +287,16 @@ function generateComboBadges() {
 // 3. Export combiné (sans doublons d'id) — plus aucun padding artificiel
 // ───────────────────────────────────────────────────────────────────────────
 const _seen = new Set();
-export const BADGES = [...HAND_CRAFTED, ...generateProgressionBadges(), ...generateComboBadges()].filter(b => {
+const _ALL_BADGES = [...HAND_CRAFTED, ...generateProgressionBadges(), ...generateComboBadges()].filter(b => {
   if (_seen.has(b.id)) return false;
   _seen.add(b.id);
   return true;
 });
+const _isMeaningful = (b) => BADGE_CATEGORIES.includes(b.cat) || MEANINGFUL_EXTRA_IDS.has(b.id);
+export const BADGES = _ALL_BADGES
+  .filter(_isMeaningful)
+  .map(b => (MEANINGFUL_EXTRA_IDS.has(b.id) ? { ...b, cat: "Mémoire (FSRS)" } : b));
+const _REMOVED_BADGE_IDS = _ALL_BADGES.filter(b => !_isMeaningful(b)).map(b => b.id);
 
 /** Ids morts (catégorie "Héritage" supprimée) — purgés au chargement. */
 export const RETIRED_BADGE_IDS = [
@@ -301,6 +305,7 @@ export const RETIRED_BADGE_IDS = [
   "code_first", "code_ten", "code_fifty", "code_duel_win", "code_duel_5",
   "consistency", "ten_master", "fifty_master", "grandmaster", "first_master",
   "200_cards_legacy", "200_reviews",
+  ..._REMOVED_BADGE_IDS,
 ];
 
 export function isBadgeId(id) {

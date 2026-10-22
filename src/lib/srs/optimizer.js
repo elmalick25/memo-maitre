@@ -113,12 +113,13 @@ export function optimizeWeights(sequences, opts = {}) {
     learningRate = 0.05,
     initialWeights = FSRS5_DEFAULT_W,
     onProgress = null,
+    minReviews = MIN_REVIEWS_FOR_OPTIMIZATION,
   } = opts;
 
   const reviews = countReviews(sequences);
   const baselineLoss = evaluateWeights(sequences, FSRS5_DEFAULT_W);
 
-  if (reviews < MIN_REVIEWS_FOR_OPTIMIZATION) {
+  if (reviews < minReviews) {
     return {
       weights: [...FSRS5_DEFAULT_W],
       baselineLoss,

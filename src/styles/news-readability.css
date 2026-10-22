@@ -1,0 +1,52 @@
+
+/* ── Lisibilité des actus : police système nette, tailles confortables ── */
+.tiv-article-title {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-weight: 700; letter-spacing: -0.01em;
+  color: var(--mm-fg) !important;
+}
+.tiv-article-summary,
+.tiv-article-summary-complete {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  font-size: 17px !important; line-height: 1.7 !important; font-weight: 400 !important;
+  color: var(--mm-fg-muted, var(--mm-fg)) !important; font-variant-ligatures: none;
+}
+.tiv-article-body { width: 100%; max-width: 100%; box-sizing: border-box; }
+@media (max-width: 768px) {
+  .tiv-article-summary,
+  .tiv-article-summary-complete { font-size: 16.5px !important; }
+}
+.tiv-article-note {
+  margin: 10px 0 0; font-size: 13px; line-height: 1.5; color: var(--mm-fg-muted); font-style: italic;
+}
+
+/* ── Boutons Réduire (haut + bas) ── */
+.tiv-btn-collapse {
+  min-height: 32px !important; padding: 0 14px 0 11px !important; gap: 6px !important;
+  border-radius: 999px !important; font-size: 12.5px !important; font-weight: 700 !important;
+  color: var(--mm-primary) !important;
+  background: color-mix(in srgb, var(--mm-primary) 10%, transparent) !important;
+  border: 1px solid color-mix(in srgb, var(--mm-primary) 28%, transparent) !important;
+  transition: background .18s, transform .18s, box-shadow .18s;
+}
+.tiv-btn-collapse:hover {
+  background: color-mix(in srgb, var(--mm-primary) 18%, transparent) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--mm-primary) 22%, transparent);
+}
+.tiv-btn-collapse:focus-visible { outline: 2px solid var(--mm-primary); outline-offset: 2px; }
+.tiv-collapse-bottom-row {
+  display: flex; justify-content: center; margin-top: 14px; padding-top: 12px;
+  border-top: 1px solid var(--mm-border, rgba(0,0,0,.08));
+}
+
+/* ── Bouton Favori ── */
+.tiv-fav-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 13px 0 11px;
+  border-radius: 999px; font-size: 12px; font-weight: 700; cursor: pointer;
+  color: var(--mm-fg-muted); background: transparent;
+  border: 1px solid var(--mm-border, rgba(0,0,0,.1)); transition: all .18s;
+}
+.tiv-fav-btn:hover { color: #d97706; border-color: rgba(245,158,11,.45); }
+.tiv-fav-btn.is-on { color: #d97706; background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.45); }
+.tiv-fav-btn:focus-visible { outline: 2px solid #d97706; outline-offset: 2px; }

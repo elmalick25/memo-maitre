@@ -9,7 +9,7 @@ import {
   useRoomContext,
   useLocalParticipant,
 } from '@livekit/components-react';
-import { RoomEvent, MediaDeviceFailure, Track, LocalAudioTrack } from 'livekit-client';
+import { Room, RoomEvent, MediaDeviceFailure, Track, LocalAudioTrack } from 'livekit-client';
 import '@livekit/components-styles';
 import { SignJWT } from 'jose';
 import { armIosAudio, whenMicPermissionReady, forcePlayAndRecordSession, consumePrewarmedMicStream } from '../lib/iosVoiceHardening';
@@ -27,6 +27,7 @@ import {
 import { aggregateTurns, conversationStats, buildTranscriptText } from '../lib/livekitConversation';
 import { buildNovaVoicePrompt } from '../lib/english/novaVoicePrompt';
 import { appendSession } from '../lib/agentSessionMemory';
+import { playEnglishAudio, stopEnglishAudio } from '../lib/speakUtils';
 
 const LIVEKIT_AGENT_NAME = import.meta.env.VITE_LIVEKIT_AGENT_NAME || "assistant-53a";
 const EMPTY_TARGET_EXPRESSIONS = Object.freeze([]);
@@ -168,16 +169,21 @@ async function generateTokenInternal({
   // 1) Chemin sécurisé : le serveur signe et décide des droits.
   const endpoint = getTokenEndpoint();
   if (endpoint) {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ roomName, identity, metadata: metadataString, agentName: LIVEKIT_AGENT_NAME }),
-    });
-    if (!res.ok) throw new Error(`Token endpoint HTTP ${res.status}`);
-    const data = await res.json().catch(() => ({}));
-    if (!data?.token) throw new Error("Réponse du serveur sans token LiveKit.");
-    return data.token;
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomName, identity, metadata: metadataString, agentName: LIVEKIT_AGENT_NAME }),
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (data?.token) return data.token;
+      } else {
+        console.warn(`[LiveKit] Token endpoint HTTP ${res.status}, bascule repli client signing`);
+      }
+    } catch (err) {
+      console.warn("[LiveKit] Token endpoint indisponible, repli client signing:", err?.message);
+    }
   }
 
   // 2) Mode dégradé, développement uniquement.
@@ -252,6 +258,11 @@ export async function prewarmNovaToken({
     });
     if (jwt) {
       _prewarmedTokenCache = { jwt, key, timestamp: Date.now() };
+      // Pré-ouvre DNS/TLS/région vers le serveur vocal : le clic « Parler » se connecte aussitôt.
+      try {
+        const url = import.meta.env.VITE_LIVEKIT_URL;
+        if (url) new Room().prepareConnection(url, jwt).catch(() => { });
+      } catch { /* facultatif */ }
     }
     return jwt;
   } catch (e) {
@@ -308,11 +319,15 @@ export default function LiveKitVoiceAssistant({
   useEffect(() => {
     try { armIosAudio(); } catch (_e) { /* ignore */ }
     setMicReady(true);
-    whenMicPermissionReady().catch(() => {});
+    whenMicPermissionReady().catch(() => { });
   }, []);
 
   // ── Récupération / Synchronisation du token ────────────────────────────────
-  const lastFetchParamsRef = useRef("");
+  const lastFetchParamsRef = useRef(
+    _prewarmedTokenCache.jwt && (Date.now() - _prewarmedTokenCache.timestamp < 300000)
+      ? _prewarmedTokenCache.key
+      : ""
+  );
   useEffect(() => {
     let active = true;
 
@@ -379,7 +394,7 @@ export default function LiveKitVoiceAssistant({
     try {
       liveKitVoiceBus.clearBridge();
       liveKitVoiceBus.notify({ isConnected: false, isSpeaking: false, isListening: false, agentState: "idle" });
-    } catch {}
+    } catch { }
     const turns = turnsRef.current || [];
     if (turns.length) {
       const stats = conversationStats(turns);
@@ -402,7 +417,7 @@ export default function LiveKitVoiceAssistant({
       try {
         liveKitVoiceBus.clearBridge();
         liveKitVoiceBus.notify({ isConnected: false, isSpeaking: false, isListening: false, agentState: "idle" });
-      } catch {}
+      } catch { }
     };
   }, []);
 
@@ -453,6 +468,9 @@ export default function LiveKitVoiceAssistant({
           expWebAudioMix: false,
           adaptiveStream: false,
           dynacast: false,
+        }}
+        onConnected={() => {
+          try { armIosAudio(); } catch { }
         }}
         onDisconnected={handleDisconnected}
         style={{ display: "contents" }}
@@ -563,8 +581,15 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
 
   useEffect(() => {
     if (!room) return;
+    const unlockAudio = () => {
+      if (typeof room.startAudio === "function") {
+        room.startAudio().catch(() => { });
+      }
+    };
+    window.addEventListener("click", unlockAudio, { passive: true });
+    window.addEventListener("touchstart", unlockAudio, { passive: true });
     if (typeof room.startAudio === "function") {
-      room.startAudio().catch(() => {});
+      room.startAudio().catch(() => { });
     }
     const onMediaError = (error) => {
       const failure = MediaDeviceFailure.getFailure(error);
@@ -580,7 +605,11 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
       onMicBlockedChange(true);
     };
     room.on(RoomEvent.MediaDevicesError, onMediaError);
-    return () => room.off(RoomEvent.MediaDevicesError, onMediaError);
+    return () => {
+      window.removeEventListener("click", unlockAudio);
+      window.removeEventListener("touchstart", unlockAudio);
+      room.off(RoomEvent.MediaDevicesError, onMediaError);
+    };
   }, [room, onMicBlockedChange, onMicErrorReason]);
 
   // Activation explicite + retries automatiques dès que la room est connectée.
@@ -593,7 +622,44 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
     // essai immédiat, puis +500ms, +1200ms, +2200ms (≈ 4 tentatives en 2.2s).
     const CUMULATIVE_DELAYS_MS = [0, 500, 1200, 2200];
 
-    const ensureMicOn = async () => {
+    // 🔒 Single-flight : Connected ET StateChanged déclenchaient ensureMicOn
+    // deux fois en parallèle → la 1re publiait le stream pré-obtenu, la 2e
+    // (ne voyant pas encore le micro actif) appelait setMicrophoneEnabled et
+    // publiait une SECONDE piste micro. L'agent restait abonné à la mauvaise
+    // piste → "NOVA écoute" mais n'entend jamais rien.
+    let inFlight = null;
+    const ensureMicOn = () => {
+      if (inFlight) return inFlight;
+      inFlight = ensureMicOnOnce().finally(() => { inFlight = null; });
+      return inFlight;
+    };
+
+    const hasLiveMicPublication = () => {
+      const pub = localParticipant.getTrackPublication?.(Track.Source.Microphone);
+      const mst = pub?.track?.mediaStreamTrack;
+      return !!(pub && mst && mst.readyState === "live");
+    };
+
+    const ensureMicOnOnce = async () => {
+      // Déjà une piste micro vivante publiée → on s'assure qu'elle n'est pas muette.
+      if (hasLiveMicPublication()) {
+        const pub = localParticipant.getTrackPublication(Track.Source.Microphone);
+        if (pub.isMuted) { try { await pub.track.unmute(); } catch { /* ignore */ } }
+        forcePlayAndRecordSession();
+        onMicBlockedChange(false);
+        return;
+      }
+
+      // Attendre (brièvement) que le getUserMedia lancé dans le geste soit résolu,
+      // sinon on rate le stream pré-obtenu et on part sur un fallback concurrent.
+      try {
+        await Promise.race([
+          whenMicPermissionReady(),
+          new Promise((r) => setTimeout(r, 3000)),
+        ]);
+      } catch { /* ignore */ }
+      if (cancelled) return;
+
       // 🎤 CHEMIN PRINCIPAL — on publie DIRECTEMENT le MediaStreamTrack
       // pré-obtenu dans le user-gesture (armIosAudio). Zéro nouvelle
       // getUserMedia → zéro course, zéro track "vivant mais silencieux".
@@ -607,6 +673,7 @@ function LiveKitMicWatchdog({ onMicBlockedChange, onMicErrorReason }) {
             // le MediaStreamTrack et peut le restart/re-getUserMedia en interne,
             // ce qui casse la piste sur iOS Chrome (raccourci) et perturbe la
             // négociation WebRTC → même l'audio ENTRANT de l'agent devient muet.
+            if (!mst.enabled) mst.enabled = true;
             const localTrack = new LocalAudioTrack(mst, undefined, true);
             await localParticipant.publishTrack(localTrack, {
               source: Track.Source.Microphone,
@@ -851,7 +918,7 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
             }
           ].slice(-60));
         }
-      } catch {}
+      } catch { }
     };
 
     room.on(RoomEvent.TranscriptionReceived, handleTranscription);
@@ -868,6 +935,11 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
     if (!room || !localParticipant) return;
     const sayHandler = async (text) => {
       try {
+        playEnglishAudio(text, {
+          raw: true,
+          onStart: () => liveKitVoiceBus.notify({ isSpeaking: true, agentState: "speaking" }),
+          onEnd: () => liveKitVoiceBus.notify({ isSpeaking: false, agentState: "listening" }),
+        });
         const payload = new TextEncoder().encode(JSON.stringify({ type: "say", text }));
         await localParticipant.publishData(payload, { reliable: true });
       } catch (err) {
@@ -876,6 +948,7 @@ function LiveKitStateSync({ onTranscriptionsUpdate, onStateChange, onControllerR
     };
     const interruptHandler = () => {
       try {
+        stopEnglishAudio();
         const payload = new TextEncoder().encode(JSON.stringify({ type: "interrupt" }));
         localParticipant.publishData(payload, { reliable: true });
       } catch (err) {
@@ -1032,7 +1105,7 @@ function LiveKitAgentWatchdog({ onMissing }) {
       if (hasRemote()) {
         onMissing?.(false);
       } else {
-        console.warn("[LiveKit] Aucun agent n'a rejoint la room après 12s — dispatch en attente ou KO.");
+        console.warn("[LiveKit] Aucun agent n'a rejoint la room après 25s — dispatch en attente ou KO.");
         onMissing?.(true);
       }
     };
@@ -1044,7 +1117,7 @@ function LiveKitAgentWatchdog({ onMissing }) {
     };
 
     room.on(RoomEvent.ParticipantConnected, onParticipant);
-    timer = setTimeout(check, 12000);
+    timer = setTimeout(check, 25000);
 
     return () => {
       room.off(RoomEvent.ParticipantConnected, onParticipant);

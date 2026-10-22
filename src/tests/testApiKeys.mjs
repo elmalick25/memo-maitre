@@ -73,7 +73,7 @@ async function run() {
   }
 
   // ── 2. GROQ ──
-  const groqKeys = ["VITE_GROQ_API_KEY", "VITE_GROQ_API_KEY_5", "VITE_GROQ_API_KEY_6", "VITE_GROQ_API_KEY_7"];
+  const groqKeys = Object.keys(env).filter(k => k.startsWith("VITE_GROQ_API_KEY")).sort();
   const testedGroq = new Set();
   for (const k of groqKeys) {
     const key = env[k];
@@ -84,10 +84,10 @@ async function run() {
       {
         method: "POST",
         headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "openai/gpt-oss-120b", messages: [{ role: "user", content: "ping" }], max_tokens: 5 })
+        body: JSON.stringify({ model: "qwen/qwen3.8-27b", messages: [{ role: "user", content: "ping" }], max_tokens: 5 })
       },
       (status, json, text) => {
-        if (status === 200) return { ok: true, msg: "Modèle openai/gpt-oss-120b OK" };
+        if (status === 200) return { ok: true, msg: "Modèle Groq Qwen/Whisper OK" };
         if (status === 429) return { ok: true, warn: true, msg: "Clé valide mais Rate Limit 429" };
         return { ok: false, msg: `HTTP ${status}: ${json?.error?.message || text.slice(0, 100)}` };
       }
@@ -318,6 +318,48 @@ async function run() {
       (status, json, text) => {
         if (status === 200 && json?.items) return { ok: true, msg: "Clé YouTube Data v3 valide" };
         return { ok: false, msg: `HTTP ${status}: ${json?.error?.message || text.slice(0, 100)}` };
+      }
+    );
+  }
+
+  // ── 15. DEEPGRAM ──
+  const deepgramKeys = Object.keys(env).filter(k => k.startsWith("VITE_DEEPGRAM_API_KEY")).sort();
+  for (const k of deepgramKeys) {
+    const key = env[k];
+    if (!key) continue;
+    await testFetch("Deepgram", k,
+      "https://api.deepgram.com/v1/projects",
+      {
+        method: "GET",
+        headers: { "Authorization": `Token ${key}` }
+      },
+      (status, json, text) => {
+        if (status === 200 && Array.isArray(json?.projects)) {
+          const p = json.projects[0];
+          return { ok: true, msg: `Valide ! Projet: ${p?.name || "default"}` };
+        }
+        return { ok: false, msg: `HTTP ${status}: ${json?.err_msg || text.slice(0, 100)}` };
+      }
+    );
+  }
+
+  // ── 16. TAVILY ──
+  const tavilyKeys = Object.keys(env).filter(k => k.startsWith("VITE_TAVILY_API_KEY")).sort();
+  for (const k of tavilyKeys) {
+    const key = env[k];
+    if (!key) continue;
+    await testFetch("Tavily", k,
+      "https://api.tavily.com/search",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key, query: "ping", max_results: 1 })
+      },
+      (status, json, text) => {
+        if (status === 200 && Array.isArray(json?.results)) {
+          return { ok: true, msg: "Recherche Tavily OK (Plan gratuit actif)" };
+        }
+        return { ok: false, msg: `HTTP ${status}: ${json?.detail?.error || text.slice(0, 100)}` };
       }
     );
   }

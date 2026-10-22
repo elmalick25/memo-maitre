@@ -1,5 +1,12 @@
 import { ATOMIC_CARD_RULES } from "./atomicCardRules.js";
 import { safeParseJSON } from "./textUtils.js";
+import { normalizeCardMarkdown } from "./cardFormatFixer.js";
+
+export const FORMAT_RULES = `RÈGLES DE MISE EN FORME (obligatoires) :
+- Le CODE informatique va TOUJOURS dans un bloc \`\`\`langage (ex: \`\`\`python), jamais en texte courant.
+- Le TEXTE (phrases anglaises, françaises, dialogues, traductions) n'est JAMAIS dans un bloc \`\`\` ni entre \`backticks\`.
+- Les \`backticks\` en ligne sont réservés aux identifiants/commandes de code (\`map()\`, \`git push\`).
+- Si la fiche source viole ces règles, corrige-la.`;
 
 export function buildOptimizationSystemPrompt() {
   return `Tu es un expert FSRS/SuperMemo. Pour CHAQUE fiche fournie (identifiée par son "id"), produis 1 à N fiches ATOMIQUES optimisées de sorte que la rétention FSRS prédite tende vers 100%. Scinde agressivement si nécessaire, resserre les formulations, élimine toute ambiguïté. Conserve l'"id" source dans chaque sortie pour tracer l'origine.
@@ -7,12 +14,27 @@ export function buildOptimizationSystemPrompt() {
 Réponds UNIQUEMENT en JSON strict :
 {"results":[{"id":"<source-id>","cards":[{"front":"...","back":"...","example":"..."}]}]}
 
-${ATOMIC_CARD_RULES}`;
+${ATOMIC_CARD_RULES}
+
+${FORMAT_RULES}`;
+}
+
+/** Retire uniquement l'emballage ```json … ``` autour de la réponse, jamais les blocs de code DANS les fiches. */
+export function stripJsonWrapper(text) {
+  const t = String(text || "").trim();
+  const m = t.match(/^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?```\s*$/);
+  if (m && /^[\[{]/.test(m[1].trim())) return m[1].trim();
+  const start = t.search(/[\[{]/);
+  if (start > 0 && !/^[\[{]/.test(t)) {
+    const end = Math.max(t.lastIndexOf("}"), t.lastIndexOf("]"));
+    if (end > start) return t.slice(start, end + 1);
+  }
+  return t;
 }
 
 export function parseOptimizationResponse(rawResponse, slice = []) {
   const rawText = typeof rawResponse === "string" ? rawResponse : (rawResponse?.text || "");
-  const clean = rawText.replace(/```json|```/gi, "").trim();
+  const clean = stripJsonWrapper(rawText);
   let parsed = null;
   try {
     parsed = safeParseJSON(clean);
@@ -41,9 +63,9 @@ export function parseOptimizationResponse(rawResponse, slice = []) {
     const valid = r.cards
       .filter((c) => c && typeof c.front === "string" && typeof c.back === "string" && c.front.trim() && c.back.trim())
       .map((c) => ({
-        front: c.front.trim(),
-        back: c.back.trim(),
-        example: (c.example || "").toString().trim(),
+        front: normalizeCardMarkdown(c.front.trim()),
+        back: normalizeCardMarkdown(c.back.trim()),
+        example: normalizeCardMarkdown((c.example || "").toString().trim()),
       }));
 
     if (valid.length > 0) {

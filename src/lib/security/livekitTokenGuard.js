@@ -38,7 +38,11 @@ const isDev = () => {
 
 /** Endpoint serveur de délivrance de token (vide = non configuré). */
 export function getTokenEndpoint() {
-  return String(envVar("VITE_LIVEKIT_TOKEN_ENDPOINT") || "").trim();
+  const direct = String(envVar("VITE_LIVEKIT_TOKEN_ENDPOINT") || "").trim();
+  if (direct) return direct;
+  const proxy = String(envVar("VITE_AI_PROXY_URL") || "").trim().replace(/\/+$/, "");
+  if (proxy) return `${proxy}/livekit/token`;
+  return "";
 }
 
 /**

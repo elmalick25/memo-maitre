@@ -42,7 +42,6 @@ export default function MobileHomeV2({
   xp = 0,
   xpToNext = 100,
   streak = 0,
-  energy = 100,
   dueCount = 0,
   estMinutes = 0,
   dueModules = [],
@@ -64,6 +63,7 @@ export default function MobileHomeV2({
   onOpenRoutine,
   onOpenVeille,
   onOpenPractice,
+  onOpenExtraSession,
 }) {
   const [isSelectingModule, setIsSelectingModule] = useState(false);
   const [ritual, setRitual] = useState(false);
@@ -135,6 +135,7 @@ export default function MobileHomeV2({
   const hasDue = dueCount > 0;
 
   const defaultShortcuts = [
+    { id: "extra", icon: "⚡", label: "Session Extra", sub: "À la carte", onClick: onOpenExtraSession },
     { id: "routine", icon: "🌟", label: "Routine", sub: "Du Jour", onClick: onOpenRoutine },
     { id: "quests", icon: "🎯", label: "Quêtes", sub: `${questsProgress.done}/${questsProgress.total || 3} faites`, onClick: onOpenQuests },
     { id: "report", icon: "📊", label: "Rapport", sub: "Cette semaine", onClick: () => onOpenStats?.("report") },
@@ -208,6 +209,35 @@ export default function MobileHomeV2({
             ))}
           </div>
         )}
+
+        {typeof onOpenExtraSession === "function" && (
+          <button
+            type="button"
+            onClick={() => {
+              setIsSelectingModule(false);
+              onOpenExtraSession();
+            }}
+            style={{
+              marginTop: 20,
+              width: "100%",
+              padding: "14px",
+              background: "transparent",
+              border: "1.5px dashed var(--mm-primary)",
+              borderRadius: 16,
+              color: "var(--mm-primary)",
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+            }}
+          >
+            <span>⚡</span>
+            <span>Personnaliser le volume (Session Extra)</span>
+          </button>
+        )}
       </div>
     );
   }
@@ -268,18 +298,18 @@ export default function MobileHomeV2({
               <em>Jour{streak > 1 ? "s" : ""}</em>
             </span>
           </div>
-          <div className="mhv2-hero-stat" title={`Énergie ${energy}%`}>
-            <span className="mhv2-hero-stat-ico" data-tone="volt">⚡</span>
+          <div className="mhv2-hero-stat" title={`Mémoire : forme FSRS réelle ${stats?.forme ?? 0}%`} onClick={() => onOpenStats?.("forme")}>
+            <span className="mhv2-hero-stat-ico" data-tone="volt">🧠</span>
             <span className="mhv2-hero-stat-body">
-              <strong>{energy}%</strong>
-              <em>Énergie</em>
+              <strong>{Math.round(stats?.forme ?? 0)}%</strong>
+              <em>Mémoire</em>
             </span>
           </div>
-          <div className="mhv2-hero-stat" title={`${xp} XP`}>
-            <span className="mhv2-hero-stat-ico" data-tone="star">✨</span>
+          <div className="mhv2-hero-stat" title={`Acquis : ${stats?.mastery ?? 0}% du corpus maîtrisé`} onClick={() => onOpenStats?.("mastery")}>
+            <span className="mhv2-hero-stat-ico" data-tone="star">🎯</span>
             <span className="mhv2-hero-stat-body">
-              <strong>{xp}</strong>
-              <em>XP</em>
+              <strong>{Math.round(stats?.mastery ?? 0)}%</strong>
+              <em>Acquis</em>
             </span>
           </div>
         </div>
@@ -311,7 +341,7 @@ export default function MobileHomeV2({
       <button
         type="button"
         className="mhv2-cta"
-        disabled={!hasDue && typeof onExploreLab !== "function"}
+        disabled={!hasDue && typeof onOpenExtraSession !== "function" && typeof onExploreLab !== "function"}
         onClick={() => {
           if (hasDue) {
             if (dueModules.length > 1) {
@@ -322,17 +352,21 @@ export default function MobileHomeV2({
               onStartSession?.(null);
             }
           } else {
-            onExploreLab?.();
+            if (typeof onOpenExtraSession === "function") {
+              onOpenExtraSession();
+            } else {
+              onExploreLab?.();
+            }
           }
         }}
       >
         <div className="mhv2-cta-content">
           <div className="mhv2-cta-badge">
-            <span className="mhv2-cta-icon">{hasDue ? "▶" : "🧪"}</span>
+            <span className="mhv2-cta-icon">{hasDue ? "▶" : "⚡"}</span>
           </div>
           <div className="mhv2-cta-body">
             <span className="mhv2-cta-title">
-              {hasDue ? "Réviser maintenant" : "Explorer le Lab"}
+              {hasDue ? "Réviser maintenant" : "Session Extra"}
             </span>
             <div className="mhv2-cta-meta">
               {hasDue ? (
@@ -341,7 +375,7 @@ export default function MobileHomeV2({
                   <span className="mhv2-cta-pill mhv2-cta-pill-time">~{estMinutes || Math.max(1, Math.ceil(dueCount * 0.5))} min</span>
                 </>
               ) : (
-                <span className="mhv2-cta-sub">Explorer une nouvelle session</span>
+                <span className="mhv2-cta-sub">Choisir le volume et les modules</span>
               )}
             </div>
           </div>

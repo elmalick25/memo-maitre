@@ -20,8 +20,8 @@ const env = (key) =>
 
 // ── Configuration ────────────────────────────────────────────────────────────
 const DEFAULT_MODEL       = env("VITE_GEMINI_MODEL") || "gemini-flash-latest";
-const RPM_LIMIT           = Number(env("VITE_GEMINI_RPM_LIMIT")  || 4);        // free tier ≤ 4 RPM (conservatif)
-const MIN_INTERVAL_MS     = Math.ceil(60_000 / RPM_LIMIT);                     // ~15 000 ms
+const RPM_LIMIT           = Number(env("VITE_GEMINI_RPM_LIMIT")  || 15);        // tier standard Google AI Studio
+const MIN_INTERVAL_MS     = 800;                                               // 800 ms fluide entre requêtes séquentielles
 const RETRY_BUFFER_MS     = 2_000;                                              // tampon après Retry-After
 const MAX_BACKOFF_MS      = 8 * 60_000;                                         // plafond backoff : 8 min
 const CACHE_TTL_MS        = 5 * 60_000;                                         // TTL cache réponses : 5 min
@@ -34,6 +34,7 @@ let projectCooldownUntil= 0;                   // cooldown niveau-projet (429 pa
 let consecutiveFails    = 0;                   // compteur pour back-off expo
 let keyIndex            = 0;                   // curseur de rotation des clés
 const keyCooldown       = new Map();           // idx → timestamp cooldown individuel
+let geminiProxyCooldownUntil = 0;              // cooldown proxy en cas de panne proxy Cloudflare
 
 // ── Cache LRU simple ────────────────────────────────────────────────────────
 const _cache = new Map(); // key → { data, ts }
@@ -168,9 +169,6 @@ async function runGeminiRequest({ model = DEFAULT_MODEL, body, signal }) {
   }
 
   // ── Tentative avec chaque clé disponible ─────────────────────────────────
-  // NB : puisque toutes les clés partagent le quota, on ne fait QU'UNE tentative
-  //      réelle par cycle de queue. Si la clé choisie retourne 429, on met en
-  //      cooldown le projet entier (back-off expo) et on relance via la queue.
   const entry = pickAvailableKey(keys);
   if (!entry) {
     const backoff = Math.min(MAX_BACKOFF_MS, 60_000 * Math.pow(2, consecutiveFails));
@@ -182,16 +180,44 @@ async function runGeminiRequest({ model = DEFAULT_MODEL, body, signal }) {
   lastRequestAt = Date.now();
   let response, text, data;
 
+  const proxyBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_AI_PROXY_URL || "").replace(/\/+$/, "");
+  let usedProxy = false;
+
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${entry.key}`;
-    response = await fetch(url,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body }),
-        signal,
+    // Si la clé est "proxy-key" (aucune clé locale dans .env), tente le Worker
+    if (entry.key === "proxy-key" && proxyBase && Date.now() >= geminiProxyCooldownUntil) {
+      try {
+        const proxyUrl = `${proxyBase}/ai/gemini?model=${encodeURIComponent(model)}`;
+        const pRes = await fetch(proxyUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body }),
+          signal,
+        });
+        if (pRes.ok) {
+          response = pRes;
+          usedProxy = true;
+        } else {
+          geminiProxyCooldownUntil = Date.now() + 24 * 3600_000;
+          console.debug("[Gemini] Proxy HTTP", pRes.status, "→ fallback direct et cooldown proxy 24h");
+        }
+      } catch (proxyErr) {
+        geminiProxyCooldownUntil = Date.now() + 24 * 3600_000;
+        console.debug("[Gemini] Proxy fallback vers appel direct:", proxyErr?.message);
       }
-    );
+    }
+
+    if (!usedProxy) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${entry.key}`;
+      response = await fetch(url,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body }),
+          signal,
+        }
+      );
+    }
   } catch (err) {
     keyCooldown.set(entry.idx, Date.now() + 5_000);
     throw err;

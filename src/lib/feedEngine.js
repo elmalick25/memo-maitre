@@ -10,6 +10,7 @@
 // ============================================================================
 
 import { safeStorage } from "./safeStorage.js";
+import { sanitizeNewsTitle } from "./newsTextPresentation.js";
 
 // ─── 1. REGISTRE DES SOURCES OFFICIELLES & FIABLES (TRUST REGISTRY) ─────────
 export const TRUST_CATEGORIES = {
@@ -135,42 +136,17 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
   }
 }
 
+const CUSTOM_FEED_PROXY = (typeof import.meta !== "undefined" && import.meta.env?.VITE_PROXY_URL) || "";
+
 /**
  * Proxys CORS vérifiés et calibrés pour contourner les blocages navigateurs
  */
 const PROXY_PIPELINE = [
-  {
-    name: "rss2json",
-    build: (u) => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(u)}`,
-    parse: async (res) => {
-      const data = await res.json();
-      if (data.status !== "ok" || !data.items) throw new Error("rss2json invalid status");
-      // Reconstruit un XML RSS standard pour le parseur agnostique unifié
-      const itemsXml = (data.items || []).map((it) => `
-        <item>
-          <title><![CDATA[${it.title || ""}]]></title>
-          <link><![CDATA[${it.link || ""}]]></link>
-          <description><![CDATA[${it.description || it.content || ""}]]></description>
-          <pubDate>${it.pubDate || ""}</pubDate>
-          <author>${it.author || ""}</author>
-          ${it.enclosure?.link ? `<enclosure url="${it.enclosure.link}" type="${it.enclosure.type || ""}" />` : ""}
-          ${it.thumbnail ? `<media:thumbnail url="${it.thumbnail}" />` : ""}
-          ${(it.categories || []).map((c) => `<category>${c}</category>`).join("")}
-        </item>
-      `).join("");
-      return `<rss version="2.0"><channel><title>${data.feed?.title || ""}</title><link>${data.feed?.link || ""}</link>${itemsXml}</channel></rss>`;
-    }
-  },
-  {
-    name: "codetabs",
-    build: (u) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+  ...(CUSTOM_FEED_PROXY ? [{
+    name: "cloudflare-worker",
+    build: (u) => `${CUSTOM_FEED_PROXY.replace(/\/+$/, "")}?url=${encodeURIComponent(u)}`,
     parse: async (res) => res.text()
-  },
-  {
-    name: "allorigins-raw",
-    build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-    parse: async (res) => res.text()
-  },
+  }] : []),
   {
     name: "allorigins-json",
     build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
@@ -180,11 +156,6 @@ const PROXY_PIPELINE = [
     }
   },
   {
-    name: "cors-proxy-io",
-    build: (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    parse: async (res) => res.text()
-  },
-  {
     name: "jina-feed",
     build: (u) => `https://r.jina.ai/${u}`,
     parse: async (res) => res.text()
@@ -192,53 +163,47 @@ const PROXY_PIPELINE = [
 ];
 
 /**
- * Télécharge le contenu d'une URL via course de proxys avec annulation immédiate des losers.
+ * Télécharge le contenu d'une URL via repli séquentiel sans polluer la console réseau.
  */
-export async function fetchRawFeedContent(targetUrl, { timeoutMs = 8500 } = {}) {
+export async function fetchRawFeedContent(targetUrl, { timeoutMs = 6000 } = {}) {
   const cacheKey = targetUrl.trim();
   const cached = _feedRequestMemo.get(cacheKey);
   if (cached && Date.now() - cached.ts < MEMO_TTL_MS) {
     return cached.promise;
   }
 
-  const raceCtrl = new AbortController();
-  const attempts = PROXY_PIPELINE.map(async (proxy) => {
-    try {
-      const reqUrl = proxy.build(targetUrl);
-      const res = await fetchWithTimeout(
-        reqUrl,
-        {
-          headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, application/json, text/html, */*" },
-          signal: raceCtrl.signal,
-        },
-        timeoutMs
-      );
+  const runSequential = async () => {
+    let lastError = null;
+    for (const proxy of PROXY_PIPELINE) {
+      try {
+        const reqUrl = proxy.build(targetUrl);
+        const res = await fetchWithTimeout(
+          reqUrl,
+          {
+            headers: { Accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, application/json, text/html, */*" },
+          },
+          timeoutMs
+        );
 
-      if (!res.ok) throw new Error(`${proxy.name} HTTP ${res.status}`);
-      const text = await proxy.parse(res);
-      if (!text || text.trim().length < 30) throw new Error(`${proxy.name} payload empty`);
+        if (!res.ok) continue;
+        const text = await proxy.parse(res);
+        if (!text || text.trim().length < 30) continue;
 
-      // Vérifie que ce n'est pas une page d'erreur de proxy déguisée
-      if (/AuthenticationRequiredError|blocked from performing|bad network reputation|Quota Exceeded|Cloudflare Ray ID/i.test(text)) {
-        throw new Error(`${proxy.name} error envelope`);
+        // Vérifie que ce n'est pas une page d'erreur de proxy déguisée
+        if (/AuthenticationRequiredError|blocked from performing|bad network reputation|Quota Exceeded|Cloudflare Ray ID/i.test(text)) {
+          continue;
+        }
+
+        return { text, proxyUsed: proxy.name };
+      } catch (err) {
+        lastError = err;
       }
-
-      return { text, proxyUsed: proxy.name };
-    } catch (err) {
-      throw err;
     }
-  });
+    _feedRequestMemo.delete(cacheKey);
+    throw new Error(`Feed fetch failed across all proxies: ${lastError?.message || "Unknown error"}`);
+  };
 
-  const promise = Promise.any(attempts)
-    .then((winner) => {
-      raceCtrl.abort();
-      return winner;
-    })
-    .catch((aggregateErr) => {
-      _feedRequestMemo.delete(cacheKey);
-      const reasons = aggregateErr?.errors?.map((e) => e?.message).filter(Boolean).join(" | ") || aggregateErr?.message || "Unknown error";
-      throw new Error(`Feed fetch failed across all proxies: ${reasons}`);
-    });
+  const promise = runSequential();
 
   _feedRequestMemo.set(cacheKey, { ts: Date.now(), promise });
   return promise;
@@ -427,8 +392,8 @@ export function parseUnifiedFeed(rawPayload, { feedUrl = "", defaultSource = "",
 
       for (let i = 0; i < rawList.length; i++) {
         const item = rawList[i];
-        const title = cleanHtmlText(item.title || "Sans titre");
         const link = item.url || item.link || item.id || feedUrl;
+        const title = sanitizeNewsTitle(cleanHtmlText(item.title || "Sans titre"), link);
         const desc = cleanHtmlText(item.summary || item.description || item.content_html || item.content_text || "");
         const image = item.image || item.banner_image || item.thumbnail || null;
         const ts = parsePublicationDate(item.date_published || item.date_modified || item.publishedAt);
@@ -474,8 +439,8 @@ export function parseUnifiedFeed(rawPayload, { feedUrl = "", defaultSource = "",
         const channelTitle = xmlDoc.querySelector("channel > title")?.textContent?.trim() || defaultSource || "Flux";
         
         rssItems.forEach((node, idx) => {
-          const title = cleanHtmlText(node.querySelector("title")?.textContent || "Sans titre");
           const link = node.querySelector("link")?.textContent?.trim() || node.querySelector("guid")?.textContent?.trim() || "";
+          const title = sanitizeNewsTitle(cleanHtmlText(node.querySelector("title")?.textContent || "Sans titre"), link);
           
           const rawDesc = node.querySelector("description")?.textContent || "";
           const rawContent = node.getElementsByTagName("content:encoded")[0]?.textContent ||
@@ -518,9 +483,9 @@ export function parseUnifiedFeed(rawPayload, { feedUrl = "", defaultSource = "",
         const feedTitle = xmlDoc.querySelector("feed > title")?.textContent?.trim() || defaultSource || "Flux Atom";
         
         atomEntries.forEach((node, idx) => {
-          const title = cleanHtmlText(node.querySelector("title")?.textContent || "Sans titre");
           const linkNode = node.querySelector('link[rel="alternate"]') || node.querySelector("link");
           const link = linkNode?.getAttribute("href") || node.querySelector("id")?.textContent?.trim() || "";
+          const title = sanitizeNewsTitle(cleanHtmlText(node.querySelector("title")?.textContent || "Sans titre"), link);
           
           const rawSummary = node.querySelector("summary")?.textContent || "";
           const rawContent = node.querySelector("content")?.textContent || rawSummary;
@@ -572,8 +537,8 @@ function parseXmlViaRegex(xmlText, { feedUrl, defaultSource, defaultColor, defau
     const contentMatch = block.match(/<content(?::encoded)?[^>]*>([\s\S]*?)<\/content(?::encoded)?>/i);
     const dateMatch = block.match(/<(?:pubDate|published|updated|dc:date)[^>]*>([\s\S]*?)<\/(?:pubDate|published|updated|dc:date)>/i);
 
-    const title = cleanHtmlText(titleMatch ? titleMatch[1] : "Sans titre");
     const link = linkMatch ? cleanHtmlText(linkMatch[1]) : "";
+    const title = sanitizeNewsTitle(cleanHtmlText(titleMatch ? titleMatch[1] : "Sans titre"), link);
     const rawContent = contentMatch ? contentMatch[1] : (descMatch ? descMatch[1] : "");
     const desc = cleanHtmlText(descMatch ? descMatch[1] : rawContent);
     const ts = parsePublicationDate(dateMatch ? dateMatch[1].trim() : "");

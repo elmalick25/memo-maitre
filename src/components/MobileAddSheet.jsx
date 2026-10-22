@@ -6,12 +6,9 @@ import { useEffect } from "react";
 const TILES = [
   { id: "single",     icon: "✦", label: "Fiche unique",   color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))" },
   { id: "chat",       icon: "💬", label: "Copilot IA",    color: "linear-gradient(135deg,#9333ea,var(--mm-primary-glow))" },
-  { id: "batch",      icon: "🚀", label: "Batch IA",      color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-glow))" },
-  { id: "text",       icon: "📄", label: "Depuis texte",  color: "linear-gradient(135deg,#f59e0b,#fbbf24)" },
   { id: "file",       icon: "📎", label: "Vision IA",     color: "linear-gradient(135deg,#10b981,#34d399)" },
   { id: "multimedia", icon: "🎨", label: "Multimédia",    color: "linear-gradient(135deg,#ef4444,#f87171)" },
   { id: "templates",  icon: "📋", label: "Templates",     color: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary-glow))" },
-  { id: "quickadd",   icon: "⚡", label: "Quick Add",     color: "linear-gradient(135deg,#9c4a55,#9c4a55)" },
 ];
 
 export default function MobileAddSheet({

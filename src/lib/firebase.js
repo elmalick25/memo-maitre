@@ -189,6 +189,19 @@ const lsSet = (key, val, ts = Date.now()) => {
     localStorage.setItem(LS_PREFIX + key, JSON.stringify(val));
     localStorage.setItem(LS_PREFIX + key + "_ts", ts.toString());
   } catch (e) {
+    if (e?.name === "QuotaExceededError" || /quota/i.test(String(e?.message))) {
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && /^(memomaitre_cache_|cache_|tmp_|news_|tech_intel_|ai_)/i.test(k)) {
+            localStorage.removeItem(k);
+          }
+        }
+        localStorage.setItem(LS_PREFIX + key, JSON.stringify(val));
+        localStorage.setItem(LS_PREFIX + key + "_ts", ts.toString());
+        return;
+      } catch {}
+    }
     console.warn("[storage] localStorage plein ou indisponible:", e?.message);
   }
 };

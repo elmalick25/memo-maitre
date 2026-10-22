@@ -14,13 +14,17 @@
 //   4. whiteSpace: "pre" garanti sur tous les <pre>/<code> blocs pour
 //      préserver l'indentation reçue.
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState, createContext, useContext } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import AudioPlayButton from "./AudioPlayButton";
 import { extractEnglishSpeechText } from "../lib/speakUtils";
+import { normalizeCardMarkdown, shouldRenderBlockAsText, shouldRenderInlineAsText, DISPLAY_PROSE_LABELS } from "../lib/cardFormatFixer";
+
+// Contexte pour empêcher le dédoublement de boutons audio lorsque <p> est imbriqué dans <li> ou <blockquote>
+const ParentAudioContext = createContext(false);
 
 // ───────────────────────────────────────────────────────────────────────────
 // Langages reconnus
@@ -166,7 +170,7 @@ function sniffLanguage(code) {
   return null;
 }
 
-import { reformatDialogueWithPerTurnTranslation } from "../lib/englishCardEngine";
+import { sanitizeEnglishPedagogy, reformatDialogueWithPerTurnTranslation } from "../lib/englishCardEngine";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Pré-traitement du contenu Markdown
@@ -174,6 +178,12 @@ import { reformatDialogueWithPerTurnTranslation } from "../lib/englishCardEngine
 function preprocessContent(content) {
   if (!content || typeof content !== "string") return "";
   let text = content.replace(/\r\n?/g, "\n");
+  // Réparation à l'affichage (anciennes fiches) : prose sortie de l'éditeur,
+  // code inline-prose remis en texte, code étalé remis dans l'éditeur.
+  try { const fixed = normalizeCardMarkdown(text); if (typeof fixed === "string" && fixed.trim()) text = fixed; } catch { /* garde le texte brut */ }
+
+  // Garde-fou Niveau 3 (Rendu UI Direct) : Éradication immédiate des hallucinations grammaticales (Oxford/Cambridge)
+  text = sanitizeEnglishPedagogy(text);
 
   // Reformatage des dialogues combinés (A sa traduction, B sa traduction)
   text = reformatDialogueWithPerTurnTranslation(text);
@@ -208,8 +218,30 @@ function preprocessContent(content) {
   // Listes "• texte" → "- texte"
   text = text.replace(/^[•·]\s+/gm, "- ");
 
-  // Normalisation des sections Rétro-Ingénierie (⚙️ 1., 🔍 2., ⚠️ 3., 💻 4.) en H3 Markdown
-  const SECTION_HEADER = /^(?:###\s*|\*\*)?([\u{1F300}-\u{1FFFF}⚙️🔍⚠️💻💡📌🔑⚡🗣]\s*\d?\s*\.?\s*[^:\n]+)(?:\*\*)?$/gmu;
+  // Élimination des lignes orphelines contenant uniquement des astérisques résiduels
+  text = text.replace(/^\s*\*{1,}\s*$/gm, "");
+
+  // Nettoyage des artefacts d'astérisques et faux blocs de code sur les répliques A et B (ex: "- A : `**` ** ...")
+  text = text.replace(/^([ \t]*(?:[•·\-\–]|\*(?!\*))?\s*(?:\*{2}[AB]\s*:\s*\*{2}|[AB]\s*:)\s*)(?:`\*{1,2}`|\*{2,})\s*(?:\*{2,})?\s*/gm, "$1");
+
+  // Décoller les sections ⚠️ Attention au piège si elles sont fusionnées sur la même ligne qu'une réplique
+  text = text.replace(/([^\n])\s*(⚠️\s*\*{0,2}(?:Attention au piège|Piège))/g, "$1\n\n$2");
+  text = text.replace(/([^\n])\s*(?:[•·\-\*]\s*)?(🚫\s*\*{0,2}Le piège)/g, "$1\n- $2");
+  text = text.replace(/([^\n])\s*(?:[•·\-\*]\s*)?(⚡\s*\*{0,2}L['’]exception)/g, "$1\n- $2");
+
+  // Nettoyage de la section Attention au piège pour conserver le design fluide épuré avec icône jaune et titre en gras bleu (sans bandeau rouge)
+  text = text.replace(/^[\s*•-]*⚠️\s*\*{0,2}(Attention au piège[^\n:]*?)\*{0,2}\s*:\*{0,2}\s*(.*)$/gmi, (m, title, rest) => {
+    const cleanTitle = title.replace(/^\*+|\*+$/g, "").trim();
+    const cleanRest = rest.replace(/^\*+|\*+$/g, "").trim();
+    if (!cleanRest) return `\n\n⚠️ **${cleanTitle} :**\n`;
+    if (/^[•·\-\*]|🚫|⚡/.test(cleanRest)) {
+      return `\n\n⚠️ **${cleanTitle} :**\n- ${cleanRest.replace(/^[•·\-\*]\s*/, "")}\n`;
+    }
+    return `\n\n⚠️ **${cleanTitle} :** ${cleanRest}\n`;
+  });
+
+  // Normalisation des sections Rétro-Ingénierie & God Mode (⚙️ 1., 🔍 2., ⚠️ 3., 💻 4., ⚔️, 🔬, 🧠, ⚡) en H3 Markdown
+  const SECTION_HEADER = /^(?:###\s*|\*\*)?([\u{1F300}-\u{1FFFF}⚙️🔍⚠️💻💡📌🔑⚡🗣⚔️🔬🧠🎯✨]\s*\d?\s*\.?\s*[^:\n]+)(?:\*\*)?$/gmu;
   text = text.replace(SECTION_HEADER, "\n### $1\n");
 
   return text;
@@ -246,6 +278,68 @@ const styleCodeScroll = `
   }
 `;
 
+function CodeBlockHeader({ langLabel, codeString, showAudio, isDarkMode }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(codeString);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* noop */ }
+  };
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: isDarkMode
+        ? "linear-gradient(180deg, #242738 0%, #1a1c28 100%)"
+        : "linear-gradient(180deg, #F0F3FA 0%, #E3E8F5 100%)",
+      padding: "7px 14px",
+      borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.07)" : "rgba(15,23,42,0.07)"}`,
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57", display: "inline-block", boxShadow: "0 0 6px rgba(255,95,87,0.4)" }} />
+        <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E", display: "inline-block", boxShadow: "0 0 6px rgba(254,188,46,0.4)" }} />
+        <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#28C840", display: "inline-block", boxShadow: "0 0 6px rgba(40,200,64,0.4)" }} />
+        <span style={{
+          marginLeft: 8, fontSize: 10.5, fontWeight: 800,
+          color: isDarkMode ? "var(--mm-primary-glow, #FDBA74)" : "var(--mm-primary, #C2410C)",
+          letterSpacing: "0.08em",
+          background: isDarkMode ? "rgba(253, 186, 116, 0.12)" : "rgba(234, 88, 12, 0.08)",
+          padding: "2px 8px", borderRadius: 6,
+        }}>
+          {langLabel}
+        </span>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {showAudio && <AudioPlayButton text={codeString} size="sm" isDarkMode={isDarkMode} />}
+        <button
+          type="button"
+          onClick={handleCopy}
+          style={{
+            background: copied
+              ? "rgba(16, 185, 129, 0.2)"
+              : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"),
+            border: `1px solid ${copied ? "#10B981" : (isDarkMode ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)")}`,
+            color: copied
+              ? "#10B981"
+              : (isDarkMode ? "#E2E8F0" : "#1E293B"),
+            fontSize: 10.5, fontWeight: 700, padding: "3px 10px",
+            borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
+            display: "inline-flex", alignItems: "center", gap: 5,
+            transition: "all 0.15s ease",
+          }}
+          title={copied ? "Copié !" : "Copier le code"}
+        >
+          <span>{copied ? "✓" : "⧉"}</span>
+          <span>{copied ? "Copié !" : "Copier"}</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function RichText({ content, style = {}, isDarkMode = true, showAudio = false }) {
   const processed = useMemo(() => preprocessContent(content), [content]);
 
@@ -256,7 +350,7 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
   const tableRowAltBg = isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(15,23,42,0.025)";
   const textColor = isDarkMode ? "#E6EDFF" : "#0F172A";
   const codeTheme = isDarkMode ? vscDarkPlus : oneLight;
-  const codeBg = isDarkMode ? "#1e1e1e" : "#FAFAFA";
+  const codeBg = isDarkMode ? "#161822" : "#FAFAFA";
 
   return (
     <div className="rich-text-renderer" style={{ ...baseStyle, color: textColor, ...style }}>
@@ -275,54 +369,37 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
               if (sniffed) lang = sniffed;
             }
 
-            if (!inline && (match || codeString.includes("\n") || codeString.length > 60)) {
+            // Ne transformer en bloc de code informatique que si un langage est explicitement
+            // déclaré (ex: ```js) OU s'il s'agit de code multiligne avec syntaxe de programmation détectée.
+            // Les phrases de dialogue en anglais (même longues de > 60 caractères) restent du texte inline stylisé.
+            const rawLabel = match ? match[1].toLowerCase() : "";
+            const isInlineish = inline || (!match && !codeString.includes("\n") && !(node?.position && node.position.start.line !== node.position.end.line));
+            if (isInlineish ? shouldRenderInlineAsText(codeString) : shouldRenderBlockAsText(rawLabel, codeString)) {
+              return isInlineish ? <>{codeString}</> : <span style={{ display: "block", whiteSpace: "pre-wrap", margin: "8px 0" }}>{codeString}</span>;
+            }
+            const isExplicitCodeBlock = Boolean(match) && !DISPLAY_PROSE_LABELS.has(rawLabel);
+            const isMultilineCode = codeString.includes("\n") && lang !== "text";
+            const shouldRenderCodeBlock = !inline && (isExplicitCodeBlock || isMultilineCode);
+
+            if (shouldRenderCodeBlock) {
               codeString = autoIndentCode(codeString, lang);
               const langLabel = (lang && lang !== "text" ? lang : "code").toUpperCase();
               return (
                 <div style={{
-                  margin: "12px 0",
-                  borderRadius: 12,
+                  margin: "14px 0",
+                  borderRadius: 14,
                   overflow: "hidden",
-                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)"}`,
+                  border: `1px solid ${isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(15, 23, 42, 0.12)"}`,
                   background: codeBg,
-                  boxShadow: isDarkMode ? "0 6px 18px rgba(0,0,0,0.18)" : "0 6px 18px color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                  boxShadow: isDarkMode ? "0 8px 24px rgba(0,0,0,0.35)" : "0 6px 20px rgba(15, 23, 42, 0.08)",
                   maxWidth: "100%",
                 }}>
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    background: isDarkMode
-                      ? "linear-gradient(180deg, #2a2d3a 0%, #1f222e 100%)"
-                      : "linear-gradient(180deg, #F0F2FA 0%, #E4E8F7 100%)",
-                    padding: "6px 12px",
-                    borderBottom: `1px solid ${isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(15,23,42,0.06)"}`,
-                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FF5F57", display: "inline-block" }} />
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FEBC2E", display: "inline-block" }} />
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#28C840", display: "inline-block" }} />
-                      <span style={{ marginLeft: 10, fontSize: 10, fontWeight: 800, color: isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)", letterSpacing: "0.08em" }}>
-                        {langLabel}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {showAudio && <AudioPlayButton text={codeString} size="sm" isDarkMode={isDarkMode} />}
-                      <button
-                        type="button"
-                        onClick={async () => { try { await navigator.clipboard.writeText(codeString); } catch { /* noop */ } }}
-                        style={{
-                          background: isDarkMode ? "rgba(192,132,252,0.12)" : "color-mix(in srgb, var(--mm-primary) 10.0%, transparent)",
-                          border: `1px solid ${isDarkMode ? "rgba(192,132,252,0.25)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)"}`,
-                          color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
-                          fontSize: 10, fontWeight: 700, padding: "3px 9px",
-                          borderRadius: 6, cursor: "pointer", fontFamily: "inherit",
-                        }}
-                        title="Copier le code"
-                      >
-                        ⧉ Copier
-                      </button>
-                    </div>
-                  </div>
+                  <CodeBlockHeader
+                    langLabel={langLabel}
+                    codeString={codeString}
+                    showAudio={showAudio}
+                    isDarkMode={isDarkMode}
+                  />
                   <SyntaxHighlighter
                     className="code-scroll-wrapper"
                     style={codeTheme}
@@ -333,7 +410,6 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
                       fontSize: "13px", lineHeight: 1.65,
                       padding: "14px 16px",
                       background: codeBg,
-                      // ── Plus de scroll horizontal : tout le code reste visible
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
                       overflowWrap: "anywhere",
@@ -344,7 +420,7 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
                     codeTagProps={{ style: { whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere", fontFamily: "'JetBrains Mono','Fira Code',monospace", display: "block", width: "100%" } }}
                     showLineNumbers={codeString.split("\n").length > 3}
                     wrapLongLines={true}
-                    lineNumberStyle={{ minWidth: "2.25em", paddingRight: "1em", textAlign: "right", verticalAlign: "top", opacity: 0.55, userSelect: "none" }}
+                    lineNumberStyle={{ minWidth: "2.25em", paddingRight: "1em", textAlign: "right", verticalAlign: "top", opacity: 0.5, userSelect: "none" }}
                     lineProps={() => ({ style: { display: "block", whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "anywhere" } })}
                     {...props}
                   >
@@ -354,35 +430,24 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
               );
             }
 
-            // Inline code avec bouton d'écoute audio TTS automatique uniquement pour les vraies expressions anglaises idiomatiques
-            const rawInlineText = Array.isArray(children) ? children.join("") : String(children || "");
-            const cleanText = rawInlineText.replace(/`+/g, "").trim();
-            const englishSpeech = extractEnglishSpeechText(rawInlineText);
-            const isCodeToken = /[()\[\]{};$=><+\/*_]/.test(cleanText) ||
-              /^(cond|nil|t|car|cdr|cons|defun|setq|setf|let|lambda|if|when|unless|return|def|var|val|function|expr|test)$/i.test(cleanText);
-            const isEnglishPhrase = !isCodeToken && Boolean(englishSpeech) && cleanText.split(/\s+/).length >= 2;
-
+            // Inline code épuré : le bouton audio TTS est géré au niveau de la ligne parente (li, p, blockquote)
+            // pour garantir un alignement soigné sans bouton en double (/* AudioPlayButton text={cleanText} */).
             return (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, verticalAlign: "middle" }}>
-                <code
-                  style={{
-                    background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 16.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
-                    color: isDarkMode ? "#C4B5FD" : "var(--mm-primary)",
-                    padding: "2px 7px",
-                    borderRadius: 6,
-                    fontFamily: "'JetBrains Mono','Fira Code',monospace",
-                    fontSize: "0.88em",
-                    fontWeight: 600,
-                    border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)"}`,
-                  }}
-                  {...props}
-                >
-                  {children}
-                </code>
-                {showAudio && isEnglishPhrase && (
-                  <AudioPlayButton text={englishSpeech} /* AudioPlayButton text={cleanText} */ size="sm" showLabel={false} isDarkMode={isDarkMode} />
-                )}
-              </span>
+              <code
+                style={{
+                  background: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 16.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
+                  color: isDarkMode ? "#C4B5FD" : "var(--mm-primary)",
+                  padding: "2px 7px",
+                  borderRadius: 6,
+                  fontFamily: "'JetBrains Mono','Fira Code',monospace",
+                  fontSize: "0.88em",
+                  fontWeight: 600,
+                  border: `1px solid ${isDarkMode ? "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 18.0%, transparent)"}`,
+                }}
+                {...props}
+              >
+                {children}
+              </code>
             );
           },
 
@@ -410,30 +475,56 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
               bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 12.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 7.0%, transparent)",
               border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 30.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 20.0%, transparent)",
               color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary)",
+              glow: "none",
             };
-            if (str.includes("⚙️") || /décomposition/i.test(str)) {
+            if (str.includes("⚡") || /intuition/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(245, 158, 11, 0.14)" : "rgba(245, 158, 11, 0.08)",
+                border: isDarkMode ? "rgba(245, 158, 11, 0.42)" : "rgba(245, 158, 11, 0.25)",
+                color: isDarkMode ? "#FDE68A" : "#B45309",
+                glow: "0 0 16px rgba(245, 158, 11, 0.22)",
+              };
+            } else if (str.includes("⚔️") || /duel|comparatif/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(99, 102, 241, 0.15)" : "rgba(99, 102, 241, 0.08)",
+                border: isDarkMode ? "rgba(129, 140, 248, 0.45)" : "rgba(99, 102, 241, 0.25)",
+                color: isDarkMode ? "#C7D2FE" : "#4338CA",
+                glow: "0 0 16px rgba(99, 102, 241, 0.22)",
+              };
+            } else if (str.includes("🔬") || str.includes("💻") || /exemple/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(16, 185, 129, 0.14)" : "rgba(16, 185, 129, 0.08)",
+                border: isDarkMode ? "rgba(16, 185, 129, 0.42)" : "rgba(16, 185, 129, 0.25)",
+                color: isDarkMode ? "#A7F3D0" : "#047857",
+                glow: "0 0 16px rgba(16, 185, 129, 0.22)",
+              };
+            } else if (str.includes("⚠️") || /piège|anti-pattern|attention/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(239, 68, 68, 0.14)" : "rgba(239, 68, 68, 0.08)",
+                border: isDarkMode ? "rgba(239, 68, 68, 0.42)" : "rgba(239, 68, 68, 0.25)",
+                color: isDarkMode ? "#FECACA" : "#B91C1C",
+                glow: "0 0 16px rgba(239, 68, 68, 0.22)",
+              };
+            } else if (str.includes("🧠") || /mnémotechnique|fsrs|mémoire/i.test(str)) {
+              themeStyle = {
+                bg: isDarkMode ? "rgba(59, 130, 246, 0.14)" : "rgba(59, 130, 246, 0.08)",
+                border: isDarkMode ? "rgba(59, 130, 246, 0.42)" : "rgba(59, 130, 246, 0.25)",
+                color: isDarkMode ? "#BAE6FD" : "#0369A1",
+                glow: "0 0 16px rgba(59, 130, 246, 0.22)",
+              };
+            } else if (str.includes("⚙️") || /décomposition/i.test(str)) {
               themeStyle = {
                 bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
                 border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)",
                 color: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 22%, white)" : "var(--mm-primary-deep)",
+                glow: "0 0 16px rgba(158, 71, 36, 0.22)",
               };
-            } else if (str.includes("🔍") || /comparatif/i.test(str)) {
+            } else if (str.includes("🔍")) {
               themeStyle = {
                 bg: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 14.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 8.0%, transparent)",
                 border: isDarkMode ? "color-mix(in srgb, var(--mm-primary) 35.0%, transparent)" : "color-mix(in srgb, var(--mm-primary) 25.0%, transparent)",
                 color: isDarkMode ? "#BAE6FD" : "#0369A1",
-              };
-            } else if (str.includes("⚠️") || /anti-pattern/i.test(str)) {
-              themeStyle = {
-                bg: isDarkMode ? "rgba(245,158,11,0.14)" : "rgba(245,158,11,0.08)",
-                border: isDarkMode ? "rgba(245,158,11,0.35)" : "rgba(245,158,11,0.25)",
-                color: isDarkMode ? "#FDE68A" : "#B45309",
-              };
-            } else if (str.includes("💻") || /exemples/i.test(str)) {
-              themeStyle = {
-                bg: isDarkMode ? "rgba(16,185,129,0.14)" : "rgba(16,185,129,0.08)",
-                border: isDarkMode ? "rgba(16,185,129,0.35)" : "rgba(16,185,129,0.25)",
-                color: isDarkMode ? "#A7F3D0" : "#047857",
+                glow: "0 0 16px rgba(3, 105, 161, 0.22)",
               };
             }
 
@@ -441,8 +532,8 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
               <div style={{
                 background: themeStyle.bg,
                 border: `1px solid ${themeStyle.border}`,
-                borderRadius: 10,
-                padding: "8px 14px",
+                borderRadius: 12,
+                padding: "9px 15px",
                 margin: "18px 0 10px 0",
                 display: "flex",
                 alignItems: "center",
@@ -450,7 +541,7 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
                 fontSize: "0.98em",
                 fontWeight: 800,
                 color: themeStyle.color,
-                boxShadow: isDarkMode ? "0 2px 8px rgba(0,0,0,0.15)" : "0 2px 8px rgba(15,23,42,0.03)",
+                boxShadow: isDarkMode ? `0 4px 14px rgba(0,0,0,0.2), ${themeStyle.glow}` : "0 2px 8px rgba(15,23,42,0.04)",
               }}>
                 <span>{children}</span>
               </div>
@@ -458,6 +549,10 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
           },
 
           p({ children }) {
+            const hasParentAudio = useContext(ParentAudioContext);
+            if (hasParentAudio) {
+              return <p style={{ margin: "4px 0", lineHeight: 1.65 }}>{children}</p>;
+            }
             const rawText = extractTextFromReactNode(children);
             const englishSpeech = extractEnglishSpeechText(rawText);
             if (!englishSpeech) {
@@ -508,7 +603,9 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
                   width: "100%",
                 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    {children}
+                    <ParentAudioContext.Provider value={true}>
+                      {children}
+                    </ParentAudioContext.Provider>
                   </div>
                   {showAudio && englishSpeech ? (
                     <div style={{ flexShrink: 0, marginTop: 2 }}>
@@ -608,22 +705,62 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
             return <hr style={{ border: "none", borderTop: `1px solid ${tableBorder}`, margin: "10px 0" }} />;
           },
           blockquote({ children }) {
-            const rawText = extractTextFromReactNode(children);
+            const rawText = extractTextFromReactNode(children).trim();
+            const alertMatch = rawText.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
             const englishSpeech = extractEnglishSpeechText(rawText);
+
+            if (alertMatch) {
+              const alertType = alertMatch[1].toUpperCase();
+              const alertConfigs = {
+                NOTE: { icon: "ℹ️", label: "Note", color: isDarkMode ? "#93C5FD" : "#1D4ED8", bg: isDarkMode ? "rgba(59,130,246,0.12)" : "rgba(59,130,246,0.06)", border: isDarkMode ? "rgba(59,130,246,0.35)" : "rgba(59,130,246,0.2)" },
+                TIP: { icon: "💡", label: "Astuce", color: isDarkMode ? "#86EFAC" : "#15803D", bg: isDarkMode ? "rgba(34,197,94,0.12)" : "rgba(34,197,94,0.06)", border: isDarkMode ? "rgba(34,197,94,0.35)" : "rgba(34,197,94,0.2)" },
+                IMPORTANT: { icon: "⚡", label: "Important", color: isDarkMode ? "#C4B5FD" : "#6D28D9", bg: isDarkMode ? "rgba(139,92,246,0.12)" : "rgba(139,92,246,0.06)", border: isDarkMode ? "rgba(139,92,246,0.35)" : "rgba(139,92,246,0.2)" },
+                WARNING: { icon: "⚠️", label: "Attention", color: isDarkMode ? "#FDE047" : "#A16207", bg: isDarkMode ? "rgba(234,179,8,0.12)" : "rgba(234,179,8,0.06)", border: isDarkMode ? "rgba(234,179,8,0.35)" : "rgba(234,179,8,0.2)" },
+                CAUTION: { icon: "🛑", label: "Avertissement", color: isDarkMode ? "#FCA5A5" : "#B91C1C", bg: isDarkMode ? "rgba(239,68,68,0.12)" : "rgba(239,68,68,0.06)", border: isDarkMode ? "rgba(239,68,68,0.35)" : "rgba(239,68,68,0.2)" },
+              };
+              const cfg = alertConfigs[alertType] || alertConfigs.NOTE;
+
+              return (
+                <div style={{
+                  background: cfg.bg,
+                  border: `1px solid ${cfg.border}`,
+                  borderLeft: `4px solid ${cfg.color}`,
+                  borderRadius: "0 12px 12px 0",
+                  padding: "12px 16px",
+                  margin: "14px 0",
+                  boxShadow: isDarkMode ? "0 4px 16px rgba(0,0,0,0.25)" : "0 4px 14px rgba(15,23,42,0.05)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6, fontWeight: 800, fontSize: "0.92em", color: cfg.color }}>
+                    <span>{cfg.icon}</span>
+                    <span style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>{cfg.label}</span>
+                  </div>
+                  <div style={{ lineHeight: 1.6, fontSize: "0.95em", color: "inherit", opacity: 0.95 }}>
+                    {children}
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <blockquote style={{
-                borderLeft: `3px solid ${isDarkMode ? "var(--mm-primary-glow)" : "var(--mm-primary)"}`,
-                paddingLeft: 12,
-                margin: "8px 0",
+                borderLeft: `3.5px solid ${isDarkMode ? "var(--mm-primary-glow, #FDBA74)" : "var(--mm-primary, #EA580C)"}`,
+                background: isDarkMode ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.02)",
+                borderRadius: "0 8px 8px 0",
+                padding: "8px 14px",
+                margin: "10px 0",
                 color: "inherit",
-                opacity: 0.85,
+                opacity: 0.9,
                 fontStyle: "italic",
                 display: "flex",
                 alignItems: "flex-start",
                 justifyContent: "space-between",
                 gap: 10,
               }}>
-                <div style={{ flex: 1 }}>{children}</div>
+                <div style={{ flex: 1 }}>
+                  <ParentAudioContext.Provider value={true}>
+                    {children}
+                  </ParentAudioContext.Provider>
+                </div>
                 {englishSpeech && (
                   <div style={{ flexShrink: 0, marginTop: 2 }}>
                     <AudioPlayButton text={englishSpeech} size="sm" showLabel={false} isDarkMode={isDarkMode} />
@@ -631,6 +768,25 @@ export default function RichText({ content, style = {}, isDarkMode = true, showA
                 )}
               </blockquote>
             );
+          },
+          input({ type, checked, ...props }) {
+            if (type === "checkbox") {
+              return (
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  readOnly
+                  style={{
+                    marginRight: 8,
+                    accentColor: "var(--mm-primary)",
+                    transform: "scale(1.15)",
+                    verticalAlign: "middle",
+                  }}
+                  {...props}
+                />
+              );
+            }
+            return <input type={type} {...props} />;
           },
         }}
       >

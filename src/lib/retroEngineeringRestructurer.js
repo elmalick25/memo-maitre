@@ -2,6 +2,7 @@
 
 import { safeParseJSON } from "./jsonRepair.js";
 import { runCardMigration } from "./migrationRunner.js";
+import { isNovaCard, isNovaMistakeCard } from "./memoryLab.js";
 
 function safeJSONParse(raw) {
   if (!raw) return null;
@@ -22,7 +23,9 @@ import {
   buildEnglishRestructureSystemPrompt,
   buildEnglishRestructureUserPayload,
   parseEnglishRestructureResponse,
+  sanitizeEnglishPedagogy,
   isEnglishCategory,
+  isHesitationCard,
 } from "./englishCardEngine.js";
 
 /**
@@ -39,21 +42,34 @@ export async function upgradeCardToRetroEngineering(card, callClaude) {
       task: "pedagogy",
       maxTokens: 2000,
       temperature: 0.3,
+      callerContext: "review_optimize",
     });
 
     const rawText = toText(raw);
     const parsed = parseEnglishRestructureResponse(raw, card);
 
+    const wasNova = isNovaCard(card);
+    const isHesitation = isHesitationCard(card);
+    const isMistake = !isHesitation && isNovaMistakeCard(card);
     if (parsed && (parsed.back !== card.back || (parsed.front && parsed.front !== card.front))) {
-      return {
+      const updatedCard = {
         ...card,
         front: parsed.front || card.front,
         back: parsed.back,
         example: parsed.example || card.example,
         _retroEngineered: true,
         _englishCoachTransformed: true,
+        _agentDetected: card._agentDetected || (wasNova && isMistake),
+        _novaV8: true,
+        _source: isHesitation ? "idiom" : (isMistake ? (card._source || "user_error") : (card._source === "user_error" ? "vocabulary" : (card._source || card.source || "vocabulary"))),
+        source: isHesitation ? "idiom" : (isMistake ? (card.source || "user_error") : (card.source === "user_error" ? "vocabulary" : (card.source || "vocabulary"))),
+        type: isHesitation ? "idiom" : (isMistake ? (card.type || "user_error") : (card.type === "user_error" ? "qa" : (card.type || "qa"))),
         updatedAt: new Date().toISOString(),
       };
+      if (!isMistake) {
+        delete updatedCard.userMistake;
+      }
+      return updatedCard;
     }
 
     // Fallback: extraction markdown brute si l'IA renvoie du texte ou un objet non-standard
@@ -65,13 +81,30 @@ export async function upgradeCardToRetroEngineering(card, callClaude) {
       newBack = rawText.replace(/```markdown|```/gi, "").trim();
     }
 
+    if (newBack) {
+      newBack = sanitizeEnglishPedagogy(newBack, card?.front);
+      if (!isMistake) {
+        newBack = newBack
+          .replace(/Vous avez dit\s*:\s*[«"'][^»"'\n]+[»"']\.?\s*/gi, "")
+          .replace(/Vous aviez dit\s*:\s*[«"'][^»"'\n]+[»"']\.?\s*/gi, "")
+          .replace(/Tu as dit\s*:\s*[«"'][^»"'\n]+[»"']\.?\s*/gi, "")
+          .replace(/Tu avais dit\s*:\s*[«"'][^»"'\n]+[»"']\.?\s*/gi, "");
+      }
+    }
+
     if (newBack && newBack !== card.back) {
-      return {
+      const fallbackUpdated = {
         ...card,
         back: newBack,
         _retroEngineered: true,
         updatedAt: new Date().toISOString(),
       };
+      if (!isMistake) {
+        delete fallbackUpdated.userMistake;
+        if (fallbackUpdated.source === "user_error") fallbackUpdated.source = "vocabulary";
+        if (fallbackUpdated._source === "user_error") fallbackUpdated._source = "vocabulary";
+      }
+      return fallbackUpdated;
     }
   } catch (e) {
     console.warn(`[upgradeCardToRetroEngineering] Error upgrading card ${card?.id}:`, e);

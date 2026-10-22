@@ -142,9 +142,9 @@ export default function AppSidebar({
         </div>
 
         {/* Nav items (Scrollable) */}
-        <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "visible", paddingBottom: 16, paddingRight: 6 }}>
+        <div className="sidebar-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", maxWidth: "100%", overscrollBehaviorX: "none", paddingBottom: 16, paddingRight: 6 }}>
           {NAV_GROUPS.map((group, gi) => (
-            <div key={gi} style={{ marginBottom: 8, padding: "0 12px" }}>
+            <div key={gi} style={{ marginBottom: 8, padding: "0 12px", maxWidth: "100%", boxSizing: "border-box" }}>
               {group.label && !sidebarCollapsed && (
                 <div style={{ fontSize: 10, fontWeight: 800, color: isDarkMode ? "rgba(255,255,255,0.4)" : (theme?.textMuted || "#64748B"), letterSpacing: 1.5, textTransform: "uppercase", padding: "16px 12px 6px" }}>
                   {group.label}
@@ -160,7 +160,7 @@ export default function AppSidebar({
                   progressPct = earnableCount > 0 ? Math.round((unlockedBadges.length / earnableCount) * 100) : 0;
                 }
                 return (
-                  <div key={n.id} style={{ position: "relative", marginBottom: 2 }} className="nexus-item-container">
+                  <div key={n.id} style={{ position: "relative", marginBottom: 2, maxWidth: "100%" }} className="nexus-item-container">
                     <button
                       className={`nexus-item ${isActive ? "active" : ""}`}
                       onClick={() => {
@@ -169,11 +169,15 @@ export default function AppSidebar({
                       title={sidebarCollapsed ? `${n.label}${n.shortcut ? ` (⌘${n.shortcut})` : ""}` : undefined}
                       style={{
                         width: "100%",
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
+                        overflow: "hidden",
+                        minWidth: 0,
                         padding: sidebarCollapsed ? "10px 0" : "8px 10px",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: sidebarCollapsed ? "center" : "flex-start",
-                        gap: 10,
+                        gap: 8,
                         border: "none",
                         cursor: "pointer",
                         background: "transparent",
@@ -184,10 +188,10 @@ export default function AppSidebar({
                     >
                       <span style={{ fontSize: 18, flexShrink: 0, textAlign: "center", width: sidebarCollapsed ? "100%" : 22 }}>{n.icon}</span>
                       {!sidebarCollapsed && (
-                        <span style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>{n.label}</span>
+                        <span style={{ fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{n.label}</span>
                       )}
                       {!sidebarCollapsed && n.shortcut && (
-                        <span style={{ fontSize: 10, color: isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(139,92,246,0.4)", fontFamily: "'JetBrains Mono',monospace", marginLeft: "auto", flexShrink: 0, background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139,92,246,0.05)", padding: "2px 6px", borderRadius: 4 }}>⌘{n.shortcut}</span>
+                        <span style={{ fontSize: 10, color: isDarkMode ? "rgba(255,255,255,0.3)" : "rgba(139,92,246,0.4)", fontFamily: "'JetBrains Mono',monospace", marginLeft: "auto", flexShrink: 0, background: isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(139,92,246,0.05)", padding: "2px 5px", borderRadius: 4 }}>⌘{n.shortcut}</span>
                       )}
                       {n.badge && (
                         <span className={n.badgeColor === "#EF4444" ? "nexus-badge-red" : "nexus-badge-blue"} style={{
@@ -197,13 +201,14 @@ export default function AppSidebar({
                           background: n.badgeColor,
                           color: "white",
                           borderRadius: 20,
-                          padding: "2px 6px",
+                          padding: "2px 5px",
                           fontSize: 10,
                           fontWeight: 900,
-                          minWidth: 18,
+                          minWidth: 16,
                           textAlign: "center",
                           lineHeight: 1.2,
                           whiteSpace: "nowrap",
+                          flexShrink: 0,
                           boxShadow: sidebarCollapsed ? "0 0 0 2px var(--mm-bg, #0a0a0a)" : "none",
                           maxWidth: sidebarCollapsed ? 28 : "none",
                           overflow: "hidden",

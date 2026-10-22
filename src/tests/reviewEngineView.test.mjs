@@ -56,4 +56,17 @@ test('MemoMaster — passes categories and expressions to ReviewEngineView', () 
   assert.equal(content.includes('expressions={expressions}'), true, 'MemoMaster must pass expressions');
 });
 
+test('ReviewEngineView — provides Demander à l\'IA button adjacent to Fluide badge with card focus dispatch', () => {
+  const content = fs.readFileSync(reviewEngineViewPath, 'utf8');
+  assert.equal(content.includes('setShowAgentPanel = () => {}'), true, 'ReviewEngineView must accept setShowAgentPanel');
+  assert.equal(content.includes("Demander à l'IA"), true, 'ReviewEngineView must render Demander à l\'IA button');
+  assert.equal(content.includes('memomaster:agent-card-focus'), true, 'ReviewEngineView must dispatch agent-card-focus event on click');
+});
+
+test('MemoMaster — passes setShowAgentPanel to ReviewEngineView', () => {
+  const content = fs.readFileSync(memoMasterPath, 'utf8');
+  assert.equal(content.includes('setShowAgentPanel={setShowAgentPanel}'), true, 'MemoMaster must pass setShowAgentPanel to ReviewEngineView');
+});
+
+
 

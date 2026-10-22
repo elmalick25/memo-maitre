@@ -1,37 +1,25 @@
-// 📰 articleExtractor.js — Récupération + extraction lisible d'articles web
-// Inspiré de Mozilla Readability (version allégée, sans dépendance) + chaîne
-// de proxies CORS résiliente avec détection d'erreurs (Jina 401, AllOrigins
-// vide, HTML d'erreur, etc.). Tout est conçu pour fonctionner depuis le
-// navigateur, sans backend, avec mise en cache IndexedDB côté appelant.
+import { repairFrenchElisions, cleanFrenchTypography } from "./newsTextPresentation.js";
 
 // ─── 1) Chaîne de proxies CORS ──────────────────────────────────────────────
 // Ordre choisi pour MAXIMISER les chances de succès :
 //   - Cloudflare Worker personnalisé (si VITE_PROXY_URL configuré)
 //   - En DEV : proxy local Node ultra-rapide sans CORS ni rate-limit
 //   - En PROD : codetabs (HTML) + r.jina.ai (Markdown nettoyé) + allorigins
-const CUSTOM_PROXY = (typeof import.meta !== "undefined" && import.meta.env?.VITE_PROXY_URL) || "";
+import {
+  ARTICLE_READER_PROXIES as PROXIES,
+  isProxyCoolingDown,
+  markProxyCooldown,
+  markProxySuccess
+} from "./proxyPool.js";
 
-const PROXIES = [
-  ...(CUSTOM_PROXY ? [
-    { name: "cloudflare-worker-proxy", build: (u) => `${CUSTOM_PROXY.replace(/\/+$/, "")}?url=${encodeURIComponent(u)}`, kind: "html" }
-  ] : []),
-  ...(typeof import.meta !== "undefined" && import.meta.env?.DEV ? [
-    { name: "local-dev-proxy", build: (u) => `/api/proxy?url=${encodeURIComponent(u)}`, kind: "html" }
-  ] : []),
-  { name: "jina-reader", build: (u) => `https://r.jina.ai/${u}`, kind: "markdown" },
-  { name: "allorigins", build: (u) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`, kind: "allorigins-json" },
-  { name: "allorigins-raw", build: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, kind: "html" },
-];
-
-const _proxyCooldowns = new Map(); // proxyName -> timestamp ms
-
-function isProxyCoolingDown(name) {
-  const until = _proxyCooldowns.get(name);
-  return typeof until === "number" && Date.now() < until;
-}
-
-function markProxyCooldown(name, ms = 25_000) {
-  _proxyCooldowns.set(name, Date.now() + ms);
+export function isUnscrapableUrl(url) {
+  if (!url || typeof url !== "string") return true;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return /(?:^|\.)(?:twitter\.com|x\.com|t\.co|instagram\.com|facebook\.com|linkedin\.com|ashbyhq\.com|greenhouse\.io|lever\.co|reddit\.com|youtube\.com|youtu\.be)$/.test(host);
+  } catch {
+    return true;
+  }
 }
 
 // Détecte les enveloppes d'erreur renvoyées en 200 (Jina renvoie du JSON
@@ -66,7 +54,11 @@ async function tryProxy(p, url, timeoutMs, parentSignal) {
   try {
     const res = await fetch(p.build(url), { signal: ctrl.signal, redirect: "follow" });
     if (!res.ok) {
-      if (res.status === 403 || res.status === 401 || res.status === 429) markProxyCooldown(p.name, 25_000);
+      if (res.status === 403 || res.status === 401 || res.status === 429) {
+        markProxyCooldown(p.name, res.status === 429 ? 60_000 : 120_000);
+      } else {
+        markProxyCooldown(p.name, 30_000);
+      }
       throw new Error(`${p.name}:HTTP${res.status}`);
     }
     let body;
@@ -95,9 +87,10 @@ async function tryProxy(p, url, timeoutMs, parentSignal) {
       body = decoded;
     }
     if (looksLikeProxyError(body)) throw new Error(`${p.name}:error-envelope`);
+    markProxySuccess(p.name);
     return { kind: p.kind === "markdown" ? "markdown" : "html", body, proxy: p.name };
   } catch (e) {
-    if (/429|quota|rate/i.test(e?.message || "")) markProxyCooldown(p.name, 25_000);
+    if (/429|quota|rate/i.test(e?.message || "")) markProxyCooldown(p.name, 60_000);
     throw e;
   } finally {
     clearTimeout(timer);
@@ -106,11 +99,14 @@ async function tryProxy(p, url, timeoutMs, parentSignal) {
 }
 
 export async function fetchViaProxies(url, { timeoutMs = 9000 } = {}) {
+  if (isUnscrapableUrl(url)) {
+    throw new Error("URL non scrapable (réseau social ou plateforme fermée)");
+  }
   const usable = PROXIES.filter((p) => !isProxyCoolingDown(p.name));
   const pool = usable.length ? usable : PROXIES;
 
   // 1. Tenter d'abord le proxy local Node ou le Cloudflare Worker dédié (0ms CORS, zéro pollution)
-  const primary = pool.find((p) => (p.name === "local-dev-proxy" || p.name === "cloudflare-worker-proxy") && !isProxyCoolingDown(p.name));
+  const primary = pool.find((p) => (p.name === "local-article-proxy" || p.name === "worker-article-proxy" || p.name === "local-dev-proxy" || p.name === "cloudflare-worker-proxy") && !isProxyCoolingDown(p.name));
   if (primary) {
     try {
       return await tryProxy(primary, url, timeoutMs);
@@ -120,7 +116,7 @@ export async function fetchViaProxies(url, { timeoutMs = 9000 } = {}) {
   }
 
   // 2. Repli séquentiel sur les proxies externes (évite de spammer simultanément le réseau)
-  const fallbackPool = pool.filter((p) => p.name !== "local-dev-proxy" && p.name !== "cloudflare-worker-proxy");
+  const fallbackPool = pool.filter((p) => p !== primary);
   let lastErr = null;
   for (const p of fallbackPool) {
     try {
@@ -165,7 +161,7 @@ const POSITIVE_RE = /article|content|post|story|entry|main|body|page|text/i;
 
 function cleanDoc(doc) {
   const trash = doc.querySelectorAll(
-    "script, style, noscript, iframe, svg, canvas, form, button, " +
+    "script, style, link, noscript, iframe, svg, canvas, form, button, " +
     "nav, footer, aside, header, " +
     '[role="navigation"], [role="banner"], [role="contentinfo"], [role="complementary"], ' +
     ".advert, .ads, .ad, .share, .social, .newsletter, .cookie, .consent, .paywall, .related, .breadcrumb"
@@ -295,6 +291,16 @@ export const STRONG_BOILERPLATE_PATTERNS = [
   /signaler une erreur|une erreur dans cette actualit[ée]|signalez-nous-la/i,
   /^(la solution (tout-en-un|id[ée]ale)|t[ée]l[ée]chargez notre livre blanc|d[ée]couvrez nos offres|sponsoris[ée]|en partenariat avec)\b/i,
   /pour ne rien manquer de l'actualit[ée]/i,
+  // Blocs Newsletter / Inscription / Réseaux au milieu ou en fin d'article
+  /[📩📬🔔]/u,
+  /recevez (?:la|notre|tous les|chaque) newsletter/i,
+  /(?:inscrivez-vous|inscription|abonn(?:ez-vous|ement))\s+(?:[àa]\s+)?(?:la\s+|notre\s+)?newsletter/i,
+  /en vous inscrivant/i,
+  /politique de protection des donn[ée]es/i,
+  /l['’]actu (?:digitale|tech|du jour|ia)\s+[ée]volue vite/i,
+  /restez [àa] jour/i,
+  /votre adresse (?:e-?mail|courriel)/i,
+  /newsletter (?:quotidienne|hebdomadaire|gratuite)/i,
   // Pieds de page / barres sociales collées
   /^(youtube|instagram|tiktok|facebook|whatsapp|twitter|linkedin|threads|bluesky|mastodon|x)[a-z]*$/i,
   /suivez-nous sur/i,
@@ -446,9 +452,15 @@ export function sanitizeArticleText(text) {
 // Extrait un texte lisible depuis du HTML brut. Retourne string vide si échec.
 export function extractReadableFromHtml(html) {
   if (!html) return "";
+  // 🛡️ Élimine préventivement les balises link (preloads, styles) et style du HTML
+  // pour empêcher le navigateur de déclencher des requêtes réseau de polices ou CSS externes relatives.
+  const sanitizedHtml = typeof html === "string"
+    ? html.replace(/<link\b[^>]*>/gi, "").replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    : html;
+
   try {
     if (typeof DOMParser !== "undefined") {
-      const doc = new DOMParser().parseFromString(html, "text/html");
+      const doc = new DOMParser().parseFromString(sanitizedHtml, "text/html");
       const ld = sanitizeArticleText(extractJsonLdBody(doc));
       cleanDoc(doc);
       const best = pickBest(doc) || doc.body;
@@ -504,6 +516,26 @@ export function extractReadableFromMarkdown(md) {
 
 // API publique : récupère + extrait. Renvoie { text, source, html }.
 export async function fetchReadableArticle(url, opts = {}) {
+  if (isUnscrapableUrl(url)) {
+    return { text: "", source: "unscrapable", kind: "none" };
+  }
+  // 0) Extraction serveur (Worker /article) : récupération + JSON-LD/densité/Readability + AMP/Jina/archive.
+  const WORKER = (import.meta.env?.VITE_PROXY_URL || import.meta.env?.VITE_AI_PROXY_URL || "https://memomasterproxy.elmalick25formcybersecu.workers.dev").replace(/\/$/, "");
+  if (WORKER) {
+    try {
+      const r = await fetch(`${WORKER}/article?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(opts.timeoutMs ? opts.timeoutMs + 6000 : 15000) });
+      if ((r.headers.get("content-type") || "").includes("json")) {
+        const d = await r.json();
+        if (d?.text && d.text.length >= 200) {
+          return { text: sanitizeArticleText(d.text), source: `worker:${d.method}`, kind: "worker", title: d.title, image: d.image, resolvedUrl: d.url };
+        }
+      } else {
+        console.warn("[articleExtractor] Worker obsolète (route /article absente) : redéploie-le.");
+      }
+    } catch (e) {
+      console.warn("[articleExtractor] /article indisponible :", e?.message || e);
+    }
+  }
   const { kind, body, proxy } = await fetchViaProxies(url, opts);
   let text = "";
   if (kind === "markdown") {
@@ -550,6 +582,43 @@ export function repairBrokenSentenceFlow(text) {
 }
 
 /**
+ * 📰 Segmente les pavés de texte monolithiques en paragraphes éditoriaux digestes.
+ * Isole les intertitres journalistiques et aère les blocs trop denses (> 400 caractères).
+ */
+function segmentLongTextIntoParagraphs(text) {
+  if (!text || typeof text !== "string") return [];
+  let s = text;
+
+  // Isole les intertitres sur une seule ligne (ex: "Titre court\nTexte...")
+  s = s.replace(/(^|\n)\s*([A-ZÀ-Ÿ0-9][a-zà-ÿ0-9\s'’—–-]{3,90}[^.!?…:\n\s])\s*\n+(?=[A-ZÀ-Ÿ0-9])/gu, "$1\n\n$2\n\n");
+
+  const pieces = s.split(/\n\s*\n+/).map(p => p.trim()).filter(Boolean);
+  const out = [];
+
+  for (const piece of pieces) {
+    if (piece.length <= 480) {
+      out.push(piece);
+      continue;
+    }
+    const sentences = piece.match(/[^.!?…]+[.!?…]+[\s]*|[^.!?…]+$/gu) || [piece];
+    let currentPara = "";
+    for (const sent of sentences) {
+      const sTrim = sent.trim();
+      if (!sTrim) continue;
+      if (currentPara && (currentPara.length + sTrim.length > 380)) {
+        out.push(currentPara.trim());
+        currentPara = sTrim;
+      } else {
+        currentPara = currentPara ? `${currentPara} ${sTrim}` : sTrim;
+      }
+    }
+    if (currentPara.trim()) out.push(currentPara.trim());
+  }
+
+  return out.length > 0 ? out : [text];
+}
+
+/**
  * 🌐 Extracteur Universel par Densité Textuelle & Heuristique Journalistique
  * Fonctionne de façon autonome pour TOUS les sites web d'actualité dans le monde.
  */
@@ -561,7 +630,12 @@ export function extractUniversalArticleParagraphs(rawText, item = {}) {
 
   // Recollage de continuité narrative : si un paragraphe a été coupé en plein milieu
   const rawBlocks = [];
+  const segmented = [];
   for (const block of initialBlocks) {
+    segmented.push(...segmentLongTextIntoParagraphs(block));
+  }
+
+  for (const block of segmented) {
     if (rawBlocks.length === 0) {
       rawBlocks.push(block);
       continue;
@@ -584,15 +658,16 @@ export function extractUniversalArticleParagraphs(rawText, item = {}) {
   const candidates = [];
   for (const block of rawBlocks) {
     if (isBoilerplateOrConsentText(block)) continue;
+    if (isDateOrMetadataOnly(block)) continue;
 
-    // Titre de l'article répété en tête
+    // Titre de l'article répété en tête (uniquement s'il s'agit du titre seul sans développement)
     const bLower = block.toLowerCase().trim();
-    if (itemTitle && (bLower === itemTitle || (itemTitle.length > 25 && bLower.startsWith(itemTitle.slice(0, 30))))) {
+    if (itemTitle && (bLower === itemTitle || (itemTitle.length > 25 && bLower.startsWith(itemTitle) && Math.abs(bLower.length - itemTitle.length) < 20))) {
       continue;
     }
 
     // Métadonnées courtes (auteur, date, temps de lecture, etc.)
-    if (block.length < 85 && /^(par\s+[a-zà-ÿ]+|publi[ée]\s+le|mis [àa] jour|auteur|source\s*:|cr[ée]dit\s*:|temps de lecture)/i.test(block)) {
+    if (block.length < 85 && /^(par\s*[a-zà-ÿ]+|publi[ée]\s*le|mis [àa] jour|auteur|source\s*:|cr[ée]dit\s*:|temps de lecture)/i.test(block)) {
       continue;
     }
 
@@ -612,20 +687,24 @@ export function extractUniversalArticleParagraphs(rawText, item = {}) {
 
   if (!candidates.length) return [];
 
-  // 2. Détection du point de départ narratif (premier paragraphe substantiel)
+  // 2. Détection du point de départ narratif (premier paragraphe substantiel ou intertitre introductif)
   let startIndex = 0;
   for (let i = 0; i < Math.min(candidates.length, 5); i++) {
     const p = candidates[i];
     const sentenceCount = (p.match(/[.!?](\s|$)/g) || []).length;
     if (p.length >= 65 && sentenceCount >= 1) {
-      startIndex = i;
+      if (i > 0 && candidates[i - 1].length >= 6 && candidates[i - 1].length <= 100 && !/[.!?…]$/.test(candidates[i - 1])) {
+        startIndex = i - 1;
+      } else {
+        startIndex = i;
+      }
       break;
     }
   }
 
   // 3. Coupure nette universelle dès que la queue de page/footer ou les recommandations débutent
   const result = [];
-  const cutoffRegex = /^(quels sont les meilleurs|sur le m[êe]me sujet|[àa] lire aussi|articles? recommand[ée]s?|articles? li[ée]s?|voir aussi|source\s*:|abonnez-vous|retrouvez-nous|dans la m[êe]me th[ée]matique|commentaires?|discussions?|r[ée]actions?|r[ée]ponses?|d[ée]crivez l'erreur|envoy[ée] par|une erreur dans cette|signalez-nous|et vous\s*\?|donnez votre avis)\b/i;
+  const cutoffRegex = /^(quels sont les meilleurs|sur le m[êe]me sujet|[àa] lire aussi|articles? recommand[ée]s?|articles? li[ée]s?|voir aussi|sources?\s*:|abonnez-vous|retrouvez-nous|dans la m[êe]me th[ée]matique|commentaires?|discussions?|r[ée]actions?|r[ée]ponses?|d[ée]crivez l'erreur|envoy[ée] par|une erreur dans cette|signalez-nous|et vous\s*\?|donnez votre avis|cet article a [ée]t[ée] publi[ée]|disponible [ée]galement en)\b/i;
 
   for (let i = startIndex; i < candidates.length; i++) {
     const p = candidates[i];
@@ -636,13 +715,42 @@ export function extractUniversalArticleParagraphs(rawText, item = {}) {
       if (result.length >= 2) break;
     }
 
+    // Élagage des mentions de traduction ou sources parasites en bas d'article
+    const footerIdx = p.search(/(?:Cet article a [ée]t[ée] publi[ée]|Disponible [ée]galement en\s+[A-Za-zÀ-ÿ]+)/i);
+    if (footerIdx >= 0) {
+      const kept = p.slice(0, footerIdx).trim();
+      if (kept.length > 30) result.push(kept);
+      break;
+    }
+
     result.push(p);
   }
 
   const outputList = result.length > 0 ? result : (candidates.length > 0 ? candidates : [rawText.trim()]);
   return outputList
-    .map(p => String(p || '').replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').replace(/\*/g, '').replace(/[ \t]+/g, ' ').trim())
+    .map(p => cleanFrenchTypography(repairFrenchElisions(String(p || '').replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').replace(/\*/g, '').replace(/[ \t]+/g, ' ').trim())))
     .filter(Boolean);
 }
 
-
+/**
+ * Détecte si une chaîne est uniquement une date, une URL,
+ * une métadonnée technique ou du bruit sans valeur éditoriale.
+ */
+export function isDateOrMetadataOnly(str) {
+  if (!str || typeof str !== 'string') return true;
+  const s = str.replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1').replace(/\*/g, '').trim();
+  if (!s || s.length === 0) return true;
+  // URL nue ou lien Markdown nu
+  if (/^https?:\/\/\S+$/i.test(s) || /^\[https?:\/\/[^\]]+\]\([^)]+\)$/i.test(s)) return true;
+  // Date RFC 822 / 1123 / HTTP Date (ex: Sat, 10 Oct 2026 15:23:00 GMT)
+  if (/^(?:mon|tue|wed|thu|fri|sat|sun),?\s+\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(s)) return true;
+  // Date ISO ou numérique (2026-10-10 ou 10/10/2026)
+  if (/^\d{4}[-/]\d{2}[-/]\d{2}/.test(s) || /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(s)) return true;
+  // Formats de date explicites en français (ex: "29 septembre 2026 à 14h51")
+  if (/^(?:(?:le|mis à jour le|publié le)\s+)?(?:lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)?\s*\d{1,2}\s+(?:janvier|f[ée]vrier|mars|avril|mai|juin|juillet|ao[ûu]t|septembre|octobre|novembre|d[ée]cembre)\s+\d{2,4}(?:\s+[àa]\s+\d{1,2}[h:]\d{2})?$/i.test(s)) return true;
+  // Date en anglais avec mois en tête: October 10, 2026
+  if (/^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2},?\s+\d{4}/i.test(s)) return true;
+  // Métadonnées d'attribution brèves
+  if (s.length < 80 && /^(?:par\s+[a-zà-ÿ]+|publi[ée]\s+le|mis [àa] jour|auteur|source\s*:|cr[ée]dit\s*:|temps de lecture)/i.test(s)) return true;
+  return false;
+}

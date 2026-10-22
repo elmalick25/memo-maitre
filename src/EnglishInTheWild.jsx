@@ -1,6 +1,6 @@
 import { resolveKey } from "./lib/security/apiKeys.js";
 // EnglishInTheWild.jsx — Apprendre l'anglais depuis de vraies vidéos YouTube
-// Intègre : extraction de sous-titres, 10 expressions clés, dictée, compréhension, shadowing
+// Intègre : extraction de sous-titres, expressions clés, dictée, compréhension
 // Props : callClaude, storage, expressions, setExpressions, showToast, theme, isDarkMode
 
 import React, { useState, useRef, useEffect } from "react";
@@ -49,20 +49,29 @@ async function fetchTranscript(videoId) {
     console.warn("Failed to retrieve YouTube video details:", e);
   }
 
+  // 1) Worker Cloudflare maison (route /yt/transcript) : la seule source fiable aujourd'hui.
+  const PROXY = (import.meta.env.VITE_PROXY_URL || "").replace(/\/$/, "");
+  if (PROXY) {
+    try {
+      const r = await fetch(`${PROXY}/yt/transcript?v=${videoId}`, { signal: AbortSignal.timeout(30000) });
+      if ((r.headers.get("content-type") || "").includes("json")) {
+        const data = await r.json();
+        const text = (data?.segments || []).map(s => s.text).join(" ").replace(/\s+/g, " ").trim();
+        if (text.length >= 100) return { text, title: officialTitle || "" };
+      } else {
+        console.warn("[EnglishInTheWild] Worker Cloudflare obsolète (route /yt/transcript absente) : redéploie-le.");
+      }
+    } catch (e) {
+      console.warn("[EnglishInTheWild] /yt/transcript indisponible :", e?.message || e);
+    }
+  }
+
   // Liste de tentatives — on essaie le worker maison puis des proxies publics multiples.
   // Plus on a de fallbacks, plus on garantit que ÇA MARCHE peu importe la durée de la vidéo.
   const attempts = [];
   if (WORKER_URL) attempts.push(`${WORKER_URL}?url=${encodeURIComponent(videoUrl)}`);
-  // Fallbacks publics (sans clé) — multi-providers pour résilience maximale.
-  attempts.push(`https://yt.lemnoslife.com/videos?part=transcript&id=${videoId}`);
-  attempts.push(`https://youtubetranscript.com/?server_vid2=${videoId}`);
-  attempts.push(`https://youtubetranscript.com/?server_vid=${videoId}`);
-  // Piped API (open-source YouTube frontend) — souvent disponible
-  attempts.push(`https://pipedapi.kavin.rocks/streams/${videoId}`);
-  attempts.push(`https://pipedapi.adminforge.de/streams/${videoId}`);
-  // Invidious — autre frontend open-source
-  attempts.push(`https://invidious.privacydev.net/api/v1/captions/${videoId}`);
-  attempts.push(`https://inv.nadeko.net/api/v1/captions/${videoId}`);
+  // Les services publics (lemnoslife, youtubetranscript, Piped, Invidious) bloquent les appels
+  // navigateur (CORS) : retirés pour éviter erreurs et longues attentes.
 
   let lastErr = null;
   for (const url of attempts) {
@@ -181,7 +190,7 @@ const EXPR_SCHEMA_LIGHT = `{"expressions":[{"expr":"...","ipa":"...","meaning":"
 export async function extractExpressions(callClaude, chunkText) {
   const run = async (schema, target, maxTokens) => {
     const raw = await callClaude(
-      `Tu es un ingénieur en rétro-ingénierie linguistique. Extrais les expressions idiomatiques, phrasal verbs, collocations et mots clés utiles (B1-C2) du passage. Vise ${target} entrées MAXIMUM, fournis AU MOINS 3 EXEMPLES en anglais par expression, et reste concis pour que la réponse JSON soit COMPLÈTE. Réponds UNIQUEMENT avec du JSON valide, sans texte autour, sans balises de code.`,
+      `Tu es un ingénieur en rétro-ingénierie linguistique. Extrais UNIQUEMENT les expressions à forte valeur (idiomes, phrasal verbs, collocations naturelles, tournures orales natives B2-C2) réellement présentes dans le passage — ignore les mots basiques, noms propres et fragments de sous-titres mal découpés. Le 1er exemple doit être la phrase d'origine du passage (corrigée si besoin). Décomposition, modèle mental, comparatif et anti-pattern doivent être précis et concrets. Vise ${target} entrées MAXIMUM, fournis AU MOINS 3 EXEMPLES en anglais par expression, et reste concis pour que la réponse JSON soit COMPLÈTE. Réponds UNIQUEMENT avec du JSON valide, sans texte autour, sans balises de code.`,
       `PASSAGE:\n${chunkText}\n\nFormat JSON exact :\n${schema}`,
       { maxTokens, temperature: 0.2, json: true, task: "fast-json" }
     );
@@ -239,7 +248,7 @@ export function buildWildCard(expr, id, source = "English in the Wild") {
       repetitions: 0,
       stability: null,
       difficulty: null,
-      masteryStage: "encountered",
+      masteryStage: "discovered",
       reviewHistory: [],
       nextReview: new Date().toISOString().slice(0, 10),
       createdAt: new Date().toISOString(),
@@ -276,7 +285,6 @@ export default function EnglishInTheWild({
   const [expressions10, setExpressions10] = useState([]); // [{expr, ipa, meaning, example, tip}]
   const [dictation, setDictation] = useState(null);       // {passage, blankedPassage, blanks:[{index,word}]}
   const [questions, setQuestions] = useState([]);          // [{q, options:[A,B,C,D], answer, explanation}]
-  const [shadowing, setShadowing] = useState(null);        // {phrase, phonetics, tips:[]}
 
   // ── UI tabs ───────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState("expressions");
@@ -291,14 +299,6 @@ export default function EnglishInTheWild({
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState(null);
 
-  // ── Shadowing : TTS + micro ───────────────────────────────────────────────
-  const [shadowingPlaying, setShadowingPlaying] = useState(false);
-  const [shadowingUserText, setShadowingUserText] = useState("");
-  const [shadowingFeedback, setShadowingFeedback] = useState(null);
-  const [shadowingPhase, setShadowingPhase] = useState("idle"); // idle|listen|record|feedback
-  const shadowRecorderRef = useRef(null);
-  const shadowChunksRef = useRef([]);
-  const shadowTimerRef = useRef(null);
 
   // ── Sauvegarde ────────────────────────────────────────────────────────────
   const [savedToMemo, setSavedToMemo] = useState([]);   // indices des expressions sauvegardées
@@ -317,7 +317,7 @@ export default function EnglishInTheWild({
   const [miningTestAnswers, setMiningTestAnswers] = useState({});
 
   // ── Phase 3/4/5 — Pipeline production active (hook partagé avec EnglishPractice)
-  // Analyse le texte produit par l'utilisateur (dictée + shadowing) à la fin d'une
+  // Analyse le texte produit par l'utilisateur (dictée) à la fin d'une
   // session vidéo, met à jour les fiches English concernées, et déclenche le
   // mini-défi ProductionChallenge si des fiches "recalled" restent à activer.
   const {
@@ -344,10 +344,8 @@ export default function EnglishInTheWild({
 
   // Refs de collecte : snapshot de texte utilisateur produit pendant la session.
   const dictationInputsRef = useRef({});
-  const shadowingUserTextRef = useRef("");
   const expressionsRef = useRef(expressions);
   useEffect(() => { dictationInputsRef.current = dictationInputs; }, [dictationInputs]);
-  useEffect(() => { shadowingUserTextRef.current = shadowingUserText; }, [shadowingUserText]);
   useEffect(() => { expressionsRef.current = expressions; }, [expressions]);
 
   const sessionAnalyzedRef = useRef(false);
@@ -369,8 +367,7 @@ export default function EnglishInTheWild({
         const dictText = Object.values(dictationInputsRef.current || {})
           .filter(Boolean)
           .join(" ");
-        const shadowText = shadowingUserTextRef.current || "";
-        const userProduced = `${dictText}\n${shadowText}`.trim();
+        const userProduced = dictText.trim();
         if (userProduced.length < 20) return;
 
         // Cibles : fiches English de l'utilisateur qui ont vraiment besoin
@@ -506,7 +503,6 @@ retourne UNIQUEMENT ce JSON :
     setExpressions10([]);
     setDictation(null);
     setQuestions([]);
-    setShadowing(null);
     setQuizAnswers({});
     setQuizSubmitted(false);
     setQuizScore(null);
@@ -514,8 +510,6 @@ retourne UNIQUEMENT ce JSON :
     setDictationRevealed(false);
     setDictationScore(null);
     setSavedToMemo([]);
-    setShadowingFeedback(null);
-    setShadowingPhase("idle");
 
     // 1. Transcription
     setLoadingMsg("📡 Récupération des sous-titres YouTube…");
@@ -624,21 +618,7 @@ retourne UNIQUEMENT ce JSON :
     }
     setQuestions(qData);
 
-    // 5. Phrase de shadowing
-    setLoadingMsg("🎙️ Sélection de la phrase de shadowing…");
-    let shadowData = null;
-    try {
-      const shadowRaw = await callClaude(
-        `Tu es un coach de prononciation anglaise. Choisis la phrase la plus intéressante phonétiquement de la transcription pour un exercice de shadowing (15-25 mots, bonne intonation naturelle). Réponds UNIQUEMENT en JSON valide.`,
-        `TRANSCRIPTION:\n${excerpt}\n\nFormat JSON :\n{"phrase":"...","phonetics":"...","tips":["conseil 1","conseil 2","conseil 3"]}`
-      );
-      shadowData = safeParseJSON(llmText(shadowRaw));
-    } catch (e) {
-      console.warn("Shadowing parse error", e);
-    }
-    setShadowing(shadowData);
-
-    // 6. Sauvegarder en historique
+    // 5. Sauvegarder en historique
     const newEntry = { videoId: id, url: url.trim(), date: new Date().toISOString().slice(0, 10), expressionCount: exprData.length };
     const newHistory = [newEntry, ...history].slice(0, 10);
     setHistory(newHistory);
@@ -661,7 +641,6 @@ retourne UNIQUEMENT ce JSON :
     setExpressions10([]);
     setDictation(null);
     setQuestions([]);
-    setShadowing(null);
     setQuizAnswers({});
     setQuizSubmitted(false);
     setQuizScore(null);
@@ -669,9 +648,6 @@ retourne UNIQUEMENT ce JSON :
     setDictationRevealed(false);
     setDictationScore(null);
     setSavedToMemo([]);
-    setShadowingFeedback(null);
-    setShadowingPhase("idle");
-    setShadowingUserText("");
 
     const rawText = transcript.trim();
     const CHUNK_SIZE = 2200;
@@ -749,17 +725,6 @@ retourne UNIQUEMENT ce JSON :
     } catch { }
     setQuestions(qData);
 
-    setLoadingMsg("🎙️ Phrase de shadowing…");
-    let shadowData = null;
-    try {
-      const shadowRaw = await callClaude(
-        `Choisis une phrase pour le shadowing. Réponds UNIQUEMENT en JSON valide.`,
-        `TEXTE:\n${excerpt}\n\n{"phrase":"...","phonetics":"...","tips":["...","...","..."]}`
-      );
-      shadowData = safeParseJSON(llmText(shadowRaw));
-    } catch { }
-    setShadowing(shadowData);
-
     setStep("results");
     setActiveTab("expressions");
     showToast?.("✅ Texte analysé !", "success");
@@ -815,48 +780,7 @@ retourne UNIQUEMENT ce JSON :
     }
   };
 
-  // ── TTS pour shadowing ──────────────────────────────────────────────────
-  const speakShadowing = async () => {
-    if (!shadowing?.phrase) return;
-    try {
-      setShadowingPlaying(true);
-      liveKitVoiceBus.interrupt();
-      liveKitVoiceBus.say(shadowing.phrase);
-    } catch (err) {
-      console.warn("Échec lecture LiveKit shadowing:", err);
-    } finally {
-      setShadowingPlaying(false);
-    }
-  };
 
-  // ── Enregistrement shadowing ──────────────────────────────────────────────
-  const startShadowingRecord = async () => {
-    if (!shadowing?.phrase) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      shadowChunksRef.current = [];
-      const rec = new MediaRecorder(stream);
-      rec.ondataavailable = e => { if (e.data.size > 0) shadowChunksRef.current.push(e.data); };
-      rec.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        setShadowingPhase("feedback");
-        showToast?.("🎙️ Enregistrement terminé. Tape ce que tu as dit pour recevoir ton feedback.", "info");
-      };
-      rec.start();
-      shadowRecorderRef.current = rec;
-      setShadowingPhase("record");
-      // Auto-stop après 15s
-      shadowTimerRef.current = setTimeout(() => stopShadowingRecord(), 15000);
-    } catch (e) {
-      showToast?.("🎤 Accès micro refusé : " + e.message, "error");
-    }
-  };
-
-  const stopShadowingRecord = () => {
-    if (shadowTimerRef.current) clearTimeout(shadowTimerRef.current);
-    if (shadowRecorderRef.current?.state === "recording") shadowRecorderRef.current.stop();
-    setShadowingPhase("feedback");
-  };
 
   // ── Wrappers publics : garantissent qu'on ne reste JAMAIS bloqué sur l'écran
   // "loading" si une étape jette (réseau, quota IA, JSON cassé). Avant ce fix,
@@ -919,22 +843,7 @@ retourne UNIQUEMENT ce JSON :
 
 
 
-  const analyzeShadowingText = async () => {
-    if (!shadowingUserText.trim() || !shadowing?.phrase) return;
-    // Ne pas changer la phase ici : on reste dans la phase courante pendant l'analyse
-    // pour ne pas masquer le textarea (Bug 1)
-    try {
-      const raw = await callClaude(
-        `Tu es un coach de prononciation anglaise. Compare ce que l'utilisateur a dit (transcription manuelle) avec la phrase cible. Donne un feedback détaillé et encourageant. Réponds UNIQUEMENT en JSON valide.`,
-        `PHRASE CIBLE: "${shadowing.phrase}"\nCE QUE L'UTILISATEUR A DIT: "${shadowingUserText}"\n\n{"score":85,"praise":"...","improvements":["...","..."],"rhythm":"...","nextStep":"..."}`
-      );
-      const fb = safeParseJSON(llmText(raw));
-      setShadowingFeedback(fb);
-    } catch {
-      // FIX B15: on garde la phase courante pour que le textarea reste accessible
-      showToast?.("Erreur lors de l'analyse. Réessaie.", "error");
-    }
-  };
+
 
   // ── Score dictée ──────────────────────────────────────────────────────────
   const checkDictation = () => {
@@ -1193,7 +1102,6 @@ retourne UNIQUEMENT ce JSON :
     { id: "expressions", label: "💬 Expressions", count: expressions10.length },
     { id: "dictation", label: "✍️ Dictée" },
     { id: "quiz", label: "❓ Compréhension", count: questions.length },
-    { id: "shadowing", label: "🎙️ Shadowing" },
   ];
 
   return (
@@ -1572,152 +1480,7 @@ retourne UNIQUEMENT ce JSON :
         </div>
       )}
 
-      {/* ── TAB : Shadowing ──────────────────────────────────────────────── */}
-      {activeTab === "shadowing" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {!shadowing ? (
-            <div style={{ ...card, textAlign: "center", color: theme.textMuted }}>Shadowing non disponible.</div>
-          ) : (
-            <>
-              {/* Phrase cible */}
-              <div style={{ ...card, border: "2px solid color-mix(in srgb, var(--mm-primary) 25%, transparent)" }}>
-                <div style={{ fontWeight: 800, fontSize: 15, color: theme.text, marginBottom: 12 }}>🎙️ Phrase de shadowing</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, lineHeight: 1.7, marginBottom: 10 }}>
-                  "{renderDraggableWord(shadowing.phrase)}"
-                </div>
-                {shadowing.phonetics && (
-                  <div style={{ fontSize: 13, color: "var(--mm-primary)", fontFamily: "monospace", fontWeight: 600, marginBottom: 14 }}>
-                    {shadowing.phonetics}
-                  </div>
-                )}
 
-                {/* Conseils */}
-                {shadowing.tips?.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    {shadowing.tips.map((tip, i) => (
-                      <div key={i} style={{ fontSize: 13, color: theme.textMuted, marginBottom: 6 }}>
-                        <span style={{ color: "#F59E0B", fontWeight: 700 }}>💡</span> {tip}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Bouton écouter */}
-                <button
-                  onClick={speakShadowing}
-                  style={{ ...btn(shadowingPlaying ? "var(--mm-primary)" : "var(--mm-primary)"), width: "100%", marginBottom: 10 }}
-                >
-                  {shadowingPlaying ? "🔊 Lecture en cours…" : "▶️ Écouter la phrase (TTS)"}
-                </button>
-
-                <div style={{ fontSize: 11, color: theme.textMuted, textAlign: "center", marginBottom: 16 }}>
-                  💡 Écoute 2-3 fois, puis essaie de répéter en même temps. C'est le shadowing !
-                </div>
-              </div>
-
-              {/* Pratique shadowing */}
-              <div style={card}>
-                <div style={{ fontWeight: 800, fontSize: 15, color: theme.text, marginBottom: 12 }}>🎤 Ta pratique</div>
-
-                {shadowingPhase === "idle" && (
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }} className="wild-actions">
-                    <button onClick={startShadowingRecord} style={{ ...btn("#EF4444"), flex: 1, minWidth: 160 }}>
-                      🔴 Enregistrer ma répétition
-                    </button>
-                  </div>
-                )}
-
-                {shadowingPhase === "record" && (
-                  <div style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: 32, marginBottom: 8, animation: "pulse 1s infinite" }}>🔴</div>
-                    <div style={{ fontWeight: 700, color: "#EF4444", marginBottom: 12 }}>Enregistrement en cours… (max 15s)</div>
-                    <button onClick={stopShadowingRecord} style={{ ...btn("var(--mm-fg)") }}>⏹️ Arrêter</button>
-                    <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
-                  </div>
-                )}
-
-                {shadowingPhase === "feedback" && !shadowingFeedback && (
-                  <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: 8 }}>
-                      Tape ce que tu as dit (de mémoire) pour recevoir un feedback :
-                    </div>
-                    <textarea
-                      value={shadowingUserText}
-                      onChange={e => setShadowingUserText(e.target.value)}
-                      placeholder="Tape ici ce que tu as dit…"
-                      rows={3}
-                      style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14, outline: "none", resize: "vertical", boxSizing: "border-box", marginBottom: 10 }}
-                    />
-                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("var(--mm-primary)", !shadowingUserText.trim()), width: "100%" }}>
-                      🧠 Analyser mon shadowing
-                    </button>
-                  </div>
-                )}
-
-                {shadowingFeedback && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    {/* Score */}
-                    <div style={{ textAlign: "center", padding: "16px", background: isDarkMode ? "#0A0A1A" : "#EEF0FF", borderRadius: 16 }}>
-                      <div style={{ fontWeight: 900, fontSize: 36, color: shadowingFeedback.score >= 80 ? "#10B981" : shadowingFeedback.score >= 60 ? "#F59E0B" : "#EF4444" }}>
-                        {shadowingFeedback.score}%
-                      </div>
-                      <div style={{ fontSize: 14, color: theme.text, fontWeight: 700, marginTop: 4 }}>{shadowingFeedback.praise}</div>
-                    </div>
-                    {shadowingFeedback.rhythm && (
-                      <div style={{ padding: "10px 14px", background: isDarkMode ? "#1A1A0A" : "#FFFBEB", borderRadius: 12, fontSize: 13, color: "#92400E" }}>
-                        🎵 Rythme : {shadowingFeedback.rhythm}
-                      </div>
-                    )}
-                    {shadowingFeedback.improvements?.length > 0 && (
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: theme.text, marginBottom: 8 }}>📝 À améliorer :</div>
-                        {shadowingFeedback.improvements.map((imp, i) => (
-                          <div key={i} style={{ fontSize: 13, color: theme.textMuted, marginBottom: 6, paddingLeft: 12, borderLeft: "3px solid #F59E0B" }}>
-                            {imp}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {shadowingFeedback.nextStep && (
-                      <div style={{ padding: "10px 14px", background: isDarkMode ? "#052e16" : "#F0FDF4", borderRadius: 12, fontSize: 13, color: "#10B981", fontWeight: 600 }}>
-                        🚀 Prochaine étape : {shadowingFeedback.nextStep}
-                      </div>
-                    )}
-                    <button
-                      onClick={() => { setShadowingFeedback(null); setShadowingUserText(""); setShadowingPhase("idle"); }}
-                      style={{ ...btn("var(--mm-primary)"), width: "100%" }}
-                    >
-                      🔄 Réessayer
-                    </button>
-                  </div>
-                )}
-
-                {/* Mode shadowing sans enregistrement */}
-                {shadowingPhase === "idle" && !shadowingFeedback && (
-                  <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 12, color: theme.textMuted, textAlign: "center" }}>
-                      — ou —
-                    </div>
-                    <div style={{ marginTop: 10, fontSize: 13, color: theme.textMuted, marginBottom: 8 }}>
-                      Pas de micro ? Tape ce que tu mémorises de la phrase :
-                    </div>
-                    <textarea
-                      value={shadowingUserText}
-                      onChange={e => setShadowingUserText(e.target.value)}
-                      placeholder="Tape la phrase de mémoire…"
-                      rows={2}
-                      style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${theme.border}`, background: theme.inputBg, color: theme.text, fontSize: 14, outline: "none", resize: "none", boxSizing: "border-box", marginBottom: 10 }}
-                    />
-                    <button onClick={analyzeShadowingText} disabled={!shadowingUserText.trim()} style={{ ...btn("var(--mm-primary)", !shadowingUserText.trim()), width: "100%" }}>
-                      🧠 Obtenir mon feedback
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      )}
 
       {/* 💎 Vocab in Context Mining Panel */}
       <div

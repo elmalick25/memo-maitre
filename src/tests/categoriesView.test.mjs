@@ -26,8 +26,35 @@ test('CategoriesView — handles module actions: handleAddCat, toggleFavorite, m
   assert.equal(content.includes('releaseAllPaused'), true, 'CategoriesView must support releaseAllPaused');
 });
 
-test('MemoMaster — imports and renders CategoriesView for categories view', () => {
-  const content = fs.readFileSync(memoMasterPath, 'utf8');
-  assert.equal(content.includes('import CategoriesView from "./components/CategoriesView";'), true, 'MemoMaster must import CategoriesView');
-  assert.equal(content.includes('<CategoriesView'), true, 'MemoMaster must render CategoriesView');
+test('CategoriesView — Autres actions menu has centered buttons, Nova option for English, and restart on active cards review', () => {
+  const content = fs.readFileSync(categoriesViewPath, 'utf8');
+  const cssContent = fs.readFileSync(path.resolve('src/styles/modules.css'), 'utf8');
+
+  // Dynamic open/closed label
+  assert.equal(content.includes('module-menu-label-closed') && content.includes('module-menu-label-open'), true, 'Summary must toggle between Autres actions and Déplier');
+  assert.equal(content.includes('Autres actions'), true, 'Must have closed label Autres actions');
+  assert.equal(content.includes('Déplier'), true, 'Must have open label Déplier');
+
+  // Nova cards review button conditional on English
+  assert.equal(content.includes('isEnglish') && content.includes('Réviser fiches du coach Nova'), true, 'Must offer Nova review for English modules');
+
+  // Active cards review restarts session cleanly
+  assert.equal(content.includes('startReview?.(cat.name, "module", activeLeftToday, { restart: true })'), true, 'Active cards review must pass { restart: true }');
+
+  // Deleted buttons check inside module-menu-list
+  const listStart = content.indexOf('className="module-menu-list"');
+  const listEnd = content.indexOf('Supprimer le module', listStart);
+  const menuListSnippet = content.substring(listStart, listEnd);
+  assert.equal(menuListSnippet.includes('Entraînement libre'), false, 'Entraînement libre must be removed from Autres actions');
+  assert.equal(menuListSnippet.includes('handlePauseNewCards'), false, 'Mettre les nouvelles fiches en pause must be removed from Autres actions');
+  assert.equal(menuListSnippet.includes('handleExportModule'), false, 'Exporter les fiches must be removed from Autres actions');
+
+  // Centering in CSS
+  assert.equal(cssContent.includes('.module-button') && cssContent.includes('justify-content: center; text-align: center;'), true, 'Module buttons must be centered');
+  assert.equal(cssContent.includes('.module-menu-list .module-button') && cssContent.includes('justify-content: center;'), true, 'Menu list buttons must be centered');
+
+  // Distinction between mistake cards and vocabulary/idioms
+  assert.equal(content.includes('Réviser mes erreurs en direct'), true, 'Must offer dedicated review for live mistake cards');
+  assert.equal(content.includes('Réviser vocabulaire & idiomes'), true, 'Must offer dedicated review for vocabulary and idioms');
 });
+

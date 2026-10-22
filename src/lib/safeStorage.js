@@ -56,7 +56,7 @@ function evictCache() {
     const keys = [];
     for (let i = 0; i < window.localStorage.length; i++) {
       const k = window.localStorage.key(i);
-      if (k && /^(cache_|tmp_|news_cache|ai_cache)/i.test(k)) keys.push(k);
+      if (k && /^(cache_|tmp_|news_cache|ai_cache|tech_intel_)/i.test(k)) keys.push(k);
     }
     // supprime les premiers (FIFO approx)
     keys.slice(0, Math.max(1, Math.floor(keys.length / 2))).forEach(rawRemove);

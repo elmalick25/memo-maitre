@@ -2463,15 +2463,8 @@ export function resolveNextDeadline(item) {
   if (!raw) return null;
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return null;
-  if (item?.recurrence === "one_shot") return raw;
-
-  // Les campagnes de bourses sont annuelles : si la date est dépassée,
-  // on projette automatiquement la prochaine session (même jour, année suivante).
-  const now = new Date();
-  while (date.getTime() < now.getTime()) {
-    date.setFullYear(date.getFullYear() + 1);
-  }
-  return date.toISOString().slice(0, 10);
+  // An annual recurrence does not verify the next campaign date.
+  return raw;
 }
 
 /**

@@ -81,7 +81,16 @@ export function repairTruncatedJSON(str) {
 // Parse une réponse IA en JSON, même imparfaite (markdown fences, virgules, etc.)
 export function safeParseJSON(raw) {
   if (!raw || typeof raw !== "string") throw new Error("Réponse IA vide");
-  let s = raw.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "").trim();
+  // Ne retirer que l'emballage ```json … ``` EXTÉRIEUR : les blocs de code
+  // présents DANS les fiches (chaînes JSON) doivent rester intacts.
+  let s = raw.trim();
+  const wrapped = s.match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```\s*$/);
+  if (wrapped) s = wrapped[1].trim();
+  else {
+    const fence = s.match(/```(?:json|JSON)\s*\n([\s\S]*?)\n```/);
+    if (fence && /^[\[{]/.test(fence[1].trim())) s = fence[1].trim();
+  }
+  try { return JSON.parse(s); } catch { /* réparations ci-dessous */ }
   const isArray = s.indexOf("[") !== -1 && (s.indexOf("[") < (s.indexOf("{") === -1 ? Infinity : s.indexOf("{")));
   const open = isArray ? "[" : "{";
   const close = isArray ? "]" : "}";

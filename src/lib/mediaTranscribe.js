@@ -1,4 +1,4 @@
-import { resolveAll } from "./security/apiKeys.js";
+import { resolveAll, KNOWN_KEY_NAMES } from "./security/apiKeys.js";
 // mediaTranscribe.js — Récupérer le texte d'une vidéo QUAND YouTube ne fournit
 // aucun sous-titre, notamment quand les sous-titres sont INCRUSTÉS dans l'image
 // (hardcoded / burned-in). Deux moteurs complémentaires :
@@ -7,7 +7,41 @@ import { resolveAll } from "./security/apiKeys.js";
 
 // ─────────────────────────── Whisper (audio) ────────────────────────────────
 function groqKeys() {
-  return resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
+  return resolveAll(KNOWN_KEY_NAMES?.groq || ["VITE_GROQ_API_KEY", "VITE_GROQ_API_KEY_1", "VITE_GROQ_API_KEY_2", "VITE_GROQ_API_KEY_3", "VITE_GROQ_API_KEY_4", "VITE_GROQ_API_KEY_5", "VITE_GROQ_API_KEY_6", "VITE_GROQ_API_KEY_7", "VITE_GROQ_API_KEY_8", "VITE_GROQ_API_KEY_9"]);
+}
+
+function deepgramKeys() {
+  return resolveAll(KNOWN_KEY_NAMES?.deepgram || ["VITE_DEEPGRAM_API_KEY", "VITE_DEEPGRAM_API_KEY_1", "VITE_DEEPGRAM_API_KEY_2", "VITE_DEEPGRAM_API_KEY_3"]);
+}
+
+async function deepgramChunk(blob, language) {
+  const keys = deepgramKeys();
+  if (!keys.length) return null;
+  const url = new URL("https://api.deepgram.com/v1/listen");
+  url.searchParams.set("model", "nova-2");
+  url.searchParams.set("smart_format", "true");
+  if (language) url.searchParams.set("language", language);
+
+  for (const key of keys) {
+    try {
+      const res = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          Authorization: `Token ${key}`,
+          "Content-Type": blob.type || "audio/wav",
+        },
+        body: blob,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim();
+        if (text) return text;
+      }
+    } catch (e) {
+      console.warn("[MediaTranscribe] Deepgram fallback erreur:", e?.message);
+    }
+  }
+  return null;
 }
 
 // Encode des samples PCM float en WAV 16 kHz mono (format accepté partout).
@@ -53,15 +87,31 @@ async function decodeToMono16k(file) {
 }
 
 async function whisperChunk(blob, language) {
+  const fd = new FormData();
+  fd.append("file", blob, "audio.wav");
+  fd.append("model", "whisper-large-v3-turbo");
+  if (language) fd.append("language", language);
+
+  const aiProxy = (typeof import.meta !== "undefined" && import.meta.env?.VITE_AI_PROXY_URL || "").replace(/\/+$/, "");
+  if (aiProxy) {
+    try {
+      const pr = await fetch(`${aiProxy}/ai/transcribe`, {
+        method: "POST",
+        body: fd,
+      });
+      if (pr.ok) {
+        const pData = await pr.json();
+        if (pData?.text) return pData.text;
+      }
+    } catch (e) {
+      console.debug("[MediaTranscribe] Proxy fallback:", e?.message);
+    }
+  }
+
   const keys = groqKeys();
-  if (!keys.length) throw new Error("Clé Groq manquante (VITE_GROQ_API_KEY) — impossible de transcrire l'audio.");
   let lastErr = null;
   for (const key of keys) {
     try {
-      const fd = new FormData();
-      fd.append("file", blob, "audio.wav");
-      fd.append("model", "whisper-large-v3-turbo");
-      if (language) fd.append("language", language);
       const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
         headers: { Authorization: `Bearer ${key}` },
@@ -73,6 +123,15 @@ async function whisperChunk(blob, language) {
       lastErr = new Error("Réponse Whisper vide.");
     } catch (e) { lastErr = e; }
   }
+
+  // Fallback haute résilience : Deepgram Nova-2
+  try {
+    const dgText = await deepgramChunk(blob, language);
+    if (dgText) return dgText;
+  } catch (dgErr) {
+    console.warn("[MediaTranscribe] Deepgram fallback failed:", dgErr?.message);
+  }
+
   throw lastErr || new Error("Transcription audio impossible.");
 }
 

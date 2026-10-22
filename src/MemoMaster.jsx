@@ -1,4 +1,4 @@
-import { resolveAll } from "./lib/security/apiKeys.js";
+import { resolveAll, KNOWN_KEY_NAMES } from "./lib/security/apiKeys.js";
 // MemoMaster.jsx – GOD LEVEL v10.1 (Audit & hardening pass — div/0 guards, safer JSON parsing, SSR-safe init)
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense, startTransition, forwardRef } from "react";
@@ -11,6 +11,7 @@ import { addDays, today, formatDate, isDue, normalizeDate } from "./utils/dateUt
 import { repairCardDates } from "./lib/dateRepair";
 import { ensureMasteryStage, recordProductiveUse, getMasteryBreakdown, computeMasteryStage } from "./lib/masteryStages";
 import { isCardMastered, countMasteredCards, getDueCards } from "./lib/cardStatus";
+import { buildDailyEligiblePool } from "./lib/dailyEligiblePool";
 import { DAILY_PLAN_STORAGE_KEY, buildDailyPlan, markCardDone, normalizeDailyPlan } from "./lib/dailyPlan";
 import { mergeDayState, dayStatesEqual, dayStateFromLocal, dayStateToPlan, normalizeDayState } from "./lib/dayStateMerge";
 import { subscribeDayState, fetchDayState, publishDayState, flushDayStateNow } from "./lib/db/dayStateSync";
@@ -38,6 +39,7 @@ import {
 import { cleanSpeechTranscript, isMeaninglessSpeech, SPEECH_HYGIENE_PROMPT } from "./utils/speechCleanup";
 import { fsrs, fsrsR, fsrsFromProduction, incubationProgress } from "./lib/fsrs";
 import { ATOMIC_CARD_RULES } from "./lib/atomicCardRules";
+import { sanitizeNovaBacklog } from "./lib/novaReserve";
 import { antiInterferenceReorder, analyzeLeech, composeWeakSpotSession, composeDailySession, pickLeeches, nextLapseCount } from "./lib/memoryLab";
 import { isNewCard, isYoungCard, splitNewAndReview, splitYoungAndReview, getNewCardBudget, normalizeIntakeState, makeIntakeState, remainingIntake, consumeIntakeSlot } from "./lib/newCardIntake";
 import { buildLeechRescuePrompt, buildLeechRescueUserPayload } from "./lib/memoryBoost";
@@ -111,6 +113,7 @@ import AgentPanel from "./components/AgentPanel";
 
 import NotificationCenter from "./components/NotificationCenter";
 import WeeklyDigestModal from "./components/WeeklyDigestModal";
+import ExtraSessionModal from "./components/ExtraSessionModal";
 import { computeWeeklyDigest, isWeeklyDigestTime } from "./lib/weeklyDigest";
 import usePerfTier, { PERF_LITE_CSS } from "./lib/perfTier";
 import { haptic } from "./lib/haptics";
@@ -123,7 +126,8 @@ import useFocusRadio from "./hooks/useFocusRadio";
 import { CARD_TYPES, SLASH_COMMANDS } from "./constants/cardTypes";
 import { playSound } from "./utils/soundEffects";
 import { buildBatchPrompt, buildChatToCardSystemPrompt, layoutBatchCards } from "./lib/aiCardPrompts";
-import { buildOptimizationSystemPrompt, parseOptimizationResponse, applyOptimizationUpdates } from "./lib/cardOptimizer";
+import { buildOptimizationSystemPrompt, parseOptimizationResponse, applyOptimizationUpdates, FORMAT_RULES, stripJsonWrapper } from "./lib/cardOptimizer";
+import { fixCardFormatting, cardNeedsFormatFix } from "./lib/cardFormatFixer";
 
 export const MOBILE_BREAKPOINT = 768;
 export const MOBILE_MQ = `(max-width: ${MOBILE_BREAKPOINT - 0.02}px)`;
@@ -164,11 +168,32 @@ export default function MemoMaster() {
     return () => cancelAnimationFrame(rafId);
   }, [view, navState.subView]);
 
+  // ── Préchargement intelligent d'EnglishPractice en arrière-plan ────────────
+  // Télécharge le module dès les premières secondes d'inactivité pour que le clic sur l'icône 🎓 soit 100% instantané
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const preload = () => {
+      import("./EnglishPractice").catch(() => {});
+    };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(preload, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    } else {
+      const timer = setTimeout(preload, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   const [expressions, setExpressionsState] = useState([]);
   const setExpressions = useCallback((action) => {
     setExpressionsState(prev => {
       const rawNext = typeof action === "function" ? action(prev) : action;
-      const next = Array.isArray(rawNext) ? rawNext.filter(Boolean) : [];
+      // Réparation du format (code/texte) pour toute fiche créée ou modifiée,
+      // quelle que soit sa provenance (Ajouter, Lab, Anglais, Actu, IA…).
+      const prevRefs = new Set(Array.isArray(prev) ? prev : []);
+      const next = Array.isArray(rawNext)
+        ? rawNext.filter(Boolean).map(e => (prevRefs.has(e) ? e : fixCardFormatting(e)))
+        : [];
       const seen = new Set();
       const normalizedNext = next.filter(e => {
         if (!e?.id || seen.has(e.id)) return false;
@@ -299,7 +324,7 @@ export default function MemoMaster() {
   const [agentSheetOpen, setAgentSheetOpen] = useState(false);
 
   const getNextGroqKey = useCallback(() => {
-    return resolveAll(["VITE_GROQ_API_KEY","VITE_GROQ_API_KEY_5","VITE_GROQ_API_KEY_6","VITE_GROQ_API_KEY_7"]);
+    return resolveAll(KNOWN_KEY_NAMES?.groq || ["VITE_GROQ_API_KEY", "VITE_GROQ_API_KEY_1", "VITE_GROQ_API_KEY_2", "VITE_GROQ_API_KEY_3", "VITE_GROQ_API_KEY_4", "VITE_GROQ_API_KEY_5", "VITE_GROQ_API_KEY_6", "VITE_GROQ_API_KEY_7", "VITE_GROQ_API_KEY_8", "VITE_GROQ_API_KEY_9"]);
   }, []);
   const [newBadge, setNewBadge] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -424,6 +449,7 @@ export default function MemoMaster() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const practiceRecognitionRef = useRef(null);
+  const [extraSessionOpen, setExtraSessionOpen] = useState(false);
 
   // ── GOD LEVEL ADD v9 — Nouveaux états ──────────────────────────────────
   const [addMarkdownPreview, setAddMarkdownPreview] = useState(false);
@@ -874,14 +900,13 @@ export default function MemoMaster() {
 
   // Le plan respecte le budget d'entrée des fiches jamais vues (couche 3) :
   // sans ce filtre, un plan de 35 pouvait être rempli de 35 fiches neuves.
-  const dailyEligiblePool = useMemo(() => {
-    const { newCards, reviewCards } = splitNewAndReview(todayReviews);
-    const admitted = new Set(newCardIntake?.admittedIds || []);
-    const slots = Math.max(0, newCardBudget - admitted.size);
-    const already = newCards.filter((c) => admitted.has(c.id));
-    const fresh = newCards.filter((c) => !admitted.has(c.id)).slice(0, slots);
-    return [...reviewCards, ...already, ...fresh];
-  }, [todayReviews, newCardIntake, newCardBudget]);
+  // Même sélection sur PC et mobile (ordre stable + fiches du plan partagé).
+  const dailyEligiblePool = useMemo(() => buildDailyEligiblePool({
+    dueCards: todayReviews,
+    admittedIds: newCardIntake?.admittedIds || [],
+    budget: newCardBudget,
+    planIds: dailyPlanState && dailyPlanState.date === currentDate && Array.isArray(dailyPlanState.ids) ? dailyPlanState.ids : [],
+  }), [todayReviews, newCardIntake, newCardBudget, dailyPlanState, currentDate]);
 
   const dailyPlanResult = useMemo(
     () => buildDailyPlan({ plan: dailyPlanState, dueCards: dailyEligiblePool, todayISO: currentDate, reviewedTodayIds }),
@@ -891,6 +916,7 @@ export default function MemoMaster() {
   // Persistance + resynchronisation du plan (sans boucle de rendu : on ne
   // réécrit le state que si le plan a réellement changé).
   useEffect(() => {
+    if (!loaded) return;
     const next = dailyPlanResult.plan;
     setDailyPlanState((prev) => {
       if (prev
@@ -910,7 +936,7 @@ export default function MemoMaster() {
       try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
       return next;
     });
-  }, [dailyPlanResult]);
+  }, [dailyPlanResult, loaded]);
 
   // ══════════════════════════════════════════════════════════════════════════
   // 🔗 ÉTAT DU JOUR PARTAGÉ (temps réel, mobile ⇄ PC)
@@ -1005,7 +1031,7 @@ export default function MemoMaster() {
   // ── Publication de l'état local dès qu'il change ─────────────────────────
   useEffect(() => {
     const uid = getFbUser();
-    if (!uid || !dayStateReadyRef.current) return;
+    if (!uid || !dayStateReadyRef.current || !loaded) return;
     const local = dayStateFromLocal({
       plan: dailyPlanResult.plan,
       admittedIds: newCardIntake?.admittedIds || [],
@@ -1016,14 +1042,14 @@ export default function MemoMaster() {
     if (dayStateSyncedRef.current && dayStatesEqual(dayStateSyncedRef.current, merged)) return;
     dayStateSyncedRef.current = merged;
     publishDayState(uid, currentDate, merged);
-  }, [dailyPlanResult, newCardIntake, currentDate]);
+  }, [dailyPlanResult, newCardIntake, currentDate, loaded]);
 
   const reviewModeRef = useRef("standard");
-  /** Marque une fiche comme traitée aujourd'hui (appelé à chaque notation). */
   const consumeDailyPlanCard = useCallback((cardId) => {
-    if (reviewModeRef.current === "module" || reviewModeRef.current === "free") return;
+    if (reviewModeRef.current === "free") return;
+    const isBonus = reviewModeRef.current === "bonus";
     setDailyPlanState((prev) => {
-      const next = markCardDone(prev, cardId, today());
+      const next = markCardDone(prev, cardId, today(), { countInPlan: true, bonus: isBonus });
       try { localStorage.setItem(DAILY_PLAN_STORAGE_KEY, JSON.stringify(next)); } catch { /* quota / SSR */ }
       return next;
     });
@@ -1045,34 +1071,6 @@ export default function MemoMaster() {
   }, [expressions, dailySessionPreview]);
 
   // ── HOOKS MÉTIER SPÉCIALISÉS (Étape 13) ──
-  const {
-    versionHistory,
-    saveVersion,
-    handleRestoreVersion,
-    startEdit,
-    cancelEdit,
-    deleteExp,
-    addCardsFromLab,
-  } = useExpressionsManager({
-    expressions,
-    setExpressions,
-    addForm,
-    setAddForm,
-    editingId,
-    setEditingId,
-    setAddAudioUrl,
-    setAddReformulations,
-    setAddMetaphoreText,
-    setAddDoublonCheck,
-    editReturnTo,
-    setEditReturnTo,
-    setView,
-    showToast,
-    callClaude,
-    playSound,
-    storage,
-  });
-
   const {
     reviewQueue,
     setReviewQueue,
@@ -1108,9 +1106,13 @@ export default function MemoMaster() {
     startReview,
     handleReveal,
     reviewMode,
+    setReviewMode,
     reviewCategory,
+    setReviewCategory,
     saveModuleSession,
     clearModuleSession,
+    moduleSessions,
+    setModuleSessions,
   } = useReviewSession({
     expressions,
     setExpressions,
@@ -1130,6 +1132,68 @@ export default function MemoMaster() {
     haptic,
     playSound,
   });
+
+  const {
+    versionHistory,
+    saveVersion,
+    handleRestoreVersion,
+    startEdit,
+    cancelEdit,
+    deleteExp,
+    addCardsFromLab,
+  } = useExpressionsManager({
+    expressions,
+    setExpressions,
+    addForm,
+    setAddForm,
+    editingId,
+    setEditingId,
+    setAddAudioUrl,
+    setAddReformulations,
+    setAddMetaphoreText,
+    setAddDoublonCheck,
+    editReturnTo,
+    setEditReturnTo,
+    setView,
+    showToast,
+    callClaude,
+    playSound,
+    storage,
+    setDailyPlanState,
+    setReviewQueue,
+    setModuleSessions,
+  });
+
+  const handleCardUpdated = useCallback((updatedCard) => {
+    if (!updatedCard?.id) return;
+    setReviewQueue((prevQueue) =>
+      prevQueue.map((c) => (c.id === updatedCard.id ? { ...c, ...updatedCard } : c))
+    );
+    setModuleSessions((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [cat, sess] of Object.entries(next)) {
+        if (sess && Array.isArray(sess.queue) && sess.queue.some((c) => c.id === updatedCard.id)) {
+          sess.queue = sess.queue.map((c) => (c.id === updatedCard.id ? { ...c, ...updatedCard } : c));
+          changed = true;
+        }
+      }
+      if (changed) {
+        try {
+          localStorage.setItem("mm_interrupted_module_sessions_v1", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+    setRevealed(false);
+    setUserAnswer("");
+    setCardStartTime(Date.now());
+  }, [setReviewQueue, setModuleSessions, setRevealed, setUserAnswer, setCardStartTime]);
+
+  const handleStartExtraSession = useCallback(({ pickedCards, mode, moduleName }) => {
+    if (!pickedCards || pickedCards.length === 0) return;
+    startReview(moduleName, mode, pickedCards, { bonus: true, restart: true });
+  }, [startReview]);
 
   useEffect(() => {
     reviewModeRef.current = reviewMode;
@@ -1255,7 +1319,12 @@ export default function MemoMaster() {
         // ✅ Toutes les données sont récupérées AVANT de toucher aux états
         const { repaired: expsRepairedRaw, count: dateFixCount } = repairCardDates(exps || []);
         // Phase 1 — rétro-compat : chaque fiche reçoit un masteryStage dérivé si absent.
-        const expsRepaired = expsRepairedRaw.map(ensureMasteryStage);
+        const _d = new Date();
+        const _todayISO = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, "0")}-${String(_d.getDate()).padStart(2, "0")}`;
+        // Pilier 4 — assainissement : stock Nova jamais révisé et en retard → réserve étalée
+        const { list: expsSanitized, moved: novaMoved } = sanitizeNovaBacklog(expsRepairedRaw.map(ensureMasteryStage), _todayISO);
+        if (novaMoved > 0) console.info(`[novaReserve] ${novaMoved} fiches Nova en retard réétalées.`);
+        const expsRepaired = expsSanitized;
         if (dateFixCount > 0) console.info(`[dateRepair] ${dateFixCount} fiches avec dates anormales corrigées.`);
         setExpressions(expsRepaired);
         const readDeletedCats = () => {
@@ -1267,8 +1336,13 @@ export default function MemoMaster() {
         };
         const deletedCats = readDeletedCats();
         setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats, deletedCats), expsRepaired, deletedCats));
-        setSessions(sess || []);
-        setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 });
+        const reconciledSess = computeDailyProgress(sess || [], expsRepaired, 365).filter(s => (s.count || 0) > 0);
+        setSessions(reconciledSess);
+        const provenTotalReviews = reconciledSess.reduce((acc, s) => acc + (s.count || 0), 0);
+        setStats({
+          ...(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 }),
+          totalReviews: Math.max(st?.totalReviews || 0, provenTotalReviews),
+        });
         setUnlockedBadges(badges || []);
         setVideos(storedVids || []);
         setDevLogs(storedLogs || []);
@@ -1320,8 +1394,13 @@ export default function MemoMaster() {
           };
           const deletedCats2 = readDeletedCats2();
           setCategories(reconcileCategoriesWithExpressions(mergeDefaultCategories(cats, deletedCats2), expsRepaired2, deletedCats2));
-          setSessions(sess || []);
-          setStats(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 });
+          const reconciledSess2 = computeDailyProgress(sess || [], expsRepaired2, 365).filter(s => (s.count || 0) > 0);
+          setSessions(reconciledSess2);
+          const provenTotalReviews2 = reconciledSess2.reduce((acc, s) => acc + (s.count || 0), 0);
+          setStats({
+            ...(st || { streak: 0, lastSession: null, totalReviews: 0, aiGenerated: 0 }),
+            totalReviews: Math.max(st?.totalReviews || 0, provenTotalReviews2),
+          });
           setUnlockedBadges(badges || []);
           setLastViewedBadgesCount(viewedBadges || 0);
           setTimeout(() => setLoaded(true), 100);
@@ -2271,6 +2350,17 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
   };
 
 
+  // ── Réparation locale du format (sans IA) : code dans l'éditeur, texte hors éditeur ──
+  const applyFormatOnlyFix = (targets) => {
+    const ids = new Set((targets || []).filter(cardNeedsFormatFix).map(c => c.id));
+    if (!ids.size) return 0;
+    ids.forEach(id => { try { saveVersion(id); } catch (_) { } });
+    setExpressions(prev => prev.map(e => (ids.has(e.id) ? fixCardFormatting(e) : e)));
+    setReviewQueue(prev => prev.map(e => (ids.has(e.id) ? fixCardFormatting(e) : e)));
+    if (expandedCard && ids.has(expandedCard.id)) setExpandedCard(fixCardFormatting(expandedCard));
+    return ids.size;
+  };
+
   // ── Optimiser un lot de fiches quelconque (viser ~100% rétention FSRS) ──
   const runOptimizeBatch = async (targets, confirmMsg) => {
     if (!targets.length) {
@@ -2314,6 +2404,10 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
     }
 
     if (updates.length === 0) {
+      const fixedCount = applyFormatOnlyFix(targets);
+      if (fixedCount > 0) {
+        showToast(`🧹 IA indisponible, mais ${fixedCount} fiche(s) ont eu leur mise en forme réparée (code / texte).`, "info");
+      } else
       showToast("L'IA n'a renvoyé aucune optimisation utilisable. Réessaie dans un instant.", "error");
       setOptimizeAllLoading(false);
       setOptimizeAllProgress({ done: 0, total: 0 });
@@ -2366,7 +2460,7 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
       try {
         try { saveVersion(exp.id); } catch (_) { }
         showToast("⏳ IA English Coach en cours d'optimisation...", "info");
-        const transformed = await upgradeCardToRetroEngineering(exp, callClaude);
+        const transformed = fixCardFormatting(await upgradeCardToRetroEngineering(exp, callClaude));
         setExpressions(prev => prev.map(e => e.id === exp.id ? transformed : e));
         setReviewQueue(prev => prev.map(e => e.id === exp.id ? transformed : e));
         if (expandedCard && expandedCard.id === exp.id) {
@@ -2376,6 +2470,7 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
         showToast("✨ Fiche anglais métamorphosée avec l'IA Coach !", "success");
       } catch (err) {
         console.error("[handleOptimizeOneCard] English error:", err);
+        if (applyFormatOnlyFix([exp]) > 0) { showToast("🧹 IA indisponible : mise en forme de la fiche réparée.", "info"); return; }
         showToast("Erreur lors de l'optimisation de la fiche.", "error");
       }
       return;
@@ -2383,19 +2478,22 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
 
     if (!window.confirm(`Optimiser cette fiche pour viser 100% de rétention ?\nL'IA va la resserrer / scinder si besoin. L'original est sauvegardé (version).`)) return;
     playSound("whoosh");
-    const systemPrompt = `Tu es un expert FSRS/SuperMemo. Pour la fiche fournie, produis 1 à N fiches ATOMIQUES optimisées pour tendre vers 100% de rétention. Scinde si nécessaire, resserre les formulations. Réponds UNIQUEMENT en JSON strict :\n{"cards":[{"front":"...","back":"...","example":"..."}]}\n\n${ATOMIC_CARD_RULES}`;
+    const systemPrompt = `Tu es un expert FSRS/SuperMemo. Pour la fiche fournie, produis 1 à N fiches ATOMIQUES optimisées pour tendre vers 100% de rétention. Scinde si nécessaire, resserre les formulations. Réponds UNIQUEMENT en JSON strict :\n{"cards":[{"front":"...","back":"...","example":"..."}]}\n\n${ATOMIC_CARD_RULES}\n\n${FORMAT_RULES}`;
     const userMsg = JSON.stringify({ id: exp.id, front: exp.front, back: exp.back, example: exp.example || "" }, null, 2);
     try {
-      const raw = await callClaude(systemPrompt, userMsg, { task: "single-json", json: true, maxTokens: 2500, temperature: 0.3 });
+      const raw = await callClaude(systemPrompt, userMsg, { task: "single-json", json: true, maxTokens: 2500, temperature: 0.3, callerContext: "review_optimize" });
       const rawText = typeof raw === "string" ? raw : (raw?.text || "");
-      const clean = rawText.replace(/```json|```/gi, "").trim();
+      const clean = stripJsonWrapper(rawText);
       let parsed = null;
       try { parsed = safeParseJSON(clean); } catch (_) { parsed = null; }
       const cards = Array.isArray(parsed?.cards) ? parsed.cards : (Array.isArray(parsed) ? parsed : []);
       const valid = cards
         .filter(c => c && typeof c.front === "string" && typeof c.back === "string" && c.front.trim() && c.back.trim())
-        .map(c => ({ front: c.front.trim(), back: c.back.trim(), example: (c.example || "").toString().trim() }));
-      if (!valid.length) { showToast("L'IA n'a rien renvoyé d'utilisable.", "error"); return; }
+        .map(c => fixCardFormatting({ front: c.front.trim(), back: c.back.trim(), example: (c.example || "").toString().trim() }));
+      if (!valid.length) {
+        if (applyFormatOnlyFix([exp]) > 0) { showToast("🧹 Mise en forme de la fiche réparée (l'IA n'a rien renvoyé d'autre).", "info"); return; }
+        showToast("L'IA n'a rien renvoyé d'utilisable.", "error"); return;
+      }
       try { saveVersion(exp.id); } catch (_) { }
       const now = new Date().toISOString();
       setExpressions(prev => {
@@ -2413,6 +2511,7 @@ Si tu ne vois aucun texte lisible dans l'image, renvoie : []`;
       showToast(`✨ Fiche optimisée → ${valid.length} fiche(s) atomiques.`, "success");
     } catch (e) {
       console.error("[handleOptimizeOneCard]", e);
+      if (applyFormatOnlyFix([exp]) > 0) { showToast("🧹 IA indisponible : mise en forme de la fiche réparée.", "info"); return; }
       showToast("Optimisation échouée. Réessaie.", "error");
     }
   };
@@ -2650,15 +2749,72 @@ Données utilisateur :
 
   // ══ ASSISTANT IA ══════════════════════════════════════════════════════════
   // Contexte live injecté dans le system prompt à chaque message.
-  const buildAgentContext = useCallback(() => {
+  const buildAgentContext = useCallback((query = "") => {
     const totalCards = expressions.length;
     const dueCount = sessionRemainingCount;
     const pool = dailySessionPreview;
     const arch = getArchetype(powerLevel);
+
+    // Omniscience ciblée de Maodo (RAG haute vitesse anti-saturation)
+    let cardsCatalog = null;
+    if (expressions.length > 0) {
+      const qClean = typeof query === "string" ? query.toLowerCase().trim() : "";
+      const tokens = qClean
+        .replace(/[^a-z0-9àâäéèêëîïôöùûüç~_+-]/gi, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !["bonjour", "salut", "merci", "aide", "peux", "pour", "dans", "avec", "cette", "c'est", "fiche", "moi"].includes(w));
+
+      if (tokens.length > 0) {
+        const scored = expressions.map((e) => {
+          const hay = `${e.front || ""} ${e.back || ""} ${e.example || ""} ${e.category || ""}`.toLowerCase();
+          let score = 0;
+          for (const t of tokens) {
+            if (hay.includes(t)) score += t.length;
+          }
+          return { e, score };
+        }).filter((item) => item.score > 0);
+
+        scored.sort((a, b) => b.score - a.score);
+        const topCards = scored.slice(0, 8).map((item) => item.e);
+
+        if (topCards.length > 0) {
+          cardsCatalog = topCards.map((e, idx) => {
+            const q = (e.front || "").replace(/\s+/g, " ").trim();
+            const r = (e.back || "").replace(/\s+/g, " ").trim();
+            const ex = e.example ? ` | Ex: ${e.example.replace(/\s+/g, " ").slice(0, 120)}` : "";
+            return `[#${idx + 1}] [${e.category || "Général"}] Q: "${q}" ➔ R: "${r}"${ex}`;
+          }).join("\n");
+        }
+      }
+
+      if (!cardsCatalog) {
+        const catCounts = categories.map((c) => ({
+          name: c.name,
+          count: expressions.filter((e) => e.category === c.name).length,
+        })).filter((c) => c.count > 0);
+        cardsCatalog = `Modules de l'application (${totalCards} fiches au total) :\n${catCounts.map((c) => `• ${c.name} : ${c.count} fiches`).join("\n")}`;
+      }
+    }
+
+    const activeCard = view === "review" && reviewQueue.length > 0 ? reviewQueue[reviewIndex] : null;
+
     return {
       view,
       totalCards,
       dueCount,
+      cardsCatalog,
+      currentCard: activeCard ? {
+        id: activeCard.id,
+        front: activeCard.front,
+        back: activeCard.back,
+        example: activeCard.example,
+        category: activeCard.category,
+        level: activeCard.level,
+        lapses: activeCard.lapses || 0,
+        repetitions: activeCard.repetitions || 0,
+        interval: activeCard.interval || 0,
+      } : null,
+      currentCardRevealed: Boolean(revealed),
       masteryPct: totalCards > 0 ? Math.round((masteredCount / totalCards) * 100) : 0,
       formIndex: dashFormIndex,
       streak: stats?.streak || 0,
@@ -2677,7 +2833,7 @@ Données utilisateur :
       isMobile,
       device: isMobile ? "mobile" : "desktop",
     };
-  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying, isMobile]);
+  }, [expressions, dailySessionPreview, todayReviews, masteredCount, dashFormIndex, stats, powerLevel, stamina, questBoard, categories, view, isDarkMode, zenFocusMode, lofiPlaying, isMobile, reviewQueue, reviewIndex, revealed]);
 
   const weeklyDigestData = useMemo(
     () => computeWeeklyDigest(expressions, sessions),
@@ -2873,8 +3029,8 @@ Données utilisateur :
   }, [setView, startReview, setExpressions, showToast, setLofiPlaying, setIsDarkMode, setZenFocusMode, setIsPomoActive, setCmdOpen, setAgentSheetOpen]);
 
   const agentAsk = useCallback(
-    (systemPrompt, userMessage) =>
-      callClaude(systemPrompt, userMessage, { task: "chat", json: true, maxTokens: 900, temperature: 0.4 }),
+    (systemPrompt, userMessage, image = null) =>
+      callClaude(systemPrompt, userMessage, { task: "chat", json: true, maxTokens: 1200, temperature: 0.4 }, image),
     [],
   );
 
@@ -2899,7 +3055,7 @@ Données utilisateur :
   if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#070D1F", color: "var(--mm-primary-glow)", fontFamily: "'Outfit', sans-serif", gap: 16 }}><div style={{ fontSize: 48, animation: "pulse 1s infinite", filter: "drop-shadow(0 0 20px rgba(249,115,22,0.8))" }}>🧠</div><h2 style={{ fontWeight: 800, letterSpacing: "-0.5px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary-glow))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Initialisation du Second Cerveau...</h2></div>;
 
   return (
-    <div style={{ minHeight: "100vh", width: "100%", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
+    <div style={{ minHeight: "100vh", width: "100%", maxWidth: "100%", overflowX: "clip", background: "transparent", color: theme.text, fontFamily: "'Outfit', sans-serif", transition: "background 0.3s" }}>
       {/* Topbar flottante : centre de notifications (Desktop uniquement) */}
       {!isMobile && (
         <div
@@ -2945,7 +3101,7 @@ Données utilisateur :
 
       {/* ── LAYOUT PRINCIPAL : Sidebar + Content ── */}
       <div style={{ height: zenFocusMode || isMobile ? 0 : 68, transition: "height 0.3s cubic-bezier(0.4,0,0.2,1)" }} />{/* spacer nav fixe */}
-      <div style={{ display: "flex", width: "100%", maxWidth: "100%", boxSizing: "border-box", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
+      <div style={{ display: "flex", width: "100%", maxWidth: "100%", overflowX: "clip", boxSizing: "border-box", minHeight: isMobile ? "100vh" : "calc(100vh - 68px)", alignItems: "flex-start" }}>
 
         {/* ═══ SIDEBAR VERTICALE GOD MODE (FIXED) ═══ */}
         <AppSidebar
@@ -3009,7 +3165,46 @@ Données utilisateur :
             touchAction: 'auto',
           }}
         >
-          <Suspense fallback={<div style={{ padding: 40, textAlign: "center", color: theme.textMuted }}>Chargement…</div>}>
+          <Suspense fallback={
+            <div style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              minHeight: "50vh",
+              gap: 20,
+              padding: "48px 20px",
+              color: theme.textMuted,
+            }}>
+              <div style={{
+                position: "relative",
+                width: 60,
+                height: 60,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}>
+                <div style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: "50%",
+                  border: `3px solid ${theme.border || "rgba(255,255,255,0.08)"}`,
+                  borderTopColor: theme.accent || "#6366f1",
+                  borderRightColor: "rgba(99, 102, 241, 0.4)",
+                  animation: "mm-spin 0.85s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite",
+                }} />
+                <span style={{ fontSize: 24, filter: "drop-shadow(0 0 10px rgba(99,102,241,0.5))" }}>⚡</span>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: theme.text, letterSpacing: "-0.01em", marginBottom: 6 }}>
+                  Initialisation de l'espace...
+                </div>
+                <div style={{ fontSize: 13, color: theme.textMuted, opacity: 0.85 }}>
+                  Chargement fluide des modules
+                </div>
+              </div>
+            </div>
+          }>
           {/* ══════════════════════════════════════════════════════════════════
             VUE TABLEAU DE BORD (Bento Hub / Mobile Home V2)
           ══════════════════════════════════════════════════════════════════ */}
@@ -3052,6 +3247,7 @@ Données utilisateur :
               isDarkMode={isDarkMode}
               showToast={showToast}
               holoLevel={holoLevel}
+              onOpenExtraSession={() => setExtraSessionOpen(true)}
             />
           )}
 
@@ -3146,6 +3342,9 @@ Données utilisateur :
               reviewCategory={reviewCategory}
               categories={categories}
               expressions={expressions}
+              saveModuleSession={saveModuleSession}
+              clearModuleSession={clearModuleSession}
+              setShowAgentPanel={setShowAgentPanel}
             />
           )}
 
@@ -3173,6 +3372,7 @@ Données utilisateur :
               today={today}
               setStats={setStats}
               setMobileAddSheetOpen={setMobileAddSheetOpen}
+              onCardUpdated={handleCardUpdated}
             />
           )}
 
@@ -3612,6 +3812,16 @@ Données utilisateur :
         digestData={weeklyDigestData}
         isDarkMode={isDarkMode}
         theme={theme}
+      />
+
+      <ExtraSessionModal
+        isOpen={extraSessionOpen}
+        onClose={() => setExtraSessionOpen(false)}
+        expressions={expressions}
+        categories={categories}
+        dailySessionPreview={dailySessionPreview}
+        isDarkMode={isDarkMode}
+        onStartExtraSession={handleStartExtraSession}
       />
     </div>
   );

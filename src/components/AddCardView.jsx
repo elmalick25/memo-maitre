@@ -2,12 +2,47 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import RichText from "./RichText";
 import HoloCard from "./HoloCard";
 import GodTierContent from "./GodTierContent";
-import { SmartPasteBox, generateCardsFromSmartPaste, findSimilarCards } from "../MemoMasterUpgrades";
+import { findSimilarCards } from "../MemoMasterUpgrades";
 import { CARD_TYPES } from "../constants/cardTypes";
 import { safeParseJSON } from "../lib/textUtils";
-import { buildBatchPrompt, layoutBatchCards } from "../lib/aiCardPrompts";
 import { ATOMIC_CARD_RULES } from "../lib/atomicCardRules";
 import { colorMix } from "../lib/colorMix";
+function optimizeImageForOcr(dataUrl, maxDim = 1600, quality = 0.85) {
+  return new Promise((resolve) => {
+    if (!dataUrl || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) {
+      return resolve(dataUrl);
+    }
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim && dataUrl.length < 500_000) {
+        return resolve(dataUrl);
+      }
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const optimized = canvas.toDataURL("image/jpeg", quality);
+        resolve(optimized || dataUrl);
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
 
 export default function AddCardView({
   addForm,
@@ -24,30 +59,44 @@ export default function AddCardView({
   theme,
   isDarkMode,
   showToast,
-  callClaude,
+  callClaude: rawCallClaude,
   playSound = () => {},
   today = () => new Date().toISOString().slice(0, 10),
   setStats = () => {},
   onCardCreated,
+  onCardUpdated,
   setMobileAddSheetOpen,
 }) {
   const catNames = categories.map(c => c.name);
 
+  // OpenRouter et providers IA : marquer explicitement le contexte de création de fiches
+  const callClaude = useCallback(
+    (systemPrompt, userMessage, isVisionOrOptions = false, imageUrl = null, deps = {}) => {
+      let effectiveOptions;
+      if (typeof isVisionOrOptions === "boolean") {
+        effectiveOptions = {
+          vision: isVisionOrOptions,
+          imageUrl: imageUrl,
+          callerContext: "add_card",
+        };
+      } else if (isVisionOrOptions && typeof isVisionOrOptions === "object") {
+        effectiveOptions = {
+          ...isVisionOrOptions,
+          imageUrl: imageUrl || isVisionOrOptions.imageUrl,
+          callerContext: "add_card",
+        };
+      } else {
+        effectiveOptions = { callerContext: "add_card" };
+      }
+      return rawCallClaude ? rawCallClaude(systemPrompt, userMessage, effectiveOptions, imageUrl, deps) : Promise.resolve("");
+    },
+    [rawCallClaude]
+  );
+
   // Local States
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
-  const [aiBatchLoading, setAiBatchLoading] = useState(false);
-  const [aiBatchCount, setAiBatchCount] = useState(5);
-  const [showBatchPreview, setShowBatchPreview] = useState(false);
-  const [batchPreview, setBatchPreview] = useState([]);
-  const [isBatchSaving, setIsBatchSaving] = useState(false);
-  const [batchCanvasTransform, setBatchCanvasTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const [batchMousePos, setBatchMousePos] = useState({ x: 0, y: 0 });
-  const [batchLinks, setBatchLinks] = useState([]);
-  const batchDragRef = useRef({ isPanning: false, draggingIdx: null, linkFrom: null, offsetX: 0, offsetY: 0, startX: 0, startY: 0 });
-
-  const [addBatchQueue, setAddBatchQueue] = useState([]);
-  const [addBatchRunning, setAddBatchRunning] = useState(false);
+  const [scanImageUrl, setScanImageUrl] = useState(null);
 
   // Chat Copilot state
   const [chatToCardMessages, setChatToCardMessages] = useState([
@@ -55,13 +104,8 @@ export default function AddCardView({
   ]);
   const [chatToCardInput, setChatToCardInput] = useState("");
   const [chatToCardLoading, setChatToCardLoading] = useState(false);
+  const [chatInputFocused, setChatInputFocused] = useState(false);
   const chatToCardEndRef = useRef(null);
-
-  // From text state
-  const [aiFromText, setAiFromText] = useState("");
-  const [aiFromTextLoading, setAiFromTextLoading] = useState(false);
-  const [dragOverForge, setDragOverForge] = useState(false);
-  const [dropForgeLoading, setDropForgeLoading] = useState(false);
 
   // Vision Scan state
   const [visionScanCards, setVisionScanCards] = useState([]);
@@ -134,17 +178,28 @@ export default function AddCardView({
   const [selectionMenu, setSelectionMenu] = useState({ open: false, field: null, text: "", start: 0, end: 0 });
 
   // ── Duplicate checker ──────────────────────────────────────────────────────
-  const checkDoublon = (concept) => {
-    if (!concept || concept.length < 3) {
-      setAddDoublonCheck(null);
-      return;
-    }
-    const matches = findSimilarCards(concept, expressions, 0.75);
+  const checkIsDuplicate = useCallback((frontText, currentExpressions = expressions) => {
+    if (!frontText || frontText.trim().length < 2) return null;
+    const matches = findSimilarCards(frontText.trim(), currentExpressions, 0.78);
     if (matches && matches.length > 0) {
+      return matches[0];
+    }
+    const norm = s => (s || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+    const target = norm(frontText);
+    const exact = currentExpressions.find(e => norm(e.front) === target);
+    if (exact) {
+      return { card: exact, similarity: 1.0 };
+    }
+    return null;
+  }, [expressions]);
+
+  const checkDoublon = (concept) => {
+    const dup = checkIsDuplicate(concept);
+    if (dup) {
       setAddDoublonCheck({
         duplicate: true,
-        existingConcept: matches[0].card.front,
-        conseil: `Similarité ${Math.round(matches[0].similarity * 100)}% avec une fiche existante.`
+        existingConcept: dup.card.front,
+        conseil: `Similarité ${Math.round(dup.similarity * 100)}% avec une fiche existante.`
       });
     } else {
       setAddDoublonCheck(null);
@@ -275,75 +330,12 @@ ${ATOMIC_CARD_RULES}`;
     setAiLoading(false);
   };
 
-  // ── Batch AI Generator ─────────────────────────────────────────────────────
-  const handleAIBatchGenerate = async () => {
-    if (!aiPrompt.trim()) return;
-    playSound("whoosh");
-    setAiBatchLoading(true);
-    try {
-      const { system: systemPrompt, user: userPrompt } = buildBatchPrompt({
-        count: aiBatchCount,
-        prompt: aiPrompt,
-        category: addForm.category,
-        formType: addForm.type || "qa",
-      });
-
-      const raw = await callClaude(systemPrompt, userPrompt);
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      const cards = parsed.cards || parsed;
-
-      const { layouted, links } = layoutBatchCards(Array.isArray(cards) ? cards : []);
-      setBatchLinks(links);
-      setBatchCanvasTransform({ x: 0, y: 0, scale: 1 });
-      setBatchPreview(layouted);
-      setShowBatchPreview(true);
-      showToast?.(`✨ ${layouted.length} fiches générées !`, "info");
-    } catch (err) {
-      showToast?.("Erreur batch.", "error");
+  const saveVisionCard = (card, idx) => {
+    const dup = checkIsDuplicate(card.front);
+    if (dup) {
+      showToast?.(`⚠️ Doublon : La fiche "${dup.card.front}" existe déjà dans votre deck !`, "error");
+      return;
     }
-    setAiBatchLoading(false);
-  };
-
-  const confirmBatch = () => {
-    if (batchPreview.length === 0 || isBatchSaving) return;
-    setIsBatchSaving(true);
-    const newExps = batchPreview.map(card => ({
-      id: card.id || (Date.now().toString() + Math.random()),
-      front: card.front || "Concept",
-      back: card.back || "",
-      example: card.example || "",
-      category: addForm.category || categories[0]?.name || "Général",
-      level: 0,
-      nextReview: today(),
-      createdAt: today(),
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      reviewHistory: [],
-      imageUrl: (addSubView === "file" && addForm.imageUrl) ? addForm.imageUrl : null,
-    }));
-    setExpressions(prev => [...newExps, ...prev]);
-    showToast?.(`✨ ${newExps.length} fiches forgées et sauvegardées !`, "success");
-
-    // Disparition immédiate de tous les aperçus et fiches créées
-    setBatchPreview([]);
-    setShowBatchPreview(false);
-    setBatchLinks([]);
-    setVisionScanCards([]);
-    setAiPrompt("");
-    if (addSubView === "file") {
-      setAddForm(f => ({ ...f, imageUrl: null }));
-    }
-    if (addSubView === "text") {
-      setAiFromText("");
-    }
-    setIsBatchSaving(false);
-  };
-
-  const saveBatchCard = (idx) => {
-    const card = batchPreview[idx];
-    if (!card) return;
     const newExp = {
       id: card.id || (Date.now().toString() + Math.random()),
       front: card.front || "Concept",
@@ -357,174 +349,57 @@ ${ATOMIC_CARD_RULES}`;
       interval: 1,
       repetitions: 0,
       reviewHistory: [],
-      imageUrl: (addSubView === "file" && addForm.imageUrl) ? addForm.imageUrl : null,
+      imageUrl: null,
     };
     setExpressions(prev => [newExp, ...prev]);
-    showToast?.(`💾 Fiche "${card.front}" sauvegardée !`, "success");
-    const nextPreview = batchPreview.filter((_, i) => i !== idx);
-    setBatchPreview(nextPreview);
-    if (nextPreview.length === 0) {
-      setShowBatchPreview(false);
-      setBatchLinks([]);
-      setVisionScanCards([]);
-      if (addSubView === "file") {
-        setAddForm(f => ({ ...f, imageUrl: null }));
+    showToast?.(`💾 Fiche "${newExp.front}" sauvegardée !`, "success");
+    setVisionScanCards(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const saveAllVisionCards = () => {
+    if (!visionScanCards.length) return;
+    const toSave = [];
+    const duplicates = [];
+
+    visionScanCards.forEach(c => {
+      const dup = checkIsDuplicate(c.front, [...expressions, ...toSave]);
+      if (dup) {
+        duplicates.push({ front: c.front, existing: dup.card.front });
+      } else {
+        toSave.push({
+          id: c.id || (Date.now().toString() + Math.random()),
+          front: c.front || "Concept",
+          back: c.back || "",
+          example: c.example || "",
+          category: addForm.category || categories[0]?.name || "Général",
+          level: 0,
+          nextReview: today(),
+          createdAt: today(),
+          easeFactor: 2.5,
+          interval: 1,
+          repetitions: 0,
+          reviewHistory: [],
+          imageUrl: null,
+        });
       }
-      if (addSubView === "text") {
-        setAiFromText("");
-      }
+    });
+
+    if (toSave.length === 0) {
+      showToast?.(`⚠️ Aucun ajout : toutes ces fiches existent déjà dans votre deck (${duplicates.length} doublon(s)) !`, "warning");
+      return;
     }
-  };
 
-  const removeBatchCard = (idx) => {
-    const nextPreview = batchPreview.filter((_, i) => i !== idx);
-    setBatchPreview(nextPreview);
-    if (nextPreview.length === 0) {
-      setShowBatchPreview(false);
-      setBatchLinks([]);
-      setVisionScanCards([]);
+    setExpressions(prev => [...toSave, ...prev]);
+    if (duplicates.length > 0) {
+      showToast?.(`✨ ${toSave.length} fiches forgées (${duplicates.length} doublon(s) ignoré(s)) !`, "info");
+    } else {
+      showToast?.(`✨ ${toSave.length} fiches forgées et sauvegardées !`, "success");
     }
+    setVisionScanCards([]);
+    setScanImageUrl(null);
   };
 
-  const renderBatchPreview = () => {
-    if (!showBatchPreview || batchPreview.length === 0) return null;
-    return (
-      <div style={{ marginTop: 24, padding: 22, background: isDarkMode ? "#0A0F24" : "var(--mm-bg-elev)", borderRadius: 20, border: `1px solid ${theme?.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.12)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
-          <div>
-            <div style={{ fontWeight: 900, color: theme?.text, fontSize: 16 }}>✨ Fiches générées prêtes à être sauvegardées ({batchPreview.length})</div>
-            <div style={{ color: theme?.textMuted, fontSize: 12, marginTop: 2 }}>Sauvegarde tout d'un coup ou chaque fiche individuellement. Dès la sauvegarde, ces fiches disparaîtront.</div>
-          </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <button
-              onClick={() => {
-                setBatchPreview([]);
-                setShowBatchPreview(false);
-                setVisionScanCards([]);
-                if (addSubView === "file") setAddForm(f => ({ ...f, imageUrl: null }));
-              }}
-              className="hov"
-              style={{ padding: "9px 16px", background: "transparent", border: `1px solid ${theme?.border}`, borderRadius: 12, color: theme?.textMuted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
-            >
-              Annuler
-            </button>
-            <button
-              onClick={confirmBatch}
-              disabled={isBatchSaving}
-              className="btn-glow hov"
-              style={{
-                padding: "10px 22px",
-                background: "linear-gradient(135deg, #22C55E, #16A34A)",
-                color: "white",
-                border: "none",
-                borderRadius: 12,
-                fontWeight: 900,
-                cursor: "pointer",
-                fontSize: 14,
-                boxShadow: "0 4px 14px rgba(34, 197, 94, 0.35)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6
-              }}
-            >
-              {isBatchSaving ? "⏳ Sauvegarde..." : `💾 Tout Forger (${batchPreview.length})`}
-            </button>
-          </div>
-        </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
-          {batchPreview.map((card, idx) => (
-            <div key={card.id || idx} style={{ background: theme?.cardBg, padding: 16, borderRadius: 16, border: `1px solid ${theme?.border}`, display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontWeight: 900, color: theme?.highlight }}>FICHE #{idx + 1}</span>
-                <button
-                  onClick={() => removeBatchCard(idx)}
-                  title="Supprimer cette fiche"
-                  style={{ background: "transparent", border: "none", color: "#EF4444", cursor: "pointer", fontWeight: 800, fontSize: 14, padding: "2px 6px" }}
-                >
-                  ✕
-                </button>
-              </div>
-              <input
-                value={card.front}
-                onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, front: e.target.value } : c))}
-                style={{ width: "100%", fontWeight: 700, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 10, padding: 10, fontSize: 14 }}
-                placeholder="Recto (concept)..."
-              />
-              <textarea
-                value={card.back}
-                onChange={e => setBatchPreview(p => p.map((c, i) => i === idx ? { ...c, back: e.target.value } : c))}
-                style={{ width: "100%", fontSize: 13, color: theme?.text, background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 10, padding: 10, minHeight: 70, resize: "vertical" }}
-                placeholder="Verso (explication)..."
-              />
-              <button
-                type="button"
-                onClick={() => saveBatchCard(idx)}
-                className="hov"
-                style={{
-                  alignSelf: "flex-end",
-                  padding: "6px 14px",
-                  background: theme?.inputBg,
-                  color: theme?.highlight,
-                  border: `1px solid ${colorMix(theme?.highlight, 25)}`,
-                  borderRadius: 8,
-                  fontWeight: 800,
-                  fontSize: 12,
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4
-                }}
-              >
-                💾 Sauver cette fiche
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const addToBatchQueue = (concept) => {
-    if (!concept?.trim()) return;
-    setAddBatchQueue(q => [...q, concept.trim()]);
-    showToast?.(`➕ "${concept.trim()}" ajouté à la file.`);
-  };
-
-  const processBatchQueue = async () => {
-    if (addBatchQueue.length === 0 || addBatchRunning) return;
-    setAddBatchRunning(true);
-    try {
-      const concepts = [...addBatchQueue];
-      const raw = await callClaude(
-        `Tu es un assistant de révision. Génère une fiche par concept pour ces ${concepts.length} éléments en JSON: {"cards":[{"front":"...","back":"...","example":"..."}]}`,
-        concepts.join(", ")
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      const cards = parsed.cards || [];
-      const newExps = cards.map(c => ({
-        id: Date.now().toString() + Math.random(),
-        front: c.front,
-        back: c.back,
-        example: c.example || "",
-        category: addForm.category || categories[0]?.name || "Général",
-        level: 0,
-        nextReview: today(),
-        createdAt: today(),
-        easeFactor: 2.5,
-        interval: 1,
-        repetitions: 0,
-        reviewHistory: [],
-      }));
-      setExpressions(prev => [...newExps, ...prev]);
-      setAddBatchQueue([]);
-      showToast?.(`✨ ${newExps.length} fiches de la file forgées !`);
-    } catch {
-      showToast?.("Erreur traitement de la file", "error");
-    }
-    setAddBatchRunning(false);
-  };
 
   // ── Chat To Card Copilot ───────────────────────────────────────────────────
   const handleSendChatToCard = async () => {
@@ -553,6 +428,11 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
   };
 
   const saveChatCard = (card, msgIdx, cardIdx) => {
+    const dup = checkIsDuplicate(card.front);
+    if (dup) {
+      showToast?.(`⚠️ Doublon : La fiche "${dup.card.front}" existe déjà dans votre deck !`, "error");
+      return;
+    }
     const newExp = {
       id: Date.now().toString() + Math.random(),
       front: card.front,
@@ -584,22 +464,42 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
 
   const saveAllChatCards = (cards, msgIdx) => {
     if (!cards?.length) return;
-    const newExps = cards.map(c => ({
-      id: Date.now().toString() + Math.random(),
-      front: c.front,
-      back: c.back,
-      example: c.example || "",
-      category: addForm.category || categories[0]?.name || "Général",
-      level: 0,
-      nextReview: today(),
-      createdAt: today(),
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      reviewHistory: [],
-    }));
-    setExpressions(prev => [...newExps, ...prev]);
-    showToast?.(`💾 ${newExps.length} fiches sauvegardées !`, "success");
+    const toSave = [];
+    const duplicates = [];
+
+    cards.forEach(c => {
+      const dup = checkIsDuplicate(c.front, [...expressions, ...toSave]);
+      if (dup) {
+        duplicates.push({ front: c.front, existing: dup.card.front });
+      } else {
+        toSave.push({
+          id: Date.now().toString() + Math.random(),
+          front: c.front,
+          back: c.back,
+          example: c.example || "",
+          category: addForm.category || categories[0]?.name || "Général",
+          level: 0,
+          nextReview: today(),
+          createdAt: today(),
+          easeFactor: 2.5,
+          interval: 1,
+          repetitions: 0,
+          reviewHistory: [],
+        });
+      }
+    });
+
+    if (toSave.length === 0) {
+      showToast?.(`⚠️ Aucun ajout : toutes ces fiches existent déjà dans votre deck (${duplicates.length} doublon(s)) !`, "warning");
+      return;
+    }
+
+    setExpressions(prev => [...toSave, ...prev]);
+    if (duplicates.length > 0) {
+      showToast?.(`💾 ${toSave.length} fiches sauvegardées (${duplicates.length} doublon(s) ignoré(s)) !`, "info");
+    } else {
+      showToast?.(`💾 ${toSave.length} fiches sauvegardées !`, "success");
+    }
 
     // Faire disparaître toutes les fiches de ce message pour empêcher tout ré-appui accidentel
     if (typeof msgIdx === "number") {
@@ -610,50 +510,73 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
     }
   };
 
-  // ── Analyze Text & Drop to Forge ───────────────────────────────────────────
-  const handleAIFromText = async () => {
-    if (!aiFromText.trim() || aiFromTextLoading) return;
-    setAiFromTextLoading(true);
-    try {
-      const raw = await callClaude(
-        `Extraire les concepts clés de ce texte sous forme de fiches flashcards au format JSON strict: {"cards":[{"front":"...","back":"...","example":"..."}]}`,
-        aiFromText
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      const cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
-      setBatchPreview(cards);
-      setShowBatchPreview(true);
-      showToast?.(`✨ ${cards.length} fiches extraites !`);
-    } catch {
-      showToast?.("Erreur analyse texte", "error");
-    }
-    setAiFromTextLoading(false);
-  };
 
-  const handleDropToForge = async (e) => {
-    e.preventDefault();
-    setDragOverForge(false);
-    const text = e.dataTransfer.getData("text");
-    if (!text?.trim()) return;
-    setDropForgeLoading(true);
-    try {
-      const raw = await callClaude(
-        `Transforme cet extrait en une fiche de révision claire en JSON: {"front":"...","back":"...","example":"..."}`,
-        text
-      );
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = safeParseJSON(clean);
-      setBatchPreview(p => [...p, { id: `drop_${Date.now()}`, front: parsed.front, back: parsed.back, example: parsed.example || "" }]);
-      setShowBatchPreview(true);
-      showToast?.(`✨ Concept "${parsed.front}" forgé !`);
-    } catch {
-      showToast?.("Erreur forgeage", "error");
-    }
-    setDropForgeLoading(false);
-  };
 
   // ── Vision / OCR Scan & Image Paste ───────────────────────────────────────
+  const handleVisionAI = useCallback(async (imgData) => {
+    const targetImage = imgData || scanImageUrl;
+    if (!targetImage) return;
+    setVisionScanLoading(true);
+    try {
+      const prompt = `Tu es un OCR intelligent et un concepteur pédagogique de flashcards.
+Analyse l'image fournie et extrais le contenu textuel sous forme de fiches JSON:
+[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":"Exemple d'application optionnel"}]
+RÈGLE ABSOLUE : Recopie fidèlement le texte lisible de l'image. Si le contenu n'est pas déjà en question/réponse, découpe-le logiquement en cartes claires.
+Renvoie UNIQUEMENT le tableau JSON.`;
+
+      let cards = [];
+      try {
+        const raw = await callClaude(
+          prompt,
+          "Extrais le texte et les concepts de cette image pour générer des fiches de révision.",
+          true,
+          targetImage
+        );
+        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
+        const parsed = safeParseJSON(clean);
+        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
+      } catch (visionErr) {
+        console.warn("[OCR] Vision IA distante indisponible, bascule sur OCR Tesseract local:", visionErr?.message);
+        showToast?.("Extraction locale via OCR Tesseract en cours...", "info");
+        const Tesseract = (await import("tesseract.js")).default || (await import("tesseract.js"));
+        const ocrResult = await Tesseract.recognize(targetImage, "fra+eng");
+        const ocrText = (ocrResult?.data?.text || "").trim();
+        if (!ocrText) throw new Error("Aucun texte lisible détecté par l'OCR.");
+
+        const textPrompt = `Transforme ce texte extrait d'un cours/document en fiches de révision claires en JSON:
+[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":""}]
+Texte extrait :
+${ocrText.slice(0, 3500)}`;
+
+        const raw = await callClaude(
+          "Tu es un créateur de fiches de révision. Réponds UNIQUEMENT avec un tableau JSON valide.",
+          textPrompt
+        );
+        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
+        const parsed = safeParseJSON(clean);
+        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
+      }
+
+      if (cards.length > 0) {
+        const formatted = cards.map((c, idx) => ({
+          id: `scan_${Date.now()}_${idx}`,
+          front: c.front || "",
+          back: c.back || "",
+          example: c.example || "",
+        }));
+        setVisionScanCards(formatted);
+        showToast?.(`📸 ${formatted.length} fiche(s) générée(s) par l'IA !`, "success");
+      } else {
+        showToast?.("Aucune fiche détectée dans l'image.", "warning");
+      }
+    } catch (err) {
+      console.error("[OCR] Erreur globale extraction:", err);
+      showToast?.(err?.message || "Erreur analyse OCR", "error");
+    } finally {
+      setVisionScanLoading(false);
+    }
+  }, [scanImageUrl, callClaude, showToast]);
+
   const processOcrImage = useCallback((fileOrBlob, source = "upload") => {
     if (!fileOrBlob) return;
     if (fileOrBlob.type && !fileOrBlob.type.startsWith("image/")) {
@@ -662,23 +585,26 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
     }
     setUploadLoading(true);
     const reader = new FileReader();
-    reader.onload = () => {
-      setAddForm(f => ({ ...f, imageUrl: reader.result }));
+    reader.onload = async () => {
+      const rawDataUrl = reader.result;
+      const dataUrl = await optimizeImageForOcr(rawDataUrl);
+      setScanImageUrl(dataUrl);
       setUploadLoading(false);
       if (source === "paste") {
-        showToast?.("📋 Image collée avec succès !", "success");
+        showToast?.("📋 Image collée — Création des fiches en cours...", "success");
       } else if (source === "drop") {
-        showToast?.("📥 Image déposée avec succès !", "success");
+        showToast?.("📥 Image déposée — Création des fiches en cours...", "success");
       } else {
-        showToast?.("📸 Image chargée avec succès !", "success");
+        showToast?.("📸 Image chargée — Création des fiches en cours...", "success");
       }
+      handleVisionAI(dataUrl);
     };
     reader.onerror = () => {
       setUploadLoading(false);
       showToast?.("Impossible de lire l'image.", "error");
     };
     reader.readAsDataURL(fileOrBlob);
-  }, [setAddForm, showToast]);
+  }, [showToast, handleVisionAI]);
 
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -750,93 +676,6 @@ Si la demande s'y prête, génère 1 à 3 fiches en JSON dans ton message sous l
     return () => window.removeEventListener("paste", handleWindowPaste);
   }, [addSubView, editingId, processOcrImage]);
 
-  const handleVisionAI = async () => {
-    if (!addForm.imageUrl) return;
-    setVisionScanLoading(true);
-    try {
-      const prompt = `Tu es un OCR intelligent et un concepteur pédagogique de flashcards.
-Analyse l'image fournie et extrais le contenu textuel sous forme de fiches JSON:
-[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":"Exemple d'application optionnel"}]
-RÈGLE ABSOLUE : Recopie fidèlement le texte lisible de l'image. Si le contenu n'est pas déjà en question/réponse, découpe-le logiquement en cartes claires.
-Renvoie UNIQUEMENT le tableau JSON.`;
-
-      let cards = [];
-      try {
-        const raw = await callClaude(
-          prompt,
-          "Extrais le texte et les concepts de cette image pour générer des fiches de révision.",
-          true,
-          addForm.imageUrl
-        );
-        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
-        const parsed = safeParseJSON(clean);
-        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
-      } catch (visionErr) {
-        console.warn("[OCR] Vision IA distante indisponible, bascule sur OCR Tesseract local:", visionErr?.message);
-        showToast?.("Extraction locale via OCR Tesseract en cours...", "info");
-        const Tesseract = (await import("tesseract.js")).default || (await import("tesseract.js"));
-        const ocrResult = await Tesseract.recognize(addForm.imageUrl, "fra+eng");
-        const ocrText = (ocrResult?.data?.text || "").trim();
-        if (!ocrText) throw new Error("Aucun texte lisible détecté par l'OCR.");
-
-        const textPrompt = `Transforme ce texte extrait d'un cours/document en fiches de révision claires en JSON:
-[{"front":"Concept / Terme / Question","back":"Définition / Explication / Réponse","example":""}]
-Texte extrait :
-${ocrText.slice(0, 3500)}`;
-
-        const raw = await callClaude(
-          "Tu es un créateur de fiches de révision. Réponds UNIQUEMENT avec un tableau JSON valide.",
-          textPrompt
-        );
-        const clean = (typeof raw === "string" ? raw : (raw?.text || "")).replace(/```json|```/g, "").trim();
-        const parsed = safeParseJSON(clean);
-        cards = Array.isArray(parsed) ? parsed : (parsed?.cards || []);
-      }
-
-      if (cards.length > 0) {
-        const formatted = cards.map((c, idx) => ({
-          id: `scan_${Date.now()}_${idx}`,
-          front: c.front || "",
-          back: c.back || "",
-          example: c.example || "",
-        }));
-        setBatchPreview(formatted);
-        setShowBatchPreview(true);
-        setVisionScanCards(formatted);
-        showToast?.(`📸 ${formatted.length} fiche(s) extraite(s) avec succès !`, "success");
-      } else {
-        showToast?.("Aucune fiche détectée dans l'image.", "warning");
-      }
-    } catch (err) {
-      console.error("[OCR] Erreur globale extraction:", err);
-      showToast?.(err?.message || "Erreur analyse OCR", "error");
-    }
-    setVisionScanLoading(false);
-  };
-
-  const confirmVisionScanCards = () => {
-    if (!visionScanCards.length) return;
-    const newExps = visionScanCards.map(c => ({
-      id: Date.now().toString() + Math.random(),
-      front: c.front,
-      back: c.back,
-      example: c.example || "",
-      category: addForm.category || categories[0]?.name || "Général",
-      level: 0,
-      nextReview: today(),
-      createdAt: today(),
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      reviewHistory: [],
-      imageUrl: addForm.imageUrl,
-    }));
-    setExpressions(prev => [...newExps, ...prev]);
-    showToast?.(`💾 ${newExps.length} fiches scan sauvegardées !`, "success");
-    setVisionScanCards([]);
-    setAddForm(f => ({ ...f, imageUrl: null }));
-  };
-
   // ── Voice Recording & Multimedia ───────────────────────────────────────────
   const startVoice = (field) => {
     if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
@@ -893,24 +732,39 @@ ${ocrText.slice(0, 3500)}`;
   const handleAdd = () => {
     if (!addForm.front.trim() || !addForm.back.trim()) {
       showToast?.("Le recto et le verso sont obligatoires.", "error");
-      return;
+      return false;
     }
     setForgeAnim(true);
     setTimeout(() => setForgeAnim(false), 500);
 
     if (editingId) {
-      setExpressions(prev => prev.map(e => e.id === editingId ? {
-        ...e,
+      const updatedCard = {
+        id: editingId,
         front: addForm.front.trim(),
         back: addForm.back.trim(),
         example: addForm.example?.trim() || "",
+        category: addForm.category || categories[0]?.name || "Général",
+        type: addForm.type || "qa",
+        imageUrl: addForm.imageUrl || null,
+      };
+      setExpressions(prev => prev.map(e => e.id === editingId ? {
+        ...e,
+        ...updatedCard,
         category: addForm.category || e.category,
         type: addForm.type || e.type || "qa",
         imageUrl: addForm.imageUrl || e.imageUrl || null,
       } : e));
+      onCardUpdated?.(updatedCard);
       showToast?.("💾 Fiche mise à jour !");
       cancelEdit?.();
+      return true;
     } else {
+      const dup = checkIsDuplicate(addForm.front);
+      if (dup) {
+        showToast?.(`⚠️ Doublon détecté : la fiche "${dup.card.front}" existe déjà. Création refusée !`, "error");
+        return false;
+      }
+
       const newCard = {
         id: Date.now().toString() + Math.random(),
         front: addForm.front.trim(),
@@ -932,6 +786,7 @@ ${ocrText.slice(0, 3500)}`;
       onCardCreated?.(newCard);
       setAddForm(f => ({ ...f, front: "", back: "", example: "", imageUrl: null }));
       setAiPrompt("");
+      return true;
     }
   };
 
@@ -982,7 +837,7 @@ ${ocrText.slice(0, 3500)}`;
             {addDoublonCheck?.duplicate && <div style={{ background: "color-mix(in srgb, var(--mm-primary) 10%, white)", padding: 8, borderRadius: 8, marginBottom: 12, color: "var(--mm-primary-deep)" }}>⚠️ Semble être un doublon de : <strong>{addDoublonCheck.existingConcept}</strong>. {addDoublonCheck.conseil}</div>}
             <textarea value={addForm.back} onChange={e => setAddForm(f => ({ ...f, back: e.target.value }))} style={{ width: "100%", padding: "24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme?.border}`, borderRadius: 20, color: theme?.text, minHeight: 160, fontSize: 18, lineHeight: 1.6, resize: "vertical", outline: "none" }} placeholder="L'explication claire et détaillée..." />
             <input value={addForm.example} onChange={e => setAddForm(f => ({ ...f, example: e.target.value }))} style={{ width: "100%", padding: "20px 24px", background: isDarkMode ? "#0A0F24" : "#FFFFFF", border: `1px solid ${theme?.border}`, borderRadius: 20, color: theme?.textMuted, fontSize: 16, fontStyle: "italic", outline: "none" }} placeholder="Mise en contexte ou exemple de code..." />
-            <button onClick={() => { handleAdd(); setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10 }}>⚡ Forger la fiche</button>
+            <button onClick={() => { const ok = handleAdd(); if (ok) setAddZenMode(false); }} className="btn-glow hov" disabled={!addForm.front || !addForm.back} style={{ width: "100%", padding: "20px", background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 20, fontWeight: 900, fontSize: 18, cursor: "pointer", opacity: addForm.front && addForm.back ? 1 : 0.5, marginTop: 10 }}>⚡ Forger la fiche</button>
           </div>
         </div>
       ) : (
@@ -1005,10 +860,7 @@ ${ocrText.slice(0, 3500)}`;
               {[
                 { id: "single", icon: "✦", label: "Fiche unique" },
                 { id: "chat", icon: "💬", label: "Copilot IA" },
-                { id: "batch", icon: "🚀", label: "Batch IA" },
-                { id: "text", icon: "📄", label: "Depuis un texte" },
                 { id: "file", icon: "📸", label: "Scan OCR" },
-                { id: "quickadd", icon: "⚡", label: "Quick Add" },
               ].map(t => (
                 <button key={t.id} onClick={() => { setAddSubView?.(t.id); }} className="hov" style={{ flex: 1, minWidth: 120, padding: "12px 16px", borderRadius: 16, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 800, background: addSubView === t.id ? "white" : "transparent", color: addSubView === t.id ? "var(--mm-primary)" : theme?.textMuted }}>
                   {t.icon} {t.label}
@@ -1017,20 +869,12 @@ ${ocrText.slice(0, 3500)}`;
             </div>
           )}
 
-          {/* ========= BATCH QUEUE ========= */}
-          {addBatchQueue.length > 0 && (
-            <div style={{ background: theme?.cardBg, borderRadius: 16, padding: "14px 20px", marginBottom: 20, border: `1px solid ${theme?.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div><span style={{ fontWeight: 800, color: theme?.text }}>{addBatchQueue.length} concepts en file</span> <span style={{ color: theme?.textMuted }}>{addBatchQueue.slice(0, 3).join(', ')}{addBatchQueue.length > 3 ? '...' : ''}</span></div>
-              <button onClick={processBatchQueue} disabled={addBatchRunning} className="hov btn-glow" style={{ background: "linear-gradient(135deg,var(--mm-primary),var(--mm-primary))", color: "white", border: "none", borderRadius: 10, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>{addBatchRunning ? "⏳" : "▶️ Traiter"}</button>
-            </div>
-          )}
-
           {/* ========= SINGLE / EDITION ========= */}
           {(addSubView === "single" || editingId) && (
             <div style={{ background: "linear-gradient(135deg, var(--mm-primary) 0%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32, boxShadow: "0 15px 35px rgba(123,95,245,0.2)" }}>
               <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>✨</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Auto-Génération IA</div><div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>L'IA s'adapte automatiquement au module sélectionné.</div></div></div>
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
+                <input className="forge-ai-input" value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && !aiLoading && handleAIGenerate()} style={{ flex: 1, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Interface vs Classe abstraite"...' />
                 <button className="hov btn-glow" onClick={handleAIGenerate} disabled={aiLoading} style={{ padding: "16px 28px", background: "white", color: "var(--mm-primary)", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiLoading ? "⏳" : "Générer"}</button>
               </div>
             </div>
@@ -1039,14 +883,9 @@ ${ocrText.slice(0, 3500)}`;
           {/* ========= CHAT COPILOT ========= */}
           {addSubView === "chat" && !editingId && (
             <div style={{ display: "flex", flexDirection: "column", height: "65vh", minHeight: 500, background: theme?.cardBg, borderRadius: 24, border: `1px solid ${theme?.border}`, overflow: "hidden", marginBottom: 32 }}>
-              <div style={{ padding: "20px 24px", background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary) 100%)", color: "white", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontWeight: 900, fontSize: 18 }}>💬 Copilot de Fiches</div>
-                  <div style={{ fontSize: 13, color: "color-mix(in srgb, var(--mm-primary) 4%, white)" }}>Discute pour forger ou ajuster tes fiches</div>
-                </div>
-                <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "8px 12px", background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", borderRadius: 12, color: "white", fontWeight: 700, outline: "none" }}>
-                  {catNames.map(c => <option key={c} value={c} style={{ color: "#000" }}>{c}</option>)}
-                </select>
+              <div style={{ padding: "20px 24px", background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary) 100%)", color: "white" }}>
+                <div style={{ fontWeight: 900, fontSize: 18 }}>💬 Copilot de Fiches</div>
+                <div style={{ fontSize: 13, color: "color-mix(in srgb, var(--mm-primary) 4%, white)", marginTop: 2 }}>Discute pour forger ou ajuster tes fiches</div>
               </div>
 
               <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1059,18 +898,45 @@ ${ocrText.slice(0, 3500)}`;
                     {msg.cards && msg.cards.length > 0 && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: "90%", marginTop: 4 }}>
                         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-                          {msg.cards.map((card, cidx) => (
-                            <div key={cidx} style={{ background: theme?.cardBg, borderRadius: 16, padding: "16px", border: `1px solid ${theme?.border}`, position: "relative" }}>
-                              <div style={{ fontSize: 10, color: theme?.highlight, fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>RECTO</div>
-                              <div style={{ fontWeight: 800, color: theme?.text, marginBottom: 12 }}>{card.front}</div>
-                              <div style={{ fontSize: 10, color: theme?.highlight, fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>VERSO</div>
-                              <div style={{ marginTop: 8, marginBottom: card.example ? 12 : 0 }}>
-                                <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
+                          {msg.cards.map((card, cidx) => {
+                            const dup = checkIsDuplicate(card.front);
+                            return (
+                              <div key={cidx} style={{ background: theme?.cardBg, borderRadius: 16, padding: "16px", border: `1px solid ${dup ? "rgba(239,68,68,0.4)" : theme?.border}`, position: "relative" }}>
+                                {dup && (
+                                  <div style={{ position: "absolute", top: 10, right: 10, background: "#EF4444", color: "white", padding: "3px 8px", borderRadius: 8, fontSize: 10, fontWeight: 900, boxShadow: "0 2px 8px rgba(239,68,68,0.3)" }}>
+                                    ⚠️ Doublon existant
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 10, color: dup ? "#EF4444" : theme?.highlight, fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>RECTO</div>
+                                <div style={{ fontWeight: 800, color: theme?.text, marginBottom: 12 }}>{card.front}</div>
+                                <div style={{ fontSize: 10, color: theme?.highlight, fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>VERSO</div>
+                                <div style={{ marginTop: 8, marginBottom: card.example ? 12 : 0 }}>
+                                  <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
+                                </div>
+                                {card.example && <div style={{ padding: "8px 12px", background: theme?.inputBg, borderRadius: 8, fontSize: 12, color: theme?.text, fontStyle: "italic", borderLeft: `3px solid ${theme?.highlight}`, marginTop: 12 }}>{card.example}</div>}
+                                <button
+                                  onClick={() => saveChatCard(card, idx, cidx)}
+                                  disabled={!!dup}
+                                  className="hov"
+                                  style={{
+                                    marginTop: 12,
+                                    width: "100%",
+                                    padding: "8px",
+                                    background: dup ? "rgba(239,68,68,0.12)" : theme?.inputBg,
+                                    color: dup ? "#EF4444" : theme?.highlight,
+                                    border: `1px solid ${dup ? "rgba(239,68,68,0.3)" : colorMix(theme?.highlight, 25)}`,
+                                    borderRadius: 10,
+                                    fontWeight: 700,
+                                    cursor: dup ? "not-allowed" : "pointer",
+                                    fontSize: 12,
+                                    opacity: dup ? 0.75 : 1
+                                  }}
+                                >
+                                  {dup ? "⚠️ Déjà dans vos fiches" : "💾 Sauver"}
+                                </button>
                               </div>
-                              {card.example && <div style={{ padding: "8px 12px", background: theme?.inputBg, borderRadius: 8, fontSize: 12, color: theme?.text, fontStyle: "italic", borderLeft: `3px solid ${theme?.highlight}`, marginTop: 12 }}>{card.example}</div>}
-                              <button onClick={() => saveChatCard(card, idx, cidx)} className="hov" style={{ marginTop: 12, width: "100%", padding: "8px", background: theme?.inputBg, color: theme?.highlight, border: `1px solid ${colorMix(theme?.highlight, 25)}`, borderRadius: 10, fontWeight: 700, cursor: "pointer", fontSize: 12 }}>💾 Sauver</button>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                         <button onClick={() => saveAllChatCards(msg.cards, idx)} className="hov btn-glow" style={{ alignSelf: "flex-start", padding: "10px 20px", background: "linear-gradient(135deg, #22C55E, #16A34A)", color: "white", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer", fontSize: 13 }}>💾 Sauver cette génération ({msg.cards.length})</button>
                       </div>
@@ -1081,53 +947,99 @@ ${ocrText.slice(0, 3500)}`;
                 <div ref={chatToCardEndRef} />
               </div>
 
-              <div style={{ padding: "16px 24px", background: theme?.cardBg, borderTop: `1px solid ${theme?.border}`, display: "flex", gap: 12 }}>
-                <input value={chatToCardInput} onChange={e => setChatToCardInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && handleSendChatToCard()} placeholder="Demande tes fiches à l'IA..." style={{ flex: 1, padding: "14px 20px", background: theme?.inputBg, border: `1px solid ${theme?.border}`, borderRadius: 16, color: theme?.text, fontSize: 15, outline: "none" }} />
-                <button onClick={handleSendChatToCard} disabled={chatToCardLoading || !chatToCardInput.trim()} className="btn-glow hov" style={{ padding: "14px 24px", background: "linear-gradient(135deg, var(--mm-primary), var(--mm-primary))", color: "white", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer", opacity: chatToCardLoading || !chatToCardInput.trim() ? 0.5 : 1 }}>{chatToCardLoading ? "⏳" : "Envoyer"}</button>
-              </div>
-            </div>
-          )}
+              {/* Conteneur de saisie unifié style Copilot / Claude */}
+              <div style={{ padding: "16px 20px 20px 20px", background: theme?.cardBg, borderTop: `1px solid ${theme?.border}` }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    background: isDarkMode ? "rgba(15, 23, 42, 0.65)" : "rgba(255, 255, 255, 0.8)",
+                    backdropFilter: "blur(16px)",
+                    WebkitBackdropFilter: "blur(16px)",
+                    borderRadius: 20,
+                    border: `1.5px solid ${chatInputFocused ? (theme?.highlight || "var(--mm-primary)") : (isDarkMode ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)")}`,
+                    boxShadow: chatInputFocused
+                      ? `0 0 0 3px ${colorMix(theme?.highlight || "var(--mm-primary)", 20)}, 0 12px 28px rgba(0,0,0,0.25)`
+                      : (isDarkMode ? "0 4px 18px rgba(0,0,0,0.3)" : "0 4px 18px rgba(0,0,0,0.04)"),
+                    transition: "all 0.25s cubic-bezier(0.16, 1, 0.3, 1)",
+                    padding: "12px 14px 10px 16px",
+                    position: "relative"
+                  }}
+                >
+                  <textarea
+                    className="copilot-chat-textarea"
+                    value={chatToCardInput}
+                    onChange={e => setChatToCardInput(e.target.value)}
+                    onFocus={() => setChatInputFocused(true)}
+                    onBlur={() => setChatInputFocused(false)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendChatToCard();
+                      }
+                    }}
+                    placeholder="Pose une question, colle un extrait de cours ou demande tes fiches..."
+                    rows={3}
+                    style={{
+                      width: "100%",
+                      minHeight: 64,
+                      maxHeight: 200,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      boxShadow: "none",
+                      color: theme?.text,
+                      fontSize: 14.5,
+                      lineHeight: 1.55,
+                      resize: "none",
+                      fontFamily: "inherit",
+                      padding: "2px 0 8px 0"
+                    }}
+                  />
 
-          {/* ========= BATCH CANVAS ========= */}
-          {addSubView === "batch" && !editingId && (
-            <div style={{ background: "linear-gradient(135deg, #1A0800 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", marginBottom: 32 }}>
-              <div style={{ display: "flex", gap: 14, alignItems: "center" }}><span style={{ fontSize: 32 }}>🚀</span><div><div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Génération en Rafale</div><div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>L'IA génère plusieurs fiches d'un coup.</div></div></div>
-              <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
-                <select value={addForm.category} onChange={e => setAddForm(f => ({ ...f, category: e.target.value }))} style={{ padding: "14px 16px", background: "var(--mm-primary-deep)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>
-                  {catNames.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <input value={aiPrompt} onChange={(e) => setAiPrompt(e.target.value)} style={{ flex: 1, minWidth: 200, padding: "16px 20px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white" }} placeholder='Ex: "Annotations Spring Boot"...' />
-                <select value={aiBatchCount} onChange={e => setAiBatchCount(+e.target.value)} style={{ padding: "14px 16px", background: "var(--mm-primary-deep)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 14, color: "white", fontWeight: 700 }}>{[3, 5, 7, 10].map(n => <option key={n} value={n}>{n} fiches</option>)}</select>
-                <button className="hov btn-glow" onClick={handleAIBatchGenerate} disabled={aiBatchLoading || !aiPrompt.trim()} style={{ padding: "16px 28px", background: "white", color: "var(--mm-primary)", border: "none", borderRadius: 16, fontWeight: 800, cursor: "pointer" }}>{aiBatchLoading ? "⏳" : `🚀 ×${aiBatchCount}`}</button>
-              </div>
-
-              {renderBatchPreview()}
-            </div>
-          )}
-
-          {/* ========= FROM TEXT ========= */}
-          {addSubView === "text" && !editingId && (
-            <div style={{ marginBottom: 32 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))", gap: 20 }}>
-                <div style={{ background: "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary-deep) 50%, var(--mm-primary) 100%)", borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column" }}>
-                  <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
-                    <span style={{ fontSize: 32 }}>📄</span>
-                    <div>
-                      <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Source & Forge</div>
-                      <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Colle un texte ou cours complet</div>
+                  {/* Footer intégré dans la barre de saisie */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 8, borderTop: isDarkMode ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(0,0,0,0.04)", marginTop: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, color: theme?.textMuted, fontSize: 11, fontWeight: 600 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, background: isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)", padding: "3px 7px", borderRadius: 6, border: `1px solid ${isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"}` }}>
+                        <kbd style={{ fontFamily: "inherit", fontWeight: 700 }}>↵ Entrée</kbd> envoyer
+                      </span>
+                      <span style={{ opacity: 0.65 }}>·</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, opacity: 0.8 }}>
+                        <kbd style={{ fontFamily: "inherit", fontWeight: 700 }}>⇧ + ↵</kbd> saut de ligne
+                      </span>
                     </div>
-                  </div>
-                  <textarea value={aiFromText} onChange={e => setAiFromText(e.target.value)} style={{ width: "100%", padding: "16px", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 16, fontSize: 15, color: "white", minHeight: 200, resize: "vertical" }} placeholder="Colle ton cours complet ici..." />
-                  <button onClick={handleAIFromText} disabled={aiFromTextLoading || !aiFromText.trim()} style={{ marginTop: 12, padding: "12px 20px", background: "white", color: "var(--mm-primary-deep)", border: "none", borderRadius: 12, fontWeight: 800, cursor: "pointer" }}>{aiFromTextLoading ? "⏳" : "Tout analyser"}</button>
-                </div>
 
-                <div onDragOver={(e) => { e.preventDefault(); setDragOverForge(true); }} onDragLeave={() => setDragOverForge(false)} onDrop={handleDropToForge} style={{ background: dragOverForge ? `${colorMix(theme?.highlight, 13)}` : theme?.cardBg, border: `2px dashed ${theme?.border}`, borderRadius: 24, padding: "28px 32px", display: "flex", flexDirection: "column", minHeight: 280 }}>
-                  <div style={{ fontWeight: 900, color: theme?.text, fontSize: 18, marginBottom: 8 }}>⚒️ La Forge</div>
-                  <p style={{ color: theme?.textMuted, fontSize: 13 }}>Glisse un extrait de texte ici pour créer une fiche instantanément.</p>
-                  {dropForgeLoading && <div style={{ color: theme?.highlight, fontWeight: 700 }}>⏳ Forgeage en cours...</div>}
+                    <button
+                      onClick={handleSendChatToCard}
+                      disabled={chatToCardLoading || !chatToCardInput.trim()}
+                      className="hov"
+                      style={{
+                        padding: "8px 18px",
+                        background: chatToCardInput.trim()
+                          ? "linear-gradient(135deg, var(--mm-primary-deep) 0%, var(--mm-primary) 100%)"
+                          : (isDarkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)"),
+                        color: chatToCardInput.trim() ? "white" : theme?.textMuted,
+                        border: "none",
+                        borderRadius: 12,
+                        fontWeight: 800,
+                        fontSize: 13,
+                        cursor: chatToCardLoading || !chatToCardInput.trim() ? "not-allowed" : "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 6,
+                        boxShadow: chatToCardInput.trim() ? "0 4px 14px color-mix(in srgb, var(--mm-primary) 40%, transparent)" : "none",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      {chatToCardLoading ? (
+                        <><span>⏳</span><span>Génération...</span></>
+                      ) : (
+                        <><span>Envoyer</span><span style={{ fontSize: 14 }}>↑</span></>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
-              {renderBatchPreview()}
             </div>
           )}
 
@@ -1137,11 +1049,12 @@ ${ocrText.slice(0, 3500)}`;
               <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
                 <span style={{ fontSize: 32 }}>📸</span>
                 <div>
-                  <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Scan → Fiches</div>
-                  <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Prends en photo tes notes de cours</div>
+                  <div style={{ fontWeight: 800, color: "white", fontSize: 16 }}>Scan OCR → Fiches IA Automatiques</div>
+                  <div style={{ color: "color-mix(in srgb, var(--mm-primary) 4%, white)", fontSize: 13 }}>Colle (Ctrl+V) ou dépose une image : l'IA génère immédiatement tes fiches de révision</div>
                 </div>
               </div>
-              {!addForm.imageUrl ? (
+
+              {!scanImageUrl ? (
                 <div
                   onDragOver={(e) => { e.preventDefault(); setOcrDragOver(true); }}
                   onDragLeave={() => setOcrDragOver(false)}
@@ -1207,132 +1120,194 @@ ${ocrText.slice(0, 3500)}`;
                     {uploadLoading ? (
                       <span>⏳ Chargement de l'image...</span>
                     ) : (
-                      <span>ou faites un <kbd style={{ background: "rgba(255,255,255,0.25)", padding: "3px 8px", borderRadius: 6, fontWeight: 800, color: "white" }}>Ctrl + V</kbd> n'importe où, ou glissez-déposez une image ici</span>
+                      <span>ou fais un <kbd style={{ background: "rgba(255,255,255,0.25)", padding: "3px 8px", borderRadius: 6, fontWeight: 800, color: "white" }}>Ctrl + V</kbd> n'importe où, ou glisse-dépose une image ici</span>
                     )}
                   </div>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                  <div style={{ position: "relative", display: "inline-block", alignSelf: "flex-start" }}>
-                    <img
-                      src={addForm.imageUrl}
-                      alt="aperçu scan"
-                      style={{
-                        maxHeight: 260,
-                        maxWidth: "100%",
-                        borderRadius: 14,
-                        boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-                        border: "2px solid rgba(255,255,255,0.3)",
-                        objectFit: "contain",
-                        background: "#000"
-                      }}
-                    />
-                    <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.65)", backdropFilter: "blur(4px)", padding: "4px 10px", borderRadius: 8, color: "white", fontSize: 11, fontWeight: 700 }}>
-                      📸 Image prête
+                  {/* Aperçu image et boutons d'actions */}
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", background: "rgba(0,0,0,0.2)", padding: 12, borderRadius: 16, border: "1px solid rgba(255,255,255,0.15)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <img
+                        src={scanImageUrl}
+                        alt="aperçu scan"
+                        style={{
+                          height: 60,
+                          width: 80,
+                          borderRadius: 8,
+                          objectFit: "cover",
+                          border: "1px solid rgba(255,255,255,0.3)",
+                          background: "#000"
+                        }}
+                      />
+                      <div>
+                        <div style={{ color: "white", fontWeight: 800, fontSize: 13 }}>
+                          {visionScanLoading ? "⏳ Analyse IA en cours..." : "📸 Image analysée"}
+                        </div>
+                        <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>
+                          {visionScanCards.length > 0 ? `${visionScanCards.length} fiche(s) prête(s)` : "Extrait les concepts sous forme de fiches"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button
+                        type="button"
+                        onClick={handlePasteClipboard}
+                        style={{
+                          padding: "8px 14px",
+                          background: "rgba(255,255,255,0.18)",
+                          color: "white",
+                          border: "1px solid rgba(255,255,255,0.3)",
+                          borderRadius: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontSize: 12
+                        }}
+                      >
+                        📋 Coller une autre
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setScanImageUrl(null);
+                          setVisionScanCards([]);
+                        }}
+                        style={{
+                          padding: "8px 14px",
+                          background: "rgba(239,68,68,0.25)",
+                          border: "1px solid rgba(239,68,68,0.4)",
+                          color: "#FCA5A5",
+                          borderRadius: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          fontSize: 12
+                        }}
+                      >
+                        ✕ Réinitialiser
+                      </button>
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-                    <button
-                      onClick={handleVisionAI}
-                      disabled={visionScanLoading}
-                      style={{
-                        padding: "12px 24px",
-                        background: "white",
-                        color: "var(--mm-primary-deep)",
-                        border: "none",
-                        borderRadius: 12,
-                        fontWeight: 900,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 8,
-                        boxShadow: "0 4px 14px rgba(0,0,0,0.18)"
-                      }}
-                    >
-                      {visionScanLoading ? "⏳ Extraction en cours..." : "📸 Extraire les fiches"}
-                    </button>
+                  {/* État de chargement IA */}
+                  {visionScanLoading && (
+                    <div style={{ padding: "24px", background: "rgba(255,255,255,0.1)", borderRadius: 16, textAlign: "center", border: "1px solid rgba(255,255,255,0.2)", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {[0, 1, 2].map(i => (
+                          <div key={i} style={{ width: 10, height: 10, borderRadius: "50%", background: "white", animation: `pulse 1.2s ${i * 0.2}s infinite` }} />
+                        ))}
+                      </div>
+                      <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>
+                        ✨ L'IA analyse votre image et génère les fiches...
+                      </div>
+                      <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 12 }}>
+                        Reconnaissance de texte et formulation automatique Q/R
+                      </div>
+                    </div>
+                  )}
 
-                    <button
-                      type="button"
-                      onClick={handlePasteClipboard}
-                      style={{
-                        padding: "12px 18px",
-                        background: "rgba(255,255,255,0.2)",
-                        color: "white",
-                        border: "1px solid rgba(255,255,255,0.3)",
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6
-                      }}
-                    >
-                      📋 Coller une autre image
-                    </button>
+                  {/* Fiches extraites (style Copilot) */}
+                  {!visionScanLoading && visionScanCards.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 8 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                        <div style={{ color: "white", fontWeight: 900, fontSize: 15 }}>
+                          ✨ {visionScanCards.length} Fiche(s) générée(s) depuis l'image
+                        </div>
+                        <button
+                          onClick={saveAllVisionCards}
+                          className="btn-glow hov"
+                          style={{
+                            padding: "10px 20px",
+                            background: "linear-gradient(135deg, #22C55E, #16A34A)",
+                            color: "white",
+                            border: "none",
+                            borderRadius: 12,
+                            fontWeight: 800,
+                            cursor: "pointer",
+                            fontSize: 13,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6
+                          }}
+                        >
+                          💾 Sauver toutes les fiches ({visionScanCards.length})
+                        </button>
+                      </div>
 
-                    <label
-                      htmlFor="file-upload-ocr-replace"
-                      style={{
-                        padding: "12px 18px",
-                        background: "rgba(255,255,255,0.2)",
-                        color: "white",
-                        border: "1px solid rgba(255,255,255,0.3)",
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6
-                      }}
-                    >
-                      📤 Choisir une autre photo
-                    </label>
-                    <input type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} id="file-upload-ocr-replace" />
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 14 }}>
+                        {visionScanCards.map((card, cidx) => {
+                          const dup = checkIsDuplicate(card.front);
+                          return (
+                            <div key={card.id || cidx} style={{ background: theme?.cardBg || "#1E293B", borderRadius: 16, padding: "16px", border: `1px solid ${dup ? "rgba(239,68,68,0.4)" : (theme?.border || "rgba(255,255,255,0.1)")}`, position: "relative" }}>
+                              {dup && (
+                                <div style={{ position: "absolute", top: 10, right: 10, background: "#EF4444", color: "white", padding: "3px 8px", borderRadius: 8, fontSize: 10, fontWeight: 900, boxShadow: "0 2px 8px rgba(239,68,68,0.3)" }}>
+                                  ⚠️ Doublon existant
+                                </div>
+                              )}
+                              <div style={{ fontSize: 10, color: dup ? "#EF4444" : (theme?.highlight || "var(--mm-primary)"), fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>RECTO</div>
+                              <div style={{ fontWeight: 800, color: theme?.text || "#fff", marginBottom: 12 }}>{card.front}</div>
+                              <div style={{ fontSize: 10, color: theme?.highlight || "var(--mm-primary)", fontWeight: 900, marginBottom: 4, letterSpacing: 1 }}>VERSO</div>
+                              <div style={{ marginTop: 8, marginBottom: card.example ? 12 : 0 }}>
+                                <GodTierContent text={card.back} theme={theme} isDarkMode={isDarkMode} />
+                              </div>
+                              {card.example && (
+                                <div style={{ padding: "8px 12px", background: theme?.inputBg || "rgba(255,255,255,0.05)", borderRadius: 8, fontSize: 12, color: theme?.text || "#fff", fontStyle: "italic", borderLeft: `3px solid ${theme?.highlight || "var(--mm-primary)"}`, marginTop: 12 }}>
+                                  {card.example}
+                                </div>
+                              )}
+                              <button
+                                onClick={() => saveVisionCard(card, cidx)}
+                                disabled={!!dup}
+                                className="hov"
+                                style={{
+                                  marginTop: 14,
+                                  width: "100%",
+                                  padding: "9px",
+                                  background: dup ? "rgba(239,68,68,0.15)" : (theme?.inputBg || "rgba(255,255,255,0.08)"),
+                                  color: dup ? "#EF4444" : (theme?.highlight || "var(--mm-primary)"),
+                                  border: `1px solid ${dup ? "rgba(239,68,68,0.3)" : colorMix(theme?.highlight || "var(--mm-primary)", 25)}`,
+                                  borderRadius: 10,
+                                  fontWeight: 800,
+                                  cursor: dup ? "not-allowed" : "pointer",
+                                  fontSize: 12,
+                                  opacity: dup ? 0.75 : 1
+                                }}
+                              >
+                                {dup ? "⚠️ Déjà dans vos fiches" : "💾 Sauver cette fiche"}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
-                    <button
-                      onClick={() => setAddForm(f => ({ ...f, imageUrl: null }))}
-                      style={{
-                        padding: "12px 16px",
-                        background: "rgba(239,68,68,0.25)",
-                        border: "1px solid rgba(239,68,68,0.4)",
-                        color: "#FCA5A5",
-                        borderRadius: 12,
-                        fontWeight: 700,
-                        cursor: "pointer"
-                      }}
-                    >
-                      ✕ Retirer
-                    </button>
-                  </div>
+                  {/* Bouton de relance si aucune fiche générée */}
+                  {!visionScanLoading && visionScanCards.length === 0 && (
+                    <div style={{ textAlign: "center", padding: "16px", background: "rgba(255,255,255,0.08)", borderRadius: 12 }}>
+                      <button
+                        onClick={() => handleVisionAI(scanImageUrl)}
+                        style={{
+                          padding: "10px 20px",
+                          background: "white",
+                          color: "var(--mm-primary-deep)",
+                          border: "none",
+                          borderRadius: 10,
+                          fontWeight: 800,
+                          cursor: "pointer"
+                        }}
+                      >
+                        🔄 Relancer l'analyse IA
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
-              {renderBatchPreview()}
             </div>
           )}
 
-          {/* ========= QUICK ADD ========= */}
-          {addSubView === "quickadd" && !editingId && (
-            <div style={{ marginBottom: 32 }}>
-              <SmartPasteBox
-                theme={theme}
-                isDarkMode={isDarkMode}
-                callClaude={callClaude}
-                onGenerate={async ({ raw, kind, style }) => {
-                  const cards = await generateCardsFromSmartPaste({
-                    raw, kind, style, callClaude,
-                    category: addForm.category || "Quick Add",
-                  });
-                  if (!cards.length) { showToast?.("L'IA n'a rien retourné.", "error"); return; }
-                  setBatchPreview(cards);
-                  setShowBatchPreview(true);
-                  showToast?.(`✨ ${cards.length} fiches générées`, "success");
-                }}
-              />
-              {renderBatchPreview()}
-            </div>
-          )}
+
 
           {/* FORMULAIRE PRINCIPAL */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(340px, 100%), 1fr))", gap: 20, alignItems: "start" }} className="add-form-grid">

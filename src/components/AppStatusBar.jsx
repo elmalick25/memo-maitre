@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import AgentPanel from "./AgentPanel";
 
 export default function AppStatusBar({
@@ -42,6 +42,7 @@ export default function AppStatusBar({
   zenFocusMode = false,
   setZenFocusMode = () => {},
 }) {
+  const [isAgentBtnHovered, setIsAgentBtnHovered] = useState(false);
   return (
     <footer
       className="hide-mobile"
@@ -308,12 +309,68 @@ export default function AppStatusBar({
               ask={agentAsk}
             />
             <button
-              onClick={() => setShowAgentPanel((p) => !p)}
+              onClick={() => {
+                setShowAgentPanel((p) => !p);
+                setIsAgentBtnHovered(false);
+              }}
+              onMouseEnter={() => setIsAgentBtnHovered(true)}
+              onMouseLeave={() => setIsAgentBtnHovered(false)}
               className="hov robot-assistant-btn"
-              style={{ background: "none", border: "none", color: showAgentPanel ? (theme?.highlight || "var(--mm-primary)") : "inherit", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
-              title="Assistant IA (⌘J)"
+              style={{
+                position: "relative",
+                background: "none", border: "none",
+                color: showAgentPanel ? (theme?.highlight || "var(--mm-primary)") : "inherit",
+                cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6, fontSize: 13,
+              }}
+              title="Parler à Maodo (⌘J)"
+              aria-label="Parler à Maodo"
             >
               <span className="robot-assistant-icon">🤖</span>
+
+              {/* Message au survol : Parler à Maodo (quand l'assistant n'est pas ouvert) */}
+              {!showAgentPanel && isAgentBtnHovered && (
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: "calc(100% + 10px)",
+                    left: "50%",
+                    transform: "translateX(-50%)",
+                    background: isDarkMode ? "#1B1E32" : "#0F172A",
+                    color: "#FFFFFF",
+                    padding: "6px 12px",
+                    borderRadius: 9,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    letterSpacing: "-0.2px",
+                    whiteSpace: "nowrap",
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                    border: isDarkMode ? "1px solid rgba(255,255,255,0.16)" : "1px solid rgba(255,255,255,0.22)",
+                    pointerEvents: "none",
+                    zIndex: 99999,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    fontFamily: "'Outfit', sans-serif",
+                    animation: "fadeIn 0.15s ease",
+                  }}
+                >
+                  <span style={{ fontSize: 13 }}>💬</span>
+                  <span>Parler à Maodo</span>
+                  <div
+                    style={{
+                      position: "absolute",
+                      top: "100%",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                      width: 0,
+                      height: 0,
+                      borderLeft: "5px solid transparent",
+                      borderRight: "5px solid transparent",
+                      borderTop: `5px solid ${isDarkMode ? "#1B1E32" : "#0F172A"}`,
+                    }}
+                  />
+                </div>
+              )}
             </button>
           </div>
 
