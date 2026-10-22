@@ -74,6 +74,27 @@ body.in-review-session [class*="speed-dial"] {
   }
 }
 
+@keyframes speedDialPop {
+  from { opacity: 0; transform: translate(-50%, 50%) scale(0.2); }
+  to   { opacity: 1; transform: translate(-50%, 50%) scale(1); }
+}
+
+/* FSRS 4-button mobile bottom dock (fixed, immune to responsive overrides) */
+.review-btns-dock {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.review-btns-dock .review-btn {
+  min-height: 52px !important;
+  padding: 8px 2px !important;
+  font-size: 11px !important;
+  border-radius: 14px !important;
+}
+
 /* Tabs scroll containers */
 .tabs-scroll,
 .academy-tabs,

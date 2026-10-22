@@ -341,16 +341,6 @@ export default function MobileSpeedDial({
         </span>
       </div>
 
-      <style>{`
-        @keyframes speedDialPop {
-          from { opacity: 0; transform: translate(-50%, 50%) scale(0.2); }
-          to   { opacity: 1; transform: translate(-50%, 50%) scale(1); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .speed-dial-fan button,
-          .speed-dial-trigger { animation: none !important; transition: none !important; }
-        }
-      `}</style>
     </>
   );
 }

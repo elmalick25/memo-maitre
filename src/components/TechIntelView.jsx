@@ -1650,15 +1650,19 @@ export default function TechIntelView({
   const fullArticleMapRef = useRef(fullArticleMap);
   useEffect(() => { fullArticleMapRef.current = fullArticleMap; }, [fullArticleMap]);
 
-  const saveFullArticle = useCallback((id, text) => {
+  const saveFullArticle = useCallback((id, text, silent = false) => {
     if (!id || !text) return;
-    setFullArticleMap(prev => {
-      const { [id]: _old, ...rest } = prev;
-      const next = capMap({ ...rest, [id]: text }, 300);
-      const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
-      saveArticleBodies(allBodies).catch(() => {});
-      return next;
-    });
+    fullArticleMapRef.current[id] = text;
+    if (!silent) {
+      setFullArticleMap(prev => {
+        if (prev[id] === text) return prev;
+        const { [id]: _old, ...rest } = prev;
+        const next = capMap({ ...rest, [id]: text }, 300);
+        return next;
+      });
+    }
+    const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
+    saveArticleBodies(allBodies).catch(() => {});
   }, []);
 
   // ─── Corps d'article francisé et COMPLET (persistant en IndexedDB) ───
@@ -1666,16 +1670,19 @@ export default function TechIntelView({
   const bodyFrMapRef = useRef(bodyFrMap);
   useEffect(() => { bodyFrMapRef.current = bodyFrMap; }, [bodyFrMap]);
 
-  const saveFrenchBody = useCallback((id, text) => {
+  const saveFrenchBody = useCallback((id, text, silent = false) => {
     if (!id || !text) return;
-    setBodyFrMap(prev => {
-      if (prev[id] === text) return prev;
-      const { [id]: _old, ...rest } = prev;
-      const next = capMap({ ...rest, [id]: text }, 300);
-      const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
-      saveArticleBodies(allBodies).catch(() => {});
-      return next;
-    });
+    bodyFrMapRef.current[id] = text;
+    if (!silent) {
+      setBodyFrMap(prev => {
+        if (prev[id] === text) return prev;
+        const { [id]: _old, ...rest } = prev;
+        const next = capMap({ ...rest, [id]: text }, 300);
+        return next;
+      });
+    }
+    const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current, [id]: text };
+    saveArticleBodies(allBodies).catch(() => {});
   }, []);
   const [readIds, setReadIds] = useState(() => {
     try { return new Set(JSON.parse(safeStorage.get('tech_intel_read_ids_v1') || '[]')); }
@@ -3012,6 +3019,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
   const ensureFrenchArticle = useCallback((item, force = false, options = {}) => {
     if (!item?.id) return Promise.resolve();
     const allowAi = options?.allowAi ?? true;
+    const silent = Boolean(options?.silent);
     const existing = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || "";
     const isAiFallback = aiWrittenIds.has(item.id);
     if (!force && !isAiFallback && existing && !isTeaserSnippet(existing, item, { allowShort: true }) && existing.length >= 450 && looksFrench(existing)) return Promise.resolve(existing);
@@ -3023,8 +3031,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           const cachedBodies = await loadArticleBodies();
           const fromDb = cachedBodies?.[item.id];
           if (fromDb && fromDb.length >= 80 && looksFrench(fromDb) && !isTeaserSnippet(fromDb, item, { allowShort: true })) {
-            saveFullArticle(item.id, fromDb);
-            saveFrenchBody(item.id, fromDb);
+            saveFullArticle(item.id, fromDb, silent);
+            saveFrenchBody(item.id, fromDb, silent);
             return fromDb;
           }
         } catch {}
@@ -3046,7 +3054,7 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         if (typeof navigator !== "undefined" && navigator.onLine === false) return;
         if (!source && item.fullContent && item.fullContent.length >= 450 && !isTeaserSnippet(item.fullContent, item)) {
           source = item.fullContent;
-          saveFullArticle(item.id, source);
+          saveFullArticle(item.id, source, silent);
         }
         if (!source && item.url) {
           let tId;
@@ -3059,13 +3067,15 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           const cleaned = paras.join("\n\n").trim();
           if (cleaned && !isTeaserSnippet(cleaned, item) && cleaned.length >= 350) {
             source = cleaned;
-            saveFullArticle(item.id, cleaned);
-            setAiWrittenIds(prev => {
-              if (!prev.has(item.id)) return prev;
-              const next = new Set(prev);
-              next.delete(item.id);
-              return next;
-            });
+            saveFullArticle(item.id, cleaned, silent);
+            if (!silent) {
+              setAiWrittenIds(prev => {
+                if (!prev.has(item.id)) return prev;
+                const next = new Set(prev);
+                next.delete(item.id);
+                return next;
+              });
+            }
           }
         }
         // 2bis. Autres sites qui couvrent la même actu : on reprend leur texte réel avant toute IA.
@@ -3087,18 +3097,20 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             }
             if (text) {
               source = text;
-              setAiWrittenIds(prev => {
-                if (!prev.has(item.id)) return prev;
-                const next = new Set(prev);
-                next.delete(item.id);
-                return next;
-              });
+              if (!silent) {
+                setAiWrittenIds(prev => {
+                  if (!prev.has(item.id)) return prev;
+                  const next = new Set(prev);
+                  next.delete(item.id);
+                  return next;
+                });
+              }
               break;
             }
             const d = cleanEditorialText(other.descriptionFr || other.description || "");
             if (d) relatedSnippets.push(`${other.sourceName || other.source} : ${d}`);
           }
-          if (source) saveFullArticle(item.id, source);
+          if (source) saveFullArticle(item.id, source, silent);
         }
 
         // 3. Dernier recours : l'IA, uniquement si autorisée (clic sur « Complet », pas en tâche de fond aveugle)
@@ -3120,9 +3132,9 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             const aiText = typeof aiContext === 'string' ? aiContext : (aiContext?.text || '');
             if (aiText && aiText.trim().length >= 200) {
               source = aiText.trim();
-              saveFullArticle(item.id, source);
-              saveFrenchBody(item.id, cleanEditorialText(source));
-              setAiWrittenIds(prev => new Set(prev).add(item.id));
+              saveFullArticle(item.id, source, silent);
+              saveFrenchBody(item.id, cleanEditorialText(source), silent);
+              if (!silent) setAiWrittenIds(prev => new Set(prev).add(item.id));
             }
           } catch {}
         }
@@ -3152,8 +3164,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         if (!frenchBody) frenchBody = source;
         const cleanBody = cleanEditorialText(frenchBody.trim());
         if (cleanBody && cleanBody.length >= 80) {
-          saveFullArticle(item.id, cleanBody);
-          saveFrenchBody(item.id, cleanBody);
+          saveFullArticle(item.id, cleanBody, silent);
+          saveFrenchBody(item.id, cleanBody, silent);
         }
       })(),
       new Promise(r => setTimeout(r, 120000))
@@ -3217,8 +3229,8 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
             const item = list[idx++];
             if (!item) break;
             try {
-              // En arrière-plan : extraction du texte réel uniquement, sans IA pour préserver les quotas
-              await ensureFrenchArticle(item, false, { allowAi: false });
+              // En arrière-plan : extraction silencieuse du texte réel (sans IA, sans re-render intempestif)
+              await ensureFrenchArticle(item, false, { allowAi: false, silent: true });
               const cur = bodyFrMapRef.current[item.id] || fullArticleMapRef.current[item.id] || "";
               const n = (bgPrefetchTriesRef.current.get(item.id) || 0) + 1;
               bgPrefetchTriesRef.current.set(item.id, n);
@@ -3235,6 +3247,9 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
         try {
           const allBodies = { ...fullArticleMapRef.current, ...bodyFrMapRef.current };
           await saveArticleBodies(allBodies);
+          // 🚀 Flush unique vers l'état React à la toute fin du préchargement
+          setFullArticleMap(prev => ({ ...prev, ...fullArticleMapRef.current }));
+          setBodyFrMap(prev => ({ ...prev, ...bodyFrMapRef.current }));
         } catch {}
       })();
       bgPrefetchBusyRef.current = run;
@@ -3538,210 +3553,6 @@ Maximum 8 items. Utilise en priorité les articles fournis.`;
           <span>Dernières actualités générées prêtes pour lecture sans connexion</span>
         </div>
       )}
-      <style>{`
-        @keyframes tiv-pulse{0%,100%{opacity:1}50%{opacity:.5}}
-        @keyframes tiv-fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-        @keyframes tiv-dismiss{
-          0%{opacity:1;transform:scale(1) translateY(0);max-height:800px;margin-bottom:10px}
-          40%{opacity:0.25;transform:scale(0.96) translateX(16px)}
-          100%{opacity:0;transform:scale(0.92) translateX(36px);max-height:0;margin-bottom:0;padding-top:0;padding-bottom:0;border-width:0;overflow:hidden}
-        }
-        .tiv-dismissing{
-          animation:tiv-dismiss 0.28s cubic-bezier(0.16,1,0.3,1) forwards !important;
-          pointer-events:none;
-        }
-        @keyframes tiv-spin{to{transform:rotate(360deg)}}
-        @keyframes tiv-shimmer{0%{background-position:-600px 0}100%{background-position:600px 0}}
-        @keyframes tiv-modal-in{from{transform:translateY(30px);opacity:0}to{transform:none;opacity:1}}
-        @keyframes tiv-snackbar-in{
-          0%{opacity:0;transform:translate(-50%,20px) scale(0.95)}
-          100%{opacity:1;transform:translate(-50%,0) scale(1)}
-        }
-        @keyframes tiv-countdown{
-          0%{width:100%}
-          100%{width:0%}
-        }
-        .tiv-undo-bar{
-          position:fixed;
-          bottom:24px;
-          left:50%;
-          transform:translateX(-50%);
-          z-index:9999;
-          display:flex;
-          align-items:center;
-          gap:12px;
-          padding:10px 16px;
-          border-radius:16px;
-          backdrop-filter:blur(20px);
-          -webkit-backdrop-filter:blur(20px);
-          animation:tiv-snackbar-in 0.25s cubic-bezier(0.16,1,0.3,1) both;
-          box-shadow:0 12px 36px rgba(0,0,0,0.35);
-          max-width:calc(100vw - 32px);
-        }
-        @keyframes soundwave-bounce{0%{transform:scaleY(.3)}100%{transform:scaleY(1)}}
-        @keyframes tiv-slide-r{from{transform:translateX(-8px);opacity:0}to{transform:none;opacity:1}}
-        
-        .soundwave{display:inline-flex;align-items:flex-end;gap:2px;width:14px;height:12px}
-        .soundwave-bar{width:2px;height:100%;background:var(--mm-primary-glow,var(--mm-primary-glow));border-radius:1px;transform-origin:bottom;animation:soundwave-bounce .6s ease-in-out infinite alternate}
-        .soundwave-bar:nth-child(1){animation-delay:.1s}.soundwave-bar:nth-child(2){animation-delay:.3s}.soundwave-bar:nth-child(3){animation-delay:.2s}.soundwave-bar:nth-child(4){animation-delay:.4s}
-        
-        .tiv-card{animation:tiv-fade .4s cubic-bezier(.16,1,.3,1) both}
-        
-        .tiv-article{
-          background:var(--mm-bg-card,rgba(15,17,35,.6));
-          border:1px solid var(--mm-border,color-mix(in srgb, var(--mm-primary) 20.0%, transparent));
-          border-radius:16px;margin-bottom:10px;
-          transition:all .25s cubic-bezier(.16,1,.3,1);
-          overflow:hidden;
-        }
-        .tiv-article:hover{
-          transform:translateY(-2px);
-          border-color:var(--mm-border-strong,color-mix(in srgb, var(--mm-primary) 40.0%, transparent));
-          box-shadow:0 8px 24px color-mix(in srgb, var(--mm-primary) 12.0%, transparent);
-        }
-        .tiv-article-expanded{border-color:var(--mm-border-glow,color-mix(in srgb, var(--mm-primary) 60.0%, transparent))!important}
-        
-        .tiv-tab{
-          background:rgba(255,255,255,.04);border:1px solid var(--mm-border);
-          color:var(--mm-fg-muted);border-radius:20px;padding:7px 14px;
-          font-size:12px;font-weight:600;cursor:pointer;
-          transition:all .2s cubic-bezier(.16,1,.3,1);white-space:nowrap;
-          display:inline-flex;align-items:center;gap:5px;
-        }
-        .tiv-tab:hover{background:color-mix(in srgb, var(--mm-primary) 8.0%, transparent);color:var(--mm-fg);border-color:var(--mm-border-strong)}
-        .tiv-tab-active{background:var(--mm-grad-primary,linear-gradient(135deg,var(--mm-primary),var(--mm-primary)))!important;color:#fff!important;border-color:transparent!important;box-shadow:0 4px 14px color-mix(in srgb, var(--mm-primary) 35.0%, transparent)}
-        .tiv-tab-badge{background:rgba(239,68,68,.15);color:#f87171;font-size:9px;font-weight:900;padding:1px 5px;border-radius:8px;border:1px solid rgba(239,68,68,.2)}
-        
-        .tiv-btn-refresh{
-          background:var(--mm-grad-primary,linear-gradient(135deg,var(--mm-primary),var(--mm-primary)));
-          color:#fff;border:none;border-radius:20px;padding:7px 16px;
-          cursor:pointer;font-size:12px;font-weight:700;
-          box-shadow:0 4px 14px color-mix(in srgb, var(--mm-primary) 35.0%, transparent);
-          display:flex;align-items:center;gap:4px;transition:all .2s;
-        }
-        .tiv-btn-refresh:disabled{opacity:.5;cursor:not-allowed;box-shadow:none}
-        .tiv-btn-refresh:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 6px 20px color-mix(in srgb, var(--mm-primary) 45.0%, transparent)}
-        
-        ::-webkit-scrollbar{width:0}
-        @media(max-width:768px){
-          .tiv-hero-panel{
-            padding:16px 16px 14px!important;
-            border-radius:20px!important;
-            margin-bottom:14px!important;
-          }
-          .tiv-btn-header-back{
-            padding:7px 13px!important;
-            font-size:12px!important;
-            border-radius:11px!important;
-          }
-          .tiv-header-icon{
-            width:32px!important;
-            height:32px!important;
-            font-size:17px!important;
-            border-radius:10px!important;
-          }
-          .tiv-header-title{
-            font-size:19px!important;
-          }
-          .tiv-header-badge{
-            font-size:11px!important;
-            padding:2px 10px!important;
-            margin-top:6px!important;
-          }
-          .tiv-btn-header-refresh-top{
-            padding:7px 13px!important;
-            font-size:12px!important;
-            border-radius:11px!important;
-          }
-          .tiv-filter-bar{
-            gap:10px!important;
-            margin-bottom:10px!important;
-          }
-          .tiv-segmented-filter{
-            padding:3px!important;
-            border-radius:13px!important;
-          }
-          .tiv-segmented-btn{
-            padding:6px 10px!important;
-            font-size:12px!important;
-            border-radius:10px!important;
-          }
-          .tiv-theme-filter-btn{
-            padding:6px 13px!important;
-            font-size:12px!important;
-            border-radius:13px!important;
-          }
-          .tiv-category-drawer-btn{
-            padding:10px 16px!important;
-            border-radius:15px!important;
-          }
-          .tiv-category-drawer-icon{
-            width:28px!important;
-            height:28px!important;
-            font-size:13px!important;
-            border-radius:8px!important;
-          }
-          .tiv-category-drawer-label{
-            font-size:14px!important;
-          }
-          .tiv-feed-list{
-            gap:14px!important;
-            padding-bottom:130px!important;
-          }
-          .tiv-card-hero{
-            border-radius:20px!important;
-            padding:20px 18px 16px!important;
-          }
-          .tiv-card-sub{
-            border-radius:16px!important;
-            padding:16px 16px 14px!important;
-          }
-          .tiv-badges-row{
-            gap:8px!important;
-            margin-bottom:12px!important;
-          }
-          .tiv-badge-une{
-            padding:3px 10px!important;
-            font-size:10.5px!important;
-          }
-          .tiv-badge-source{
-            padding:2.5px 8px!important;
-            font-size:9.5px!important;
-          }
-          .tiv-badge-lang{
-            padding:2.5px 7px!important;
-            font-size:9.5px!important;
-          }
-          .tiv-article-title.tiv-article-title-first{
-            font-size:clamp(17.5px,4.5vw,20.5px)!important;
-            line-height:1.38!important;
-            margin-bottom:12px!important;
-          }
-          .tiv-article-title.tiv-article-title-regular{
-            font-size:16px!important;
-            line-height:1.4!important;
-            margin-bottom:10px!important;
-          }
-          .tiv-article-summary-box{
-            font-size:14px!important;
-            line-height:1.62!important;
-            margin-bottom:12px!important;
-            padding-left:12px!important;
-          }
-          .tiv-continuer-btn{
-            font-size:13.5px!important;
-          }
-          .tiv-card-actions-bar{
-            gap:8px!important;
-          }
-          .tiv-card-action-btn{
-            padding:7px 12px!important;
-            font-size:12px!important;
-            border-radius:10px!important;
-          }
-          .tiv-modal-inner{max-height:92vh!important;border-radius:20px 20px 0 0!important}
-        }
-      `}</style>
 
       {/* ── UNIFIED HERO HEADER & CONTROL PANEL ── */}
       <div className="tiv-hero-panel" style={{
